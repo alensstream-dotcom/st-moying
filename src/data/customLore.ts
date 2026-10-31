@@ -410,35 +410,75 @@ function cleanTag(value: string): string {
     .replace(/^_+|_+$/g, '');
 }
 
+/** 整段是不是纯英文 tag(允许空格、连字符、下划线)。 */
+function looksEnglish(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.length > 0 && /^[a-zA-Z0-9_\s-]+$/.test(trimmed);
+}
+
+/** 含中文且够长才算触发词:纯英文的词当触发词永远命中不了正文。 */
+function isLabel(value: string): boolean {
+  return value.length >= 2 && /[\u4e00-\u9fff]/.test(value);
+}
+
 /**
- * 解析网上分享的「英文 tag（中文说明）」列表。
+ * 把一段文本拆进 tags / labels 两个篮子。
  *
- * 这类文本几乎都是 `champagne_tulle_gown（香槟色薄纱晚礼服）, halter_neckline（挂脖领口）`
- * 的形状:tag 负责画得准,中文负责让用户认得出、也顺便当触发词。用户把它贴进 JSON 框
- * 只会在第二个括号上报错,所以单独走一条解析路径。
+ * 两个篮子各有唯一入口:英文进 tags,中文进 labels。**不做位置假设**——
+ * 用户可能写「英文 (中文)」,也可能写「中文 (英文)」,还可能中英平铺,
+ * 这一层只判断「这段字是什么语言」,排布交给上层。
+ */
+function takePieces(text: string, tags: string[], labels: string[]): void {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  if (looksEnglish(trimmed)) {
+    for (const word of trimmed.split(/[\s,]+/)) {
+      const tag = cleanTag(word);
+      if (tag && /^[a-z0-9_]+$/.test(tag)) tags.push(tag);
+    }
+    return;
+  }
+  for (const word of trimmed.split(/[\s,、/|;:]+/)) {
+    const value = word.trim();
+    if (!value) continue;
+    if (looksEnglish(value)) {
+      const tag = cleanTag(value);
+      if (tag && /^[a-z0-9_]+$/.test(tag)) tags.push(tag);
+      continue;
+    }
+    const label = value.replace(/[()（）]/g, '').trim();
+    if (isLabel(label)) labels.push(label);
+  }
+}
+
+/**
+ * 解析网上分享的 tag 列表。
+ *
+ * 能吃的两种排布都来自真实用法：
+ * - `champagne_tulle_gown（香槟色薄纱晚礼服）, halter_neckline（挂脖领口）` —— 英文在外
+ * - `香槟色薄纱晚礼服（champagne_tulle_gown, halter_neckline）` —— 中文在外
+ *
+ * 旧实现只认第一种,于是第二种会把括号里的英文当中文说明、把括号外的中文名丢掉,
+ * 结果是「名称里中英混着、触发词全是英文」（用户反馈的问题）。现在括号内外各判一次语言,
+ * 两种排布都归到同一个结果。
  */
 export function parseTagBundle(raw: string): TagBundleDraft {
-  const text = normalizeFullwidth(raw);
+  const text = normalizeFullwidth(raw).replace(/[[\]{}]/g, ',');
   const tags: string[] = [];
   const labels: string[] = [];
   for (const piece of splitPieces(text)) {
     const open = piece.indexOf('(');
-    const head = open >= 0 ? piece.slice(0, open) : piece;
-    const tag = cleanTag(head);
-    if (tag && /^[a-z0-9_]+$/.test(tag)) tags.push(tag);
-    if (open >= 0) {
-      const inside = piece.slice(open).replace(/[()]/g, ' ');
-      for (const label of inside.split(/[,/|]+/)) {
-        const value = label.trim();
-        if (value) labels.push(value);
-      }
-    } else if (!tag && piece.trim()) {
-      // 整片没有括号也没有英文:多半是纯中文说明,留着当触发词
-      labels.push(piece.trim());
+    if (open < 0) {
+      takePieces(piece, tags, labels);
+      continue;
     }
+    const close = piece.lastIndexOf(')');
+    takePieces(piece.slice(0, open), tags, labels);
+    takePieces(piece.slice(open + 1, close > open ? close : piece.length), tags, labels);
+    if (close > open) takePieces(piece.slice(close + 1), tags, labels);
   }
   const uniqueTags = [...new Set(tags)];
-  const uniqueLabels = [...new Set(labels)].filter(value => value.length >= 2);
+  const uniqueLabels = [...new Set(labels)].filter(isLabel);
   return {
     name: uniqueLabels[0] ?? uniqueTags[0] ?? '',
     tags: uniqueTags.join(', '),
@@ -507,12 +547,16 @@ export function importCustomLoreJson(raw: string): ImportReport {
     // 是常态,让他为此去学 JSON 语法没有意义——原来的报错「多了逗号或少了括号」正是
     // 把人卡在这里的那句话。
     const draft = parseTagBundle(text);
-    if (!draft.tags) {
+    // 一段普通文本里混着的单个英文单词（比如「这不是 json」）不该被当成 tag 串：
+    // danbooru tag 要么成串出现,要么本身就够长。否则任何带英文的中文句子都能"导入成功"。
+    const tagWords = draft.tags ? draft.tags.split(', ') : [];
+    const usable = tagWords.length >= 2 || (tagWords[0] ?? '').length >= 5;
+    if (!draft.tags || !usable) {
       return {
         wardrobe: 0,
         poses: 0,
         skipped: 0,
-        error: '这段既不是 JSON，也没解析出英文 tag。如果只有中文，请用「新增素材」手填。',
+        error: '这段既不是 JSON，也没解析出像样的英文 tag。如果只有中文，请用「新增素材」手填。',
       };
     }
     if (!draft.aliases.length) {
@@ -533,7 +577,6 @@ export function importCustomLoreJson(raw: string): ImportReport {
       slot,
       nsfw: 2,
       quality: 5,
-      note: '从 tag 串导入',
     });
     if (!added.ok) return { wardrobe: 0, poses: 0, skipped: 1, error: added.error };
     return { wardrobe: 1, poses: 0, skipped: 0 };

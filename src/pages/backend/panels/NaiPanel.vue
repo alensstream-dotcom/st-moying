@@ -69,7 +69,18 @@ import {
   type NaiEndpoint,
   type NaiVibe,
 } from '@/state/settings';
-import { computed, nextTick, onMounted, ref } from 'vue';
+import {
+  activeGenPreset,
+  captureIntoGenPreset,
+  markLoreGenPreset,
+  presetForArtist,
+  removeGenPreset,
+  renameGenPreset,
+  snapshotGenPreset,
+  switchGenPreset,
+  upsertGenPreset,
+} from '@/state/genPresets';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 /** 本渠道是否为当前出图渠道;「使用此渠道」按钮与设置页选择器、页签徽标同属一个开关。 */
 const inUse = computed(() => settings.defaultBackend === 'nai');
@@ -214,6 +225,98 @@ const artistNameInput = ref<HTMLInputElement | null>(null);
 const artistDeleteOpen = ref(false);
 /** 管理器弹窗:搜索/预览图/勾选批量删除都在那边,下拉这里只留高频切换。 */
 const artistManagerOpen = ref(false);
+
+/* ---- 生图配置预设:一整组「默认参数」= 一套预设 ---- */
+
+/** 下拉项:素材库专用的那套后面括注,免得和主出图的那套混淆。 */
+const GEN_PRESET_OPTIONS = computed(() =>
+  settings.genPresets.map(preset => ({
+    value: preset.id,
+    label: preset.forLore ? `${preset.name} · 素材库` : preset.name,
+  })),
+);
+
+const genPreset = computed(() => activeGenPreset());
+
+const presetNotice = ref('');
+function flashPreset(text: string) {
+  presetNotice.value = text;
+  window.setTimeout(() => {
+    if (presetNotice.value === text) presetNotice.value = '';
+  }, 2400);
+}
+
+const genPresetSel = computed<string>({
+  get: () => settings.activeGenPreset,
+  set: id => {
+    if (!switchGenPreset(id)) flashPreset('这套预设不见了,已忽略');
+  },
+});
+
+const renamingPreset = ref(false);
+const presetNameDraft = ref('');
+const presetNameInput = ref<HTMLInputElement | null>(null);
+
+function addGenPreset() {
+  const preset = snapshotGenPreset(`预设 ${settings.genPresets.length + 1}`);
+  upsertGenPreset(preset);
+  switchGenPreset(preset.id);
+  flashPreset(`已新建「${preset.name}」,点铅笔改名`);
+}
+
+function startRenameGenPreset() {
+  presetNameDraft.value = genPreset.value.name;
+  renamingPreset.value = true;
+  nextTick(() => presetNameInput.value?.select());
+}
+
+/** 失焦与 Enter 都会走到这里,靠 renamingPreset 挡住第二次。 */
+function commitRenamePreset() {
+  if (!renamingPreset.value) return;
+  renamingPreset.value = false;
+  const name = presetNameDraft.value.trim();
+  if (name && renameGenPreset(genPreset.value.id, name)) flashPreset('已改名');
+}
+
+function removeGenPresetCurrent() {
+  if (settings.genPresets.length <= 1) return flashPreset('至少要留一套预设');
+  if (!window.confirm(`删除预设「${genPreset.value.name}」?`)) return;
+  flashPreset(removeGenPreset(genPreset.value.id) ? '已删除' : '删除失败');
+}
+
+function toggleLorePreset() {
+  if (genPreset.value.forLore) {
+    markLoreGenPreset('');
+    flashPreset('已取消素材库标记:素材库改用当前预设');
+    return;
+  }
+  markLoreGenPreset(genPreset.value.id);
+  flashPreset(`「${genPreset.value.name}」已设为素材库专用`);
+}
+
+function saveCurrentGenPreset() {
+  flashPreset(
+    captureIntoGenPreset(genPreset.value.id) ? '已把当前参数存进这套预设' : '这套预设不见了',
+  );
+}
+
+/** 这套预设搭配哪个画师串(渠道页的「提示词预设」就是画师串库)。 */
+const genPresetArtist = computed<string>({
+  get: () => genPreset.value.activeArtistId ?? NO_ARTIST,
+  set: artistId => {
+    genPreset.value.activeArtistId = artistId;
+    settings.nai.activeArtistId = artistId;
+  },
+});
+
+/** 换画师串时若它有配套预设,整套切过去;没配套就只换画师串。 */
+watch(
+  () => settings.nai.activeArtistId,
+  artistId => {
+    const preset = presetForArtist(artistId);
+    if (preset && preset.id !== settings.activeGenPreset) switchGenPreset(preset.id);
+  },
+);
 
 function startRenameArtist() {
   if (!artist.value || isBuiltinArtist.value) return; // 内置只读(按钮已禁用,双保险)
@@ -1095,6 +1198,96 @@ async function removeVibe(vibe: NaiVibe) {
       </Collapsible>
 
       <Collapsible title="默认参数" :open="false">
+        <!-- 预设:下面这一整组参数都属于当前这套,切换即换一整套 -->
+        <div class="art-row">
+          <span class="bbi-field-label">生图配置</span>
+          <input
+            v-if="renamingPreset"
+            ref="presetNameInput"
+            class="bbi-input"
+            type="text"
+            v-model="presetNameDraft"
+            placeholder="预设名称"
+            spellcheck="false"
+            title="Enter 确认，Esc 取消"
+            @keydown.enter.prevent="commitRenamePreset"
+            @keydown.esc.stop.prevent="renamingPreset = false"
+            @blur="commitRenamePreset"
+          />
+          <BbiSelect
+            v-else
+            class="art-select"
+            v-model="genPresetSel"
+            :options="GEN_PRESET_OPTIONS"
+            aria-label="生图配置预设"
+          />
+          <span v-if="!renamingPreset" class="art-ops">
+            <button
+              class="bbi-icon-btn art-op"
+              type="button"
+              title="新建一套(以当前参数为底)"
+              aria-label="新建预设"
+              @click="addGenPreset"
+            >
+              <Icon name="plus" :size="14" />
+            </button>
+            <button
+              class="bbi-icon-btn art-op"
+              type="button"
+              title="重命名当前预设"
+              aria-label="重命名预设"
+              @click="startRenameGenPreset"
+            >
+              <Icon name="edit" :size="14" />
+            </button>
+            <button
+              class="bbi-icon-btn art-op"
+              type="button"
+              :title="genPreset.forLore ? '取消素材库专用标记' : '设为素材库配图专用'"
+              aria-label="素材库专用"
+              @click="toggleLorePreset"
+            >
+              <Icon name="star" :size="14" />
+            </button>
+            <button
+              class="bbi-icon-btn art-op"
+              type="button"
+              title="把当前参数存进这套预设"
+              aria-label="保存当前参数"
+              @click="saveCurrentGenPreset"
+            >
+              <Icon name="check" :size="14" />
+            </button>
+            <button
+              class="bbi-icon-btn art-op"
+              type="button"
+              title="删除当前预设"
+              aria-label="删除预设"
+              @click="removeGenPresetCurrent"
+            >
+              <Icon name="trash" :size="14" />
+            </button>
+          </span>
+        </div>
+        <p class="bbi-field-hint">
+          下面这一整组都是「{{ genPreset.name }}」的参数:改哪一项都自动存回这套,换预设等于换一整套,
+          不会互相覆盖。标了星的那套只给素材库配图用,不动这里的主出图参数。
+        </p>
+        <p v-if="presetNotice" class="bbi-field-hint">{{ presetNotice }}</p>
+
+        <div class="bbi-select-row">
+          <span class="bbi-field-label">搭配画师串</span>
+          <BbiSelect
+            class="be-select"
+            v-model="genPresetArtist"
+            :options="artistOptions"
+            aria-label="这套预设搭配的画师串"
+          />
+        </div>
+        <p class="bbi-field-hint">
+          选好之后,到上面「提示词」里换到这个画师串,生图配置会自动整套切过来——换一组提示词不用再重新调参数。
+        </p>
+
         <!-- 语义配对紧凑行:双字段行两列、数字参数行四列;说明统一收进行下的一行 hint -->
         <div class="bbi-field">
           <div class="bbi-field-head">

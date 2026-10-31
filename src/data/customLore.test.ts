@@ -188,6 +188,31 @@ describe('parseTagBundle（网上分享的 tag 串）', () => {
     expect(report.wardrobe).toBe(0);
     expect(report.error).toContain('中文');
   });
+
+  it('中文名在外、英文 tag 在括号里也能拆对，名称不带英文', () => {
+    const draft = parseTagBundle('香槟色薄纱晚礼服（champagne_tulle_gown, halter_neckline）');
+    expect(draft.tags).toBe('champagne_tulle_gown, halter_neckline');
+    expect(draft.name).toBe('香槟色薄纱晚礼服');
+    expect(draft.name).not.toMatch(/[a-zA-Z]/);
+    expect(draft.aliases).toContain('香槟色薄纱晚礼服');
+  });
+
+  it('中英平铺（没有括号）也能各自归位', () => {
+    const draft = parseTagBundle('挂脖黑丝晚礼服 champagne_tulle_gown halter_neckline');
+    expect(draft.tags).toBe('champagne_tulle_gown, halter_neckline');
+    expect(draft.name).toBe('挂脖黑丝晚礼服');
+  });
+
+  it('中文名在外的分享串直接导入，名称与触发词都是中文', () => {
+    const report = importCustomLoreJson('黑色透肉丝袜（sheer_black_pantyhose, black_thighhighs）');
+    expect(report.error).toBeUndefined();
+    expect(report.wardrobe).toBe(1);
+    const added = customWardrobe()[0];
+    expect(added.name).toBe('黑色透肉丝袜');
+    expect(added.name).not.toMatch(/[a-zA-Z]/);
+    expect(added.tags).toBe('sheer_black_pantyhose, black_thighhighs');
+    expect(added.note).toBeUndefined();
+  });
 });
 
 describe('编辑已有条目', () => {

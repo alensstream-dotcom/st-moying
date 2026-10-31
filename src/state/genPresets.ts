@@ -8,7 +8,44 @@
  * 都看不清；而 normalize 又不能反过来 import 本模块（会成环），故类型留在 settings。
  */
 
+import { watch } from 'vue';
 import { settings, type GenPreset, type NaiSettings } from '@/state/settings';
+
+/**
+ * 切换预设时先存旧再套新。
+ *
+ * 不这么做会丢参数：用户在上一个预设里调了步数、没手动点「更新」，
+ * 切走的瞬间那一步改动就只剩在内存里，下一秒被新预设覆盖掉。
+ */
+export function switchGenPreset(id: string): boolean {
+  if (id === settings.activeGenPreset) return true;
+  if (!genPresetById(id)) return false;
+  captureIntoGenPreset(settings.activeGenPreset);
+  applyingPreset = true;
+  const ok = applyGenPreset(id);
+  applyingPreset = false;
+  return ok;
+}
+
+/**
+ * 参数改动自动回写当前预设（防抖 600ms）。
+ *
+ * 用户的要求是「整组默认参数就是当前预设的参数」，没有「保存」按钮——
+ * 所以每次拨动滑块都要落回预设里。防抖是为了连续拖步数时不连打几十次。
+ */
+let applyingPreset = false;
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSync(): void {
+  if (applyingPreset || !settings.genPresets.length) return;
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    captureIntoGenPreset(settings.activeGenPreset);
+  }, 600);
+}
+
+watch(() => settings.nai, scheduleSync, { deep: true });
 
 /** 生成一个不与现有预设相撞的 id。 */
 function newPresetId(): string {
@@ -170,4 +207,15 @@ export function promptsLinkedTo(presetId: string): string[] {
   return Object.entries(settings.promptPresetLinks)
     .filter(([, value]) => value === presetId)
     .map(([key]) => key);
+}
+
+/**
+ * 按画师串反查它绑定的生图预设。
+ *
+ * 「提示词预设」在渠道页就是画师串库:换一组画师串往往要配不同的步数/Scale。
+ * 反查出来就自动整套切过去,用户不用再记「这套配哪个参数」。
+ */
+export function presetForArtist(artistId: string): GenPreset | null {
+  if (!artistId) return null;
+  return settings.genPresets.find(preset => preset.activeArtistId === artistId) ?? null;
 }
