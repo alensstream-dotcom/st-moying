@@ -133,8 +133,9 @@ function normalizeAutoTagNumbers(changed?: 'minImages' | 'maxImages' | Event) {
   );
 }
 
-/* —— 破限挡位:难度阶梯 + 自定义叠加,文本见 autoTag/jailbreak.ts。
-   与「破限附加词」是叠加关系:选 off / custom 只发附加词,其余档位是「档位文本 + 附加词」。 */
+/* —— 破限挡位:难度阶梯,文本见 autoTag/jailbreak.ts。
+   旧的「破限附加词」输入项已下线(叠加文本会让「这档到底发了什么」无法预期),
+   现在只按档位发一份固定 system。 */
 const JAILBREAK_OPTIONS = JAILBREAK_TIERS.map(t => ({ value: t.id, label: t.label }));
 const jailbreakTierSel = computed<string>({
   get: () => settings.autoTag.jailbreakTier,
@@ -143,7 +144,6 @@ const jailbreakTierSel = computed<string>({
 const jailbreakTierSummary = computed(
   () => JAILBREAK_TIERS.find(t => t.id === settings.autoTag.jailbreakTier)?.summary ?? '',
 );
-const jailbreakAddonOn = computed(() => settings.autoTag.prompts.jailbreak.trim().length > 0);
 
 /* —— 素材库召回尺度(见 data/loreIndex.ts 的 LoreOptions) —— */
 const NSFW_LEVEL_OPTIONS = [
@@ -187,13 +187,6 @@ const NL_SECTION_MACROS = [
 ];
 
 const TAG_PROMPT_METAS: TagPromptMeta[] = [
-  {
-    key: 'jailbreak',
-    label: '破限附加词',
-    hint: '叠加在【破限挡位】选中的内置文本之后，用来补自己的规矩（例如指定必须写全的解剖术语）。留空则只用挡位文本；挡位选 off / custom 时只发这一段。',
-    builtin: '',
-    macros: [],
-  },
   {
     key: 'naiV5Spec',
     label: 'NAI \u89c4\u8303',
@@ -732,6 +725,17 @@ async function confirmUpdate() {
         </label>
         <p class="bbi-field-hint">AI 正文生成后自动判断该楼是否需要插图,需要就写入生图 tag。</p>
 
+        <!-- 破限挡位:放在本组最前面,它是「模型肯不肯把 NSFW 写完整」的总开关,
+             比条数、重试次数这些细节重要得多。 -->
+        <div class="bbi-select-row">
+          <span class="bbi-field-label">破限挡位</span>
+          <BbiSelect v-model="jailbreakTierSel" :options="JAILBREAK_OPTIONS" aria-label="破限挡位" />
+        </div>
+        <p class="bbi-field-hint">{{ jailbreakTierSummary }}</p>
+        <p class="bbi-field-hint">
+          作为置顶 system 发出。日常剧情嫌模型变笨就往下降一档;NSFW 楼老被截断就往上升。改完立刻对新请求生效,不必重启。
+        </p>
+
         <label class="bbi-switch-row">
           <span class="bbi-field-label">自动生成图片</span>
           <input v-model="settings.autoTag.autoGenerate" type="checkbox" class="bbi-checkbox" />
@@ -790,16 +794,6 @@ async function confirmUpdate() {
           />
         </label>
         <p class="bbi-field-hint">副 API 请求失败或返回无法解析时自动重试；0 = 不重试，最多 5 次。</p>
-
-        <!-- 破限挡位:按场合切换强度,不必一直用最狠那档把模型能力压死 -->
-        <div class="bbi-select-row">
-          <span class="bbi-field-label">破限挡位</span>
-          <BbiSelect v-model="jailbreakTierSel" :options="JAILBREAK_OPTIONS" aria-label="破限挡位" />
-        </div>
-        <p class="bbi-field-hint">{{ jailbreakTierSummary }}</p>
-        <p class="bbi-field-hint">
-          作为置顶 system 发出,与「破限附加词」是叠加关系:<template v-if="jailbreakAddonOn">当前已附加自定义文本,两者会拼在一起发。</template><template v-else>「破限附加词」为空,只发档位文本。</template>日常剧情嫌模型变笨就往下降一档;NSFW 楼老被截断就往上升。
-        </p>
       </Collapsible>
 
       <!-- 素材库召回:服装 / 姿势候选按正文命中后注入,见 data/loreIndex.ts 与 autoTag/prompt.ts -->
@@ -860,7 +854,7 @@ async function confirmUpdate() {
           </button>
         </div>
         <p class="bbi-field-hint">
-          素材库里可以逐条浏览,点一条直接套到角色管理里的某个人物身上(写入该角色的固定着装或外貌字段)。
+          素材库里可以逐条浏览,点一条直接套到角色管理里的某个人物身上(写入该角色的固定着装或外貌字段);页顶的「新增 / 导入 / 导出」用来放你自己找到的款式——导入的条目与内置条目一起参与召回,库变大不会让每次请求变长(只按命中挑固定的几条)。
         </p>
       </Collapsible>
 

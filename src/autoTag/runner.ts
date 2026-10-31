@@ -25,12 +25,13 @@ import {
   type CharTagAutoOp,
   type CharTagField,
 } from '@/state/charTags';
-import { injectImageTags, parseImagePlan, type ImagePlan } from '@/autoTag/protocol';
+import { injectImageTags, parseImagePlan, type ImageInsertion, type ImagePlan } from '@/autoTag/protocol';
 import {
   clearAutoGenerateForFloor,
   consumeAutoGenerate,
   markForAutoGenerate,
 } from '@/floor/autoGenerate';
+import { runBackgroundGenerations } from '@/floor/backgroundGen';
 import { applyMessageText, type ApplyMessageResult } from '@/st/messageEdit';
 import { getContext, isAiStoryMessage, type STMessage } from '@/st/context';
 import {
@@ -520,6 +521,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 正文在 buildNext 里基于「落盘那一刻的真实正文」现算:分析期间别的插件对正文的修改
     // (翻译/润色/追加状态栏/改写句子)全部保留,tag 按叙事行重新定位后照常注入。
     let rebaseNote = '';
+    // 真正落进正文的那批插入项(重定位后的),供写盘成功后转交后台出图。
+    let writtenImages: ImageInsertion[] = [];
     const result = await applyMessageText(
       floor,
       currentText => {
@@ -528,6 +531,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         // 开跑时快照的原文对不上 = 期间被用户/别的流程改过,放弃覆盖(同提示词编辑弹窗)。
         if (slot) {
           if (parseImageTags(currentText)[slot.seq] !== slotRawTag) return null;
+          writtenImages = [plan.images[0]];
           return replaceImageTagAt(currentText, slot.seq, serializeImageTag(plan.images[0]));
         }
         // replace 路径同样以当前正文为基底剔除旧 tag,不能用旧快照
@@ -543,6 +547,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         );
         if (!rebased) return null;
         rebaseNote = describeRebase(rebased.report);
+        writtenImages = rebased.images;
         return injectImageTags(base, rebased.images);
       },
       chatId,
@@ -557,6 +562,25 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           },
     );
     if (result === 'saved') {
+      // 后台直跑:写盘成功就把这批槽位交给 floor/backgroundGen.ts。
+      // 它先抢标记——前台卡片若已经接手(标记被消费)它就直接让位,不会双跑;
+      // 手机上切后台时楼层不渲染、卡片不挂载,标记没人抢,于是由它跑完并反推界面。
+      if (marked && writtenImages.length) {
+        void runBackgroundGenerations(
+          writtenImages.map((image, index) => ({
+            chatId,
+            messageId: floor,
+            swipeId: markSwipeId,
+            seq: slot ? slot.seq : index,
+            tag: image.tag,
+            prompt: image.tag,
+            nl: image.nl ?? '',
+            negative: image.negative ?? '',
+            characters: image.characters ?? [],
+            size: image.size ?? 'portrait',
+          })),
+        );
+      }
       if (slot) {
         toastr.success(`已重写第 ${slot.seq + 1} 张的提示词，正在按新提示词出图`, '柏宝绘');
         return;

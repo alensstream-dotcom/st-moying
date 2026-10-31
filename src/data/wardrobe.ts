@@ -21,6 +21,7 @@
 
 import type { WardrobeCategory, WardrobeItem } from '@/data/loreTypes';
 import { WARDROBE_EXTRA } from '@/data/wardrobeExtra';
+import { WARDROBE_KARAMA } from '@/data/wardrobeKarama';
 
 /**
  * 分类表。id 与条目 category 一一对应,label 给 UI,hint 是一句话选型口径(决定「这一类怎么挑才不雷同」)。
@@ -1822,4 +1823,4 @@ const WARDROBE_CORE: WardrobeItem[] = [
  * 同一句「黑丝」能跳到的款式差异就越大——这是解决"永远出那几种"的唯一办法。
  * 合并后的规模与分类分布见 src/data/loreIndex.ts 的注释。
  */
-export const WARDROBE_ITEMS: WardrobeItem[] = [...WARDROBE_CORE, ...WARDROBE_EXTRA];
+export const WARDROBE_ITEMS: WardrobeItem[] = [...WARDROBE_CORE, ...WARDROBE_EXTRA, ...WARDROBE_KARAMA];

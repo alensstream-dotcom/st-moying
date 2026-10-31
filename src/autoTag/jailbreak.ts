@@ -4,14 +4,13 @@
  * 为什么要有挡位:旧版只有一份内置破限词,写完就顶在最前面。它的问题不是「不够硬」,
  * 而是**只有一档**:对本来就肯写成人向的模型,一大段越权声明反而会挤占注意力、
  * 让它在 <thinking> 里绕圈、tag 质量下降;对严格渠道,同一段又确实不够。
- * 所以这里按「干预强度」拆成 6 档,用户按当前渠道的拒答情况自己往上调。
+ * 所以这里按「干预强度」拆成 5 档,用户按当前渠道的拒答情况自己往上调。
  *
  *   off      不附加任何东西(渠道/模型本身不拦,靠任务协议就够)
  *   light    只做任务定性,不加授权话术,最大限度保住推理能力
  *   standard 任务定性 + 反截断 + 术语白名单(大多数情况够用)
  *   strong   标准 + 明确授权 + 反降级 + 反说教(默认)
  *   max      强化 + 结构硬锁 + 自我审查禁令,针对本地严管模型与代理层过滤
- *   custom   只用用户自己写的破限词,内置文本完全不参与
  *
  * 五个写作原则(都是从「回复被截断」这个真实故障反推出来的):
  *
@@ -27,13 +26,11 @@
  * 5. **优先级裁定必须显式。** 模型卡住往往不是因为怕,而是因为两条要求冲突时不知道该牺牲哪条。
  *    给一条固定优先级(结构合法性 > 事实准确 > 用词得体),它就不用在 <thinking> 里反复权衡。
  *
- * 叠加规则:用户自定义文本不再「完全接管」,而是**追加**在档位文本之后——否则用户改一个字,
- * 整套档位能力就静默消失(旧版的行为)。想只用自己那份的,选 custom 档。
+ * 一份固定文本:每个档位对应一段写死的 system,不叠加任何用户输入。
+ * 理由见下面 resolveJailbreakText 的注释——叠加会让「这一档到底发了什么」不可预期。
  */
 
-import type { AutoTagPrompts } from '@/state/settings';
-
-export type JailbreakTierId = 'off' | 'light' | 'standard' | 'strong' | 'max' | 'custom';
+export type JailbreakTierId = 'off' | 'light' | 'standard' | 'strong' | 'max';
 
 export interface JailbreakTier {
   id: JailbreakTierId;
@@ -151,19 +148,15 @@ export const JAILBREAK_TIERS: JailbreakTier[] = [
     summary: '再加结构硬锁、自我审查禁令、缺字段归一化。给本地严管模型、带过滤的中转站用。',
     text: MAX_TEXT,
   },
-  {
-    id: 'custom',
-    label: '仅自定义',
-    summary: '只用你在下面写的破限词,内置文本完全不参与。适合已经把文本调到最合适的人。',
-    text: OFF_TEXT,
-  },
 ];
 
 const TIER_BY_ID = new Map<JailbreakTierId, JailbreakTier>(JAILBREAK_TIERS.map(tier => [tier.id, tier]));
 
-/** 把任意字符串收成合法挡位 id;认不出来的按默认档处理(旧配置里没有这个字段)。 */
+/** 把任意字符串收成合法挡位 id;认不出来的按默认档处理(旧配置里没有这个字段)。
+ *  0.4.1 下线了「仅自定义」档:历史配置里存着 'custom' 的一律归到 off(它当时的实际效果就是不发内置文本)。 */
 export function normalizeJailbreakTier(raw: unknown): JailbreakTierId {
   const id = typeof raw === 'string' ? raw.trim() : '';
+  if (id === 'custom') return 'off';
   return TIER_BY_ID.has(id as JailbreakTierId) ? (id as JailbreakTierId) : DEFAULT_JAILBREAK_TIER;
 }
 
@@ -174,21 +167,14 @@ export function getJailbreakTier(id: unknown): JailbreakTier {
 }
 
 /**
- * 最终置顶 system 的正文。
+ * 最终置顶 system 的正文:只由档位决定,发一份固定文本。
  *
- * 语义(0.4.0 起):
- * - 档位文本与用户自定义文本**叠加**,档位在前、自定义在后(自定义用来补渠道特有的经验);
- * - `off` / `custom` 两档不带内置文本,所以两者都等于「只用自定义」(custom 只是给这个行为一个
- *   能明确选中的名字,避免用户以为自己关掉了什么);
- * - 两份都为空 → 返回空串,调用方不插入这条 system。
+ * 为什么不再叠加用户自定义文本(0.4.1):叠加后「这一档到底发了什么」无法预期 ——
+ * 同一档在两个聊天里行为不同,用户排查截断时会先怀疑挡位而不是自己那段附加词。
+ * 要补规矩就去改档位文本的来源(这份文件),或临时把挡位调到 max。
  *
- * 这样升级插件不会静默吃掉用户调好的文本,反过来用户也不会因为写了一句备注就丢掉整档能力。
+ * 返回空串 = 调用方不插入这条 system(off 档)。
  */
-export function resolveJailbreakText(prompts: Partial<AutoTagPrompts> | undefined, tierId: unknown): string {
-  const custom = (prompts?.jailbreak ?? '').trim();
-  const tier = getJailbreakTier(tierId);
-  const base = tier.text.trim();
-  if (!base) return custom;
-  if (!custom) return base;
-  return `${base}\n\n<operator_addendum>\n${custom}\n</operator_addendum>`;
+export function resolveJailbreakText(tierId: unknown): string {
+  return getJailbreakTier(tierId).text.trim();
 }

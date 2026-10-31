@@ -2,8 +2,20 @@
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
 import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
-import { POSE_CATEGORIES, POSE_ITEMS } from '@/data/poseBank';
-import { WARDROBE_CATEGORIES, WARDROBE_ITEMS } from '@/data/wardrobe';
+import { BODY_EXTRA, FACE_EXTRA, FANDOM_EXTRA } from '@/data/faceExtra';
+import { POSE_CATEGORIES } from '@/data/poseBank';
+import { WARDROBE_CATEGORIES } from '@/data/wardrobe';
+import {
+  addCustomPose,
+  addCustomWardrobe,
+  clearCustomLore,
+  exportCustomLoreJson,
+  importCustomLoreJson,
+  removeCustomLore,
+  WARDROBE_SLOT_LABELS,
+} from '@/data/customLore';
+import { allPoseItems, allWardrobeItems } from '@/data/loreIndex';
+import type { NsfwLevel, PoseCategoryId, WardrobeSlot } from '@/data/loreTypes';
 import {
   CHAR_TAG_FIELD_LABELS,
   charTagLib,
@@ -49,47 +61,63 @@ interface LoreCard {
   field: CharTagField;
   group: string;
   groupLabel: string;
+  /** 用户自己导入的条目（id 以 u-/up- 开头），可以删除 */
+  custom?: boolean;
 }
 
 const WARDROBE_LABEL = new Map<string, string>(WARDROBE_CATEGORIES.map(c => [c.id, c.label]));
 const POSE_LABEL = new Map<string, string>(POSE_CATEGORIES.map(c => [c.id, c.label]));
 
-const wardrobeCards: LoreCard[] = WARDROBE_ITEMS.map(item => ({
-  id: item.id,
-  name: item.name,
-  tags: item.tags,
-  aliases: item.aliases,
-  nsfw: item.nsfw,
-  quality: item.quality,
-  note: item.note,
-  extra: item.vibe?.length ? `气质 ${item.vibe.join(' / ')}` : '',
-  field: 'outfit',
-  group: item.category,
-  groupLabel: WARDROBE_LABEL.get(item.category) ?? item.category,
-}));
+/** 自定义条目改动后自增,用来让 computed 重新读 localStorage(它本身不是响应式的)。 */
+const revision = ref(0);
+function bumpLore() {
+  revision.value += 1;
+}
 
-const poseCards: LoreCard[] = POSE_ITEMS.map(item => ({
-  id: item.id,
-  name: item.name,
-  tags: item.tags,
-  aliases: item.aliases,
-  nsfw: item.nsfw,
-  quality: item.quality,
-  note: item.note,
-  extra: [
-    item.camera ? `机位 ${item.camera}` : '',
-    item.direction ?? '',
-    item.stage ? `阶段 ${item.stage}` : '',
-  ]
-    .filter(Boolean)
-    .join(' · '),
-  field: 'outfit',
-  group: item.category,
-  groupLabel: POSE_LABEL.get(item.category) ?? item.category,
-}));
+const wardrobeCards = computed<LoreCard[]>(() => {
+  revision.value;
+  return allWardrobeItems().map(item => ({
+    id: item.id,
+    name: item.name,
+    tags: item.tags,
+    aliases: item.aliases,
+    nsfw: item.nsfw,
+    quality: item.quality,
+    note: item.note,
+    extra: item.vibe?.length ? `气质 ${item.vibe.join(' / ')}` : '',
+    field: 'outfit',
+    group: item.category,
+    groupLabel: WARDROBE_LABEL.get(item.category) ?? item.category,
+    custom: isCustomId(item.id),
+  }));
+});
+
+const poseCards = computed<LoreCard[]>(() => {
+  revision.value;
+  return allPoseItems().map(item => ({
+    id: item.id,
+    name: item.name,
+    tags: item.tags,
+    aliases: item.aliases,
+    nsfw: item.nsfw,
+    quality: item.quality,
+    note: item.note,
+    extra: [
+      item.camera ? `机位 ${item.camera}` : '',
+      item.direction ?? '',
+      item.stage ? `阶段 ${item.stage}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
+    field: 'outfit',
+    group: item.category,
+    groupLabel: POSE_LABEL.get(item.category) ?? item.category,
+    custom: isCustomId(item.id),
+  }));
+});
 
 const faceCards: LoreCard[] = [
-  ...FACE_PRESETS.map(item => ({
+  ...[...FACE_PRESETS, ...FACE_EXTRA].map(item => ({
     id: item.id,
     name: item.name,
     tags: item.tags,
@@ -102,7 +130,7 @@ const faceCards: LoreCard[] = [
     group: 'face',
     groupLabel: '脸部指纹',
   })),
-  ...BODY_PRESETS.map(item => ({
+  ...[...BODY_PRESETS, ...BODY_EXTRA].map(item => ({
     id: item.id,
     name: item.name,
     tags: item.tags,
@@ -115,7 +143,7 @@ const faceCards: LoreCard[] = [
     group: 'body',
     groupLabel: '体型',
   })),
-  ...FANDOM_PRESETS.map(item => ({
+  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA].map(item => ({
     id: item.id,
     name: item.name,
     tags: item.tags,
@@ -136,9 +164,16 @@ const activeCategory = ref('all');
 const flash = ref('');
 let flashTimer: number | undefined;
 
+/** 自定义条目的 id 前缀：u- 服装 / up- 姿势，内置表不会用这两个前缀。 */
+function isCustomId(id: string): boolean {
+  return id.startsWith('u-') || id.startsWith('up-');
+}
+
+const SLOT_OPTIONS = Object.entries(WARDROBE_SLOT_LABELS).map(([id, label]) => ({ id, label }));
+
 const allCards = computed<LoreCard[]>(() => {
-  if (tab.value === 'wardrobe') return wardrobeCards;
-  if (tab.value === 'pose') return poseCards;
+  if (tab.value === 'wardrobe') return wardrobeCards.value;
+  if (tab.value === 'pose') return poseCards.value;
   return faceCards;
 });
 
@@ -256,6 +291,121 @@ function toast(text: string) {
     toastText.value = '';
   }, 1800);
 }
+
+/* —— 自定义素材：新增 / 导入 / 导出 / 删除 —— */
+const addingOpen = ref(false);
+const addingKind = ref<'wardrobe' | 'pose'>('wardrobe');
+const draftName = ref('');
+const draftTags = ref('');
+const draftAliases = ref('');
+const draftCategory = ref('');
+const draftSlot = ref<WardrobeSlot>('full');
+const draftNsfw = ref(2);
+const draftCamera = ref('');
+const draftNote = ref('');
+
+function openAdd() {
+  addingKind.value = tab.value === 'pose' ? 'pose' : 'wardrobe';
+  draftName.value = '';
+  draftTags.value = '';
+  draftAliases.value = '';
+  draftCategory.value = addingKind.value === 'pose' ? POSE_CATEGORIES[0].id : WARDROBE_CATEGORIES[0].id;
+  draftSlot.value = 'full';
+  draftNsfw.value = 2;
+  draftCamera.value = '';
+  draftNote.value = '';
+  addingOpen.value = true;
+}
+
+/** 切换服装/姿势时分类下拉的选项整组换掉,顺手把选中值收回到第一项。 */
+function switchKind(kind: 'wardrobe' | 'pose') {
+  addingKind.value = kind;
+  draftCategory.value = kind === 'pose' ? POSE_CATEGORIES[0].id : WARDROBE_CATEGORIES[0].id;
+}
+
+function submitAdd() {
+  const nsfw = Math.min(3, Math.max(0, Math.round(Number(draftNsfw.value) || 0))) as NsfwLevel;
+  if (addingKind.value === 'pose') {
+    const result = addCustomPose({
+      name: draftName.value,
+      tags: draftTags.value,
+      aliases: draftAliases.value,
+      category: draftCategory.value as PoseCategoryId,
+      nsfw: (nsfw === 0 ? 1 : nsfw) as NsfwLevel,
+      camera: draftCamera.value,
+      note: draftNote.value,
+    });
+    if (!result.ok) {
+      toast(result.error ?? '新增失败');
+      return;
+    }
+    tab.value = 'pose';
+  } else {
+    const result = addCustomWardrobe({
+      name: draftName.value,
+      tags: draftTags.value,
+      aliases: draftAliases.value,
+      category: draftCategory.value,
+      slot: draftSlot.value,
+      nsfw,
+      note: draftNote.value,
+    });
+    if (!result.ok) {
+      toast(result.error ?? '新增失败');
+      return;
+    }
+    tab.value = 'wardrobe';
+  }
+  bumpLore();
+  addingOpen.value = false;
+  activeCategory.value = 'all';
+  toast('已加入素材库，下一次自动 tag 就能召回它');
+}
+
+const importOpen = ref(false);
+const importText = ref('');
+
+function openImport() {
+  importOpen.value = true;
+  importText.value = '';
+}
+
+function submitImport() {
+  const report = importCustomLoreJson(importText.value);
+  if (report.error) {
+    toast(report.error);
+    return;
+  }
+  bumpLore();
+  importOpen.value = false;
+  toast(
+    `导入完成：服装 +${report.wardrobe}，姿势 +${report.poses}${report.skipped ? `，跳过 ${report.skipped}` : ''}`,
+  );
+}
+
+async function copyAllCustom() {
+  try {
+    await navigator.clipboard.writeText(exportCustomLoreJson());
+    toast('已复制全部自定义条目（可直接存成 .json 当备份）');
+  } catch (error) {
+    console.warn('[柏宝绘] 导出失败', error);
+    toast('浏览器拦了剪贴板，请允许后重试');
+  }
+}
+
+function removeCard(card: LoreCard) {
+  const kind = tab.value === 'pose' ? 'pose' : 'wardrobe';
+  if (!removeCustomLore(kind, card.id)) return;
+  bumpLore();
+  toast(`已删除「${card.name}」`);
+}
+
+function clearCustom() {
+  if (!window.confirm('清空全部自定义素材？（内置条目不受影响，清空前建议先点「导出」备份）')) return;
+  clearCustomLore();
+  bumpLore();
+  toast('已清空全部自定义条目（内置条目不受影响）');
+}
 </script>
 
 <template>
@@ -290,6 +440,14 @@ function toast(text: string) {
         type="search"
         placeholder="搜名字 / tag / 中文触发词"
       />
+      <div class="bbi-lore-tools">
+        <button class="bbi-btn bbi-btn-sm bbi-btn-primary" type="button" @click="openAdd">
+          新增
+        </button>
+        <button class="bbi-btn bbi-btn-sm" type="button" @click="openImport">导入</button>
+        <button class="bbi-btn bbi-btn-sm" type="button" @click="copyAllCustom">导出</button>
+        <button class="bbi-btn bbi-btn-sm" type="button" @click="clearCustom">清空自定义</button>
+      </div>
     </div>
 
     <div class="bbi-lore-cats">
@@ -329,6 +487,15 @@ function toast(text: string) {
           <span class="bbi-lore-alias">{{ card.aliases.join(' / ') }}</span>
           <span class="bbi-lore-acts">
             <button class="bbi-btn bbi-btn-sm" type="button" @click="copyTags(card)">复制</button>
+            <button
+              v-if="card.custom"
+              class="bbi-btn bbi-btn-sm bbi-lore-del"
+              type="button"
+              title="删除这条自定义素材"
+              @click="removeCard(card)"
+            >
+              删除
+            </button>
             <button
               v-if="tab !== 'pose'"
               class="bbi-btn bbi-btn-primary bbi-btn-sm"
@@ -400,6 +567,146 @@ function toast(text: string) {
       </div>
     </ModalMask>
 
+    <ModalMask :open="addingOpen" @close="addingOpen = false">
+      <div v-if="addingOpen" class="bbi-modal bbi-lore-modal" role="dialog" aria-modal="true" aria-label="新增素材">
+        <header class="bbi-modal-head">
+          <span class="bbi-modal-title">新增素材</span>
+          <button class="bbi-modal-x" type="button" aria-label="关闭" @click="addingOpen = false">
+            <Icon name="close" />
+          </button>
+        </header>
+
+        <div class="bbi-lore-kind">
+          <button
+            class="bbi-btn bbi-btn-sm"
+            :class="{ 'bbi-btn-primary': addingKind === 'wardrobe' }"
+            type="button"
+            @click="switchKind('wardrobe')"
+          >
+            服装
+          </button>
+          <button
+            class="bbi-btn bbi-btn-sm"
+            :class="{ 'bbi-btn-primary': addingKind === 'pose' }"
+            type="button"
+            @click="switchKind('pose')"
+          >
+            姿势
+          </button>
+        </div>
+
+        <label class="bbi-modal-field">
+          <span class="bbi-modal-label">名称</span>
+          <input v-model="draftName" class="bbi-input" type="text" placeholder="比如：黑丝袜口卷落" />
+        </label>
+
+        <label class="bbi-modal-field">
+          <span class="bbi-modal-label">danbooru tag 串（逗号分隔）</span>
+          <textarea
+            v-model="draftTags"
+            class="bbi-input"
+            rows="3"
+            placeholder="black thighhighs, sheer legwear, rolled down, glossy texture"
+          />
+          <span class="bbi-field-hint">
+            用英文 danbooru tag，逗号分隔。这串会被原样写进生图提示词，所以越具体越好（版型 + 面料 + 细节）。
+          </span>
+        </label>
+
+        <label class="bbi-modal-field">
+          <span class="bbi-modal-label">中文触发词（描述里出现这些词就会召回）</span>
+          <input
+            v-model="draftAliases"
+            class="bbi-input"
+            type="text"
+            placeholder="黑丝, 袜口滑落, 卷边"
+          />
+          <span class="bbi-field-hint">逗号或顿号分隔，至少一个，两个汉字以上。</span>
+        </label>
+
+        <label class="bbi-modal-field">
+          <span class="bbi-modal-label">分类</span>
+          <select v-model="draftCategory" class="bbi-input">
+            <option
+              v-for="c in addingKind === 'pose' ? POSE_CATEGORIES : WARDROBE_CATEGORIES"
+              :key="c.id"
+              :value="c.id"
+            >
+              {{ c.label }}
+            </option>
+          </select>
+        </label>
+
+        <label v-if="addingKind === 'wardrobe'" class="bbi-modal-field">
+          <span class="bbi-modal-label">部位</span>
+          <select v-model="draftSlot" class="bbi-input">
+            <option v-for="opt in SLOT_OPTIONS" :key="opt.id" :value="opt.id">{{ opt.label }}</option>
+          </select>
+        </label>
+
+        <label class="bbi-modal-field">
+          <span class="bbi-modal-label">尺度</span>
+          <select v-model.number="draftNsfw" class="bbi-input">
+            <option :value="0">0 · 日常</option>
+            <option :value="1">1 · 微诱惑</option>
+            <option :value="2">2 · 情趣内衣</option>
+            <option :value="3">3 · 明确 NSFW</option>
+          </select>
+        </label>
+
+        <label v-if="addingKind === 'pose'" class="bbi-modal-field">
+          <span class="bbi-modal-label">机位（可选）</span>
+          <input
+            v-model="draftCamera"
+            class="bbi-input"
+            type="text"
+            placeholder="from above, pov, close-up"
+          />
+        </label>
+
+        <label class="bbi-modal-field">
+          <span class="bbi-modal-label">备注（可选）</span>
+          <input v-model="draftNote" class="bbi-input" type="text" placeholder="什么时候用、和什么搭配" />
+        </label>
+
+        <div class="bbi-channel-bar">
+          <button class="bbi-btn bbi-btn-primary" type="button" @click="submitAdd">加入素材库</button>
+          <button class="bbi-btn" type="button" @click="addingOpen = false">取消</button>
+        </div>
+      </div>
+    </ModalMask>
+
+    <ModalMask :open="importOpen" @close="importOpen = false">
+      <div v-if="importOpen" class="bbi-modal bbi-lore-modal" role="dialog" aria-modal="true" aria-label="导入素材">
+        <header class="bbi-modal-head">
+          <span class="bbi-modal-title">导入自定义素材</span>
+          <button class="bbi-modal-x" type="button" aria-label="关闭" @click="importOpen = false">
+            <Icon name="close" />
+          </button>
+        </header>
+
+        <p class="bbi-field-hint">
+          粘贴 JSON。三种形态都认：<code>{"wardrobe":[…],"poses":[…]}</code>、一个数组（按 category 自动分流到服装或姿势）、
+          或单条对象。缺字段的条目会被跳过，不会整体失败。
+        </p>
+
+        <label class="bbi-modal-field">
+          <span class="bbi-modal-label">JSON 内容</span>
+          <textarea
+            v-model="importText"
+            class="bbi-input bbi-lore-json"
+            rows="10"
+            placeholder='[{"name":"绷带装","tags":"bandage, topless, cast","aliases":["绷带","包扎"],"category":"costume","slot":"full","nsfw":3}]'
+          />
+        </label>
+
+        <div class="bbi-channel-bar">
+          <button class="bbi-btn bbi-btn-primary" type="button" @click="submitImport">导入</button>
+          <button class="bbi-btn" type="button" @click="importOpen = false">取消</button>
+        </div>
+      </div>
+    </ModalMask>
+
     <p v-if="toastText" class="bbi-lore-toast">{{ toastText }}</p>
   </section>
 </template>
@@ -458,6 +765,28 @@ function toast(text: string) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 10px;
+}
+
+.bbi-lore-tools {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.bbi-lore-kind {
+  display: flex;
+  gap: 6px;
+}
+
+.bbi-lore-del {
+  color: var(--bbi-danger, #d25a5a);
+}
+
+.bbi-lore-json {
+  font-family: var(--bbi-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  line-height: 1.55;
+  resize: vertical;
 }
 
 .bbi-lore-card {

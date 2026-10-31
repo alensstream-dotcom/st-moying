@@ -18,6 +18,11 @@ export interface ImageInsertion {
   position: string;
   /** 位置 ID 对应的原始物理行(0-based，仅插件内部使用)。 */
   sourceLine: number;
+  /**
+   * 该位置对应的句子在**原始物理行内**的结束偏移(不含)。0 = 未知,退回行尾插入。
+   * injectImageTags 用它把 tag 插到那句话后面,而不是整段后面(见 clean.ts 的 TargetSegment)。
+   */
+  charOffset: number;
   /** danbooru 短 tag 部分(必填)。 */
   tag: string;
   /** 自然语言部分(可空;ComfyUI「生成自然语言」开启时由模型一并输出)。 */
@@ -189,6 +194,8 @@ export function parseImagePlan(
     Math.max(0, Math.floor(Number(minImages)) || 0),
   );
   const positions = new Map(segments.map(segment => [segment.id, segment.sourceLine]));
+  // 行内落位用:同一行可能切出多个句子级段,故按 id 取整段而不是只取行号。
+  const segmentById = new Map(segments.map(segment => [segment.id, segment]));
 
   const images: ImageInsertion[] = [];
   for (let index = 0; index < parsed.images.length; index += 1) {
@@ -198,10 +205,11 @@ export function parseImagePlan(
     }
     const entry = item as Record<string, unknown>;
     const position = sanitizePosition(entry.position ?? entry.id, index);
-    const sourceLine = positions.get(position);
-    if (sourceLine === undefined) {
+    const segment = segmentById.get(position);
+    if (!segment) {
       throw new Error(`images[${index}].position=${position} 不在目标正文可选位置中`);
     }
+    const sourceLine = segment.sourceLine;
     // 兼容模型按旧协议/习惯返回 prompt 键的情况
     const tag = sanitizeContent(entry.tag ?? entry.prompt, 'tag', index);
     if (!tag) throw new Error(`images[${index}].tag 不能为空`);
@@ -210,7 +218,16 @@ export function parseImagePlan(
     const characters = sanitizeCharacters(entry.characters, index);
     // 兼容模型按习惯返回 orientation / aspect 键
     const size = normalizeOrientation(entry.size ?? entry.orientation ?? entry.aspect);
-    images.push({ position, sourceLine, tag, nl, negative, characters, size });
+    images.push({
+      position,
+      sourceLine,
+      charOffset: segment.charOffset ?? 0,
+      tag,
+      nl,
+      negative,
+      characters,
+      size,
+    });
   }
 
   const limitedImages = images.slice(0, normalizedMax);
@@ -290,7 +307,15 @@ function parseChanges(raw: unknown, positions: Map<string, number>): CharChange[
   return out;
 }
 
-/** 保持原文及原换行符不变，只在模型选择的位置 ID 对应源码行之后插入 tag。 */
+/**
+ * 保持原文及原换行符不变，把 tag 插进模型选中的位置。
+ *
+ * 落位口径(0.4.1 起):优先**行内句子末尾**(charOffset)，其次整行行尾。
+ * 旧实现一律插在物理行之后，于是「一行好几句话」的正文里，一张配第三句的图
+ * 会掉到整段末尾——事后描写之后，看起来就是图和剧情对不上。现在只要该位置
+ * 知道自己在行内的结束偏移，tag 就钉在那句话后面，并把该行剩余内容接在 tag 之后
+ * 换行继续，读起来就是图夹在两段叙事中间。
+ */
 export function injectImageTags(source: string, images: ImageInsertion[]): string {
   if (!images.length) return source;
   const lines = sourceLines(source);
@@ -309,15 +334,41 @@ export function injectImageTags(source: string, images: ImageInsertion[]): strin
   let output = '';
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    output += line.text;
     const inserted = byLine.get(index) ?? [];
     const insertedEol = line.eol || fallbackEol;
-    // 序列化口径见 st/imageTagRegex.ts 的 serializeImageTag（与手动编辑弹窗共用同一份，
-    // 两处漂移会让「解析出的字段」与「落进正文的原文」对不上，而 promptHash 吃的是原文）。
-    for (const image of inserted) {
-      output += `${insertedEol}${serializeImageTag(image)}`;
+    if (!inserted.length) {
+      output += line.text + line.eol;
+      continue;
     }
-    output += line.eol;
+
+    // 稳定排序:同一偏移的多张图保持模型给出的原相对顺序
+    const ordered = inserted
+      .map((image, order) => ({ image, order }))
+      .sort((a, b) => (a.image.charOffset || 0) - (b.image.charOffset || 0) || a.order - b.order)
+      .map(item => item.image);
+
+    const inline: ImageInsertion[] = [];
+    const tail: ImageInsertion[] = [];
+    for (const image of ordered) {
+      const at = Math.round(Number(image.charOffset) || 0);
+      if (at > 0 && at < line.text.length) inline.push({ ...image, charOffset: at });
+      else tail.push(image);
+    }
+
+    let piece = '';
+    let cursor = 0;
+    for (const image of inline) {
+      piece += line.text.slice(cursor, image.charOffset);
+      // 序列化口径见 st/imageTagRegex.ts 的 serializeImageTag（与手动编辑弹窗共用同一份，
+      // 两处漂移会让「解析出的字段」与「落进正文的原文」对不上，而 promptHash 吃的是原文）。
+      piece += `${insertedEol}${serializeImageTag(image)}${insertedEol}`;
+      cursor = image.charOffset;
+      // 吃掉句后原有的空白/缩进,免得 tag 后面拖出一串空格
+      while (cursor < line.text.length && /[ \t]/.test(line.text[cursor])) cursor += 1;
+    }
+    piece += line.text.slice(cursor);
+    for (const image of tail) piece += `${insertedEol}${serializeImageTag(image)}`;
+    output += piece + line.eol;
   }
   return output;
 }

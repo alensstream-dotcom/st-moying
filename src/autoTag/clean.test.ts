@@ -88,13 +88,14 @@ describe('prompt body cleaning', () => {
 
 第二段正文 ⟦P3⟧`,
       segments: [
-        { id: 'P1', sourceLine: 3, text: '第一段正文' },
+        { id: 'P1', sourceLine: 3, charOffset: 5, text: '第一段正文' },
         {
           id: 'P2',
           sourceLine: 5,
+          charOffset: 62,
           text: '<bbi_image>1girl, silver hair<size>portrait</size></bbi_image>',
         },
-        { id: 'P3', sourceLine: 6, text: '第二段正文' },
+        { id: 'P3', sourceLine: 6, charOffset: 5, text: '第二段正文' },
       ],
     });
   });
@@ -102,14 +103,14 @@ describe('prompt body cleaning', () => {
   it('keeps inline prose on one mapped source line after removing a block', () => {
     expect(prepareTargetText('前文<snow>隐藏</snow>后文', ['snow'])).toEqual({
       promptText: '前文 后文 ⟦P1⟧',
-      segments: [{ id: 'P1', sourceLine: 0, text: '前文 后文' }],
+      segments: [{ id: 'P1', sourceLine: 0, charOffset: 19, text: '前文 后文' }],
     });
   });
 
   it('removes a lone closing time tag from the target', () => {
     expect(prepareTargetText('正文\n</bbs_end>', [])).toEqual({
       promptText: '正文 ⟦P1⟧',
-      segments: [{ id: 'P1', sourceLine: 0, text: '正文' }],
+      segments: [{ id: 'P1', sourceLine: 0, charOffset: 2, text: '正文' }],
     });
   });
 
@@ -128,8 +129,8 @@ second useful line
 
 second useful line \u27e6P2\u27e7`,
       segments: [
-        { id: 'P1', sourceLine: 4, text: 'first useful line' },
-        { id: 'P2', sourceLine: 5, text: 'second useful line' },
+        { id: 'P1', sourceLine: 4, charOffset: 17, text: 'first useful line' },
+        { id: 'P2', sourceLine: 5, charOffset: 18, text: 'second useful line' },
       ],
     });
   });
@@ -142,7 +143,7 @@ second useful line \u27e6P2\u27e7`,
       ),
     ).toEqual({
       promptText: '正文 ⟦P1⟧',
-      segments: [{ id: 'P1', sourceLine: 2, text: '正文' }],
+      segments: [{ id: 'P1', sourceLine: 2, charOffset: 2, text: '正文' }],
     });
   });
 });
@@ -157,8 +158,8 @@ describe('story-model content extraction', () => {
 
   it('keeps only drawable prose and its original source-line coordinates', () => {
     expect(prepareTargetText(source, []).segments).toEqual([
-      { id: 'P1', sourceLine: 4, text: '第一段正文' },
-      { id: 'P2', sourceLine: 5, text: '第二段正文' },
+      { id: 'P1', sourceLine: 4, charOffset: 5, text: '第一段正文' },
+      { id: 'P2', sourceLine: 5, charOffset: 5, text: '第二段正文' },
     ]);
   });
 
@@ -169,7 +170,7 @@ describe('story-model content extraction', () => {
   it('removes <cot>/<options> even without a story wrapper', () => {
     const input = '<cot>丢弃</cot>\n实在的剧情\n<options>丢弃</options>';
     expect(prepareTargetText(input, []).segments).toEqual([
-      { id: 'P1', sourceLine: 1, text: '实在的剧情' },
+      { id: 'P1', sourceLine: 1, charOffset: 5, text: '实在的剧情' },
     ]);
   });
 

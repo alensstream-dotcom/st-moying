@@ -21,7 +21,9 @@
 import { WARDROBE_CATEGORIES, WARDROBE_ITEMS } from '@/data/wardrobe';
 import { POSE_CATEGORIES, POSE_ITEMS } from '@/data/poseBank';
 import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
+import { BODY_EXTRA, FACE_EXTRA, FANDOM_EXTRA } from '@/data/faceExtra';
 import { scoreLore } from '@/data/loreMatch';
+import { customPoses, customWardrobe } from '@/data/customLore';
 import type {
   BodyPreset,
   FacePreset,
@@ -69,10 +71,10 @@ export type FaceCard = (FacePreset | BodyPreset | FandomPreset) & { kind: FaceCa
  * 为什么不直接把 three tables 塞进 pickDiverse:命中词不同来源不同(「清冷」是脸型词,
  * 「精灵」是同人词),拼在一起后 categoryOf 用 kind 区分,配额就自然按三类分。
  */
-const FACE_CARDS: FaceCard[] = [
-  ...FACE_PRESETS.map(preset => ({ ...preset, kind: 'face' as const })),
-  ...BODY_PRESETS.map(preset => ({ ...preset, kind: 'body' as const })),
-  ...FANDOM_PRESETS.map(preset => ({ ...preset, kind: 'fandom' as const })),
+export const FACE_CARDS: FaceCard[] = [
+  ...[...FACE_PRESETS, ...FACE_EXTRA].map(preset => ({ ...preset, kind: 'face' as const })),
+  ...[...BODY_PRESETS, ...BODY_EXTRA].map(preset => ({ ...preset, kind: 'body' as const })),
+  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA].map(preset => ({ ...preset, kind: 'fandom' as const })),
 ];
 
 const WARDROBE_CATEGORY_LABEL = new Map<string, string>(WARDROBE_CATEGORIES.map(c => [c.id, c.label]));
@@ -120,12 +122,12 @@ export function collectLoreCandidates(text: string, options: LoreOptions = {}): 
   const body = (text ?? '').trim();
   if (!body) return { wardrobe: [], poses: [], faces: [] };
   return {
-    wardrobe: pickDiverse(WARDROBE_ITEMS, body, item => item.category, {
+    wardrobe: pickDiverse(allWardrobeItems(), body, item => item.category, {
       limit: options.wardrobeLimit ?? 8,
       maxNsfw: options.maxNsfw,
       vibes: options.vibes,
     }),
-    poses: pickDiverse(POSE_ITEMS, body, item => item.category, {
+    poses: pickDiverse(allPoseItems(), body, item => item.category, {
       limit: options.poseLimit ?? 6,
       maxNsfw: options.maxNsfw,
       vibes: options.vibes,
@@ -236,7 +238,7 @@ const FACE_KIND_LABEL: Record<FaceCardKind, string> = {
 /** UI 用:按分类分组(服装)。 */
 export function wardrobeByCategory(): Map<string, WardrobeItem[]> {
   const map = new Map<string, WardrobeItem[]>();
-  for (const item of WARDROBE_ITEMS) {
+  for (const item of allWardrobeItems()) {
     const list = map.get(item.category);
     if (list) list.push(item);
     else map.set(item.category, [item]);
@@ -247,7 +249,7 @@ export function wardrobeByCategory(): Map<string, WardrobeItem[]> {
 /** UI 用:按分类分组(姿势)。 */
 export function posesByCategory(): Map<string, PoseEntry[]> {
   const map = new Map<string, PoseEntry[]>();
-  for (const item of POSE_ITEMS) {
+  for (const item of allPoseItems()) {
     const list = map.get(item.category);
     if (list) list.push(item);
     else map.set(item.category, [item]);
@@ -262,4 +264,18 @@ export function wardrobeCategoryLabel(id: string): string {
 
 export function poseCategoryLabel(id: string): string {
   return POSE_CATEGORY_LABEL.get(id) ?? id;
+}
+
+/**
+ * 内置 + 自定义的完整候选池。
+ *
+ * 为什么做成函数而不是常量:自定义条目存在 localStorage,导入/删除后池子必须立刻变;
+ * 常量快照会让「刚导入的款式这一轮还用不上」。
+ */
+export function allWardrobeItems(): WardrobeItem[] {
+  return [...WARDROBE_ITEMS, ...customWardrobe()];
+}
+
+export function allPoseItems(): PoseEntry[] {
+  return [...POSE_ITEMS, ...customPoses()];
 }

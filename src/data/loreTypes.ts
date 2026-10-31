@@ -110,6 +110,7 @@ export type PoseCategoryId =
   | 'climax' // 高潮/射精瞬间
   | 'afterglow' // 事后余韵
   | 'tease' // 挑逗/走光/湿身
+  | 'pov' // 第一视角窥视(偷看衣领/裙底/镜中/手机屏幕)
 
 export interface PoseEntry extends LoreItemBase {
   category: PoseCategoryId;

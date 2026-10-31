@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { WARDROBE_CATEGORIES, WARDROBE_ITEMS } from '@/data/wardrobe';
 import { POSE_CATEGORIES, POSE_ITEMS } from '@/data/poseBank';
 import { buildLoreBlock, collectLoreCandidates, pickDiverse, wardrobeByCategory } from '@/data/loreIndex';
+import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
+import { BODY_EXTRA, FACE_EXTRA, FANDOM_EXTRA } from '@/data/faceExtra';
 
 describe('loreIndex 服装召回', () => {
   it('把「黑丝」拆成多条差异明显的候选,而不是每次都同一款', () => {
@@ -58,11 +60,15 @@ describe('loreIndex 姿势召回', () => {
   });
 
   it('姿势库每类条数均衡,不出现某一类独大', () => {
-    expect(POSE_ITEMS.length).toBe(84);
-    for (const category of POSE_CATEGORIES) {
-      const count = POSE_ITEMS.filter(item => item.category === category.id).length;
-      expect(count).toBe(6);
+    expect(POSE_ITEMS.length).toBeGreaterThanOrEqual(84);
+    const counts = POSE_CATEGORIES.map(
+      category => POSE_ITEMS.filter(item => item.category === category.id).length,
+    );
+    for (const count of counts) {
+      expect(count).toBeGreaterThanOrEqual(6);
     }
+    // 最多的那一类不能超过最少那一类的 4 倍,否则召回会永远偏向同一类。
+    expect(Math.max(...counts)).toBeLessThanOrEqual(Math.min(...counts) * 4);
   });
 });
 
@@ -126,5 +132,45 @@ describe('loreIndex 库结构', () => {
   it('pickDiverse 的 limit 生效', () => {
     const picked = pickDiverse(WARDROBE_ITEMS, '黑丝 吊带袜 旗袍 女仆', item => item.category, { limit: 3 });
     expect(picked.length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('数据文件的书写口径(导入别人整理的表时最容易踩)', () => {
+  it('所有服装 tag 串都是英文小写 + 逗号加空格', () => {
+    for (const item of WARDROBE_ITEMS) {
+      expect(item.tags).not.toMatch(/[\u4e00-\u9fa5]/);
+      expect(item.tags).toBe(item.tags.toLowerCase());
+      expect(item.tags).not.toMatch(/,\S/);
+    }
+  });
+
+  it('所有触发词都在两个汉字以上(单字会被匹配器直接跳过)', () => {
+    for (const item of [...WARDROBE_ITEMS, ...POSE_ITEMS]) {
+      for (const alias of item.aliases) {
+        expect(alias.trim().length).toBeGreaterThanOrEqual(2);
+      }
+      expect(item.aliases.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('姿势条目的 category 都在分类表里,且 id 唯一', () => {
+    const known = new Set<string>(POSE_CATEGORIES.map(category => category.id));
+    for (const item of POSE_ITEMS) {
+      expect(known.has(item.category)).toBe(true);
+    }
+    const ids = POSE_ITEMS.map(item => item.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('人物指纹三条表的 id 互不重复', () => {
+    const ids = [
+      ...FACE_PRESETS,
+      ...FACE_EXTRA,
+      ...BODY_PRESETS,
+      ...BODY_EXTRA,
+      ...FANDOM_PRESETS,
+      ...FANDOM_EXTRA,
+    ].map(item => item.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

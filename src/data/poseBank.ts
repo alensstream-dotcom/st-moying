@@ -1,3 +1,4 @@
+import { POSE_EXTRA } from '@/data/poseExtra';
 /**
  * 亲密姿势库(poseBank):把正文里的泛词翻成「能照抄的体位 + 机位指纹」。
  *
@@ -125,13 +126,19 @@ export const POSE_CATEGORIES: PoseCategory[] = [
     hint: '不脱比脱更有效:拉下肩带、掀裙角、湿身贴布;机位给局部特写 + 一个眼神,别给全景。',
     nsfw: 1,
   },
+  {
+    id: 'pov',
+    label: '第一视角窥视',
+    hint: '代入观看者:必须留一个「伸进画面的肢体」当锚点(hand/arm/fingers/held object),同时只给被看部分(pov 胸/领口/裙底/手机屏幕);用 from above、over shoulder、pov 定机位,别写第二人完整站姿。',
+    nsfw: 2,
+  },
 ];
 
 /**
  * 条目表。id 一旦发布不可改(收藏与自定义覆盖依赖它)。
  * tags 统一 `, ` 分隔、全小写(danbooru 口径)。
  */
-export const POSE_ITEMS: PoseEntry[] = [
+const POSE_CORE: PoseEntry[] = [
   // ---------------------------------------------------------------------------
   // foreplay 前戏爱抚
   // ---------------------------------------------------------------------------
@@ -248,7 +255,7 @@ export const POSE_ITEMS: PoseEntry[] = [
     name: '侧脸舔舐',
     category: 'oral',
     tags: 'licking penis, tongue out, cheek pressed, eye contact, hand on base, kneeling, from side, upper body, soft light',
-    aliases: ['舔', '舔舐', '舌舔', '含着看人', '抬眼'],
+    aliases: ['舔弄', '舔舐', '舌舔', '含着看人', '抬眼'],
     nsfw: 3,
     quality: 5,
     camera: '侧面近景 + 眼神构图',
@@ -533,7 +540,7 @@ export const POSE_ITEMS: PoseEntry[] = [
     name: '隔着衣料磨蹭',
     category: 'ride',
     tags: 'grinding, clothed sex, straddling, panties pulled aside, hands on hips, biting lip, from below, half body, close-up',
-    aliases: ['磨蹭', '隔着衣服', '蹭', '不脱'],
+    aliases: ['磨蹭', '隔着衣服', '蹭腿', '不脱'],
     nsfw: 2,
     quality: 4,
     camera: '仰角半身近景',
@@ -714,7 +721,7 @@ export const POSE_ITEMS: PoseEntry[] = [
     name: '侧位手交',
     category: 'hand',
     tags: 'handjob, sitting side by side, hand on cock, looking down, blush, from side, close-up, soft light',
-    aliases: ['手交', '用手', '撸', '套弄'],
+    aliases: ['手交', '用手', '撸动', '套弄'],
     nsfw: 2,
     quality: 4,
     camera: '侧面近景',
@@ -822,7 +829,7 @@ export const POSE_ITEMS: PoseEntry[] = [
     name: '揉捏挑逗',
     category: 'breast',
     tags: 'nipple stimulation, hand on own breast, one breast out, blush, biting lip, upper body, from front, close-up, soft light',
-    aliases: ['揉胸', '捏', '玩弄', '露一边'],
+    aliases: ['揉胸', '捏揉', '玩弄', '露一边'],
     nsfw: 3,
     quality: 4,
     camera: '正面半身近景',
@@ -1280,3 +1287,9 @@ export const POSE_ITEMS: PoseEntry[] = [
     note: '机位要略低于腰线才成立;`looking back` 让人物与镜头发生关系,避免偷拍感。',
   },
 ];
+
+/**
+ * 面向匹配的成品表:核心 84 条(每类 6 条精选机位)+ 扩容表(位姿变体与第一视角窥视)。
+ * 合并后同一句「后入」能跳到的角度/受力/手位变体足够多,这是治「永远出那几种构图」的办法。
+ */
+export const POSE_ITEMS: PoseEntry[] = [...POSE_CORE, ...POSE_EXTRA];

@@ -68,11 +68,13 @@ describe('auto tag prompt', () => {
       autoGenerate: true,
       jailbreakTier: 'strong',
       lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
-      prompts: prompts({ jailbreak: '附加规则' }),
+      prompts: prompts({ jailbreak: '被忽略的旧附加词' }),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
 
-    expect(messages[0].content).toContain('附加规则');
+    // 附加词已移除:破限只发挡位文本,用户自定义的 prompts.jailbreak 不再拼进去
+    expect(messages[0].content).not.toContain('被忽略的旧附加词');
+    expect(messages[0].content).toContain('<task_framing>');
     expect(messages.some(m => m.role === 'system' && m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))).toBe(true);
     expect(messages.some(m => m.content.includes('除一个 <thinking> 块和一个 JSON 对象外'))).toBe(true);
     expect(messages.some(m => m.content.includes('最终结果必须包含且只能包含一个可解析的 JSON 对象'))).toBe(true);
@@ -143,7 +145,7 @@ describe('auto tag prompt', () => {
       null,
       {
         promptText: '请求开始时的正文快照 ⟦P9⟧',
-        segments: [{ id: 'P9', sourceLine: 7, text: '请求开始时的正文快照' }],
+        segments: [{ id: 'P9', sourceLine: 7, charOffset: 0, text: '请求开始时的正文快照' }],
       },
     );
     const user = messages[messages.length - 1];

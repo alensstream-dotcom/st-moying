@@ -477,7 +477,6 @@ const JAILBREAK_TIER_IDS: readonly JailbreakTierId[] = [
   'standard',
   'strong',
   'max',
-  'custom',
 ];
 
 export interface AutoTagSettings {
