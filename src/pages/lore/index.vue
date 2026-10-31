@@ -10,11 +10,27 @@ import {
   addCustomWardrobe,
   clearCustomLore,
   exportCustomLoreJson,
+  guessWardrobeCategory,
+  guessWardrobeSlot,
   importCustomLoreJson,
+  parseTagBundle,
   removeCustomLore,
+  updateCustomPose,
+  updateCustomWardrobe,
   WARDROBE_SLOT_LABELS,
 } from '@/data/customLore';
 import { allPoseItems, allWardrobeItems } from '@/data/loreIndex';
+import {
+  clearThumbs,
+  countThumbs,
+  deleteThumb,
+  getThumb,
+  putThumb,
+  thumbKey,
+  type ThumbKind,
+} from '@/data/loreThumbs';
+import { backendStatus, decideSeed, generateImage } from '@/generate';
+import { settings } from '@/state/settings';
 import type { NsfwLevel, PoseCategoryId, WardrobeSlot } from '@/data/loreTypes';
 import {
   CHAR_TAG_FIELD_LABELS,
@@ -24,7 +40,7 @@ import {
   type CharTagEntry,
   type CharTagField,
 } from '@/state/charTags';
-import { computed, ref } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 
 /**
  * 素材库 —— 服装 / 姿势 / 面相候选库的浏览与套用页。
@@ -63,6 +79,10 @@ interface LoreCard {
   groupLabel: string;
   /** 用户自己导入的条目（id 以 u-/up- 开头），可以删除 */
   custom?: boolean;
+  /** 姿势条目自带的最佳机位，编辑时要能回填 */
+  camera?: string;
+  /** 服装条目挂的部位，编辑时要能回填 */
+  slot?: WardrobeSlot;
 }
 
 const WARDROBE_LABEL = new Map<string, string>(WARDROBE_CATEGORIES.map(c => [c.id, c.label]));
@@ -89,6 +109,7 @@ const wardrobeCards = computed<LoreCard[]>(() => {
     group: item.category,
     groupLabel: WARDROBE_LABEL.get(item.category) ?? item.category,
     custom: isCustomId(item.id),
+    slot: item.slot,
   }));
 });
 
@@ -113,6 +134,7 @@ const poseCards = computed<LoreCard[]>(() => {
     group: item.category,
     groupLabel: POSE_LABEL.get(item.category) ?? item.category,
     custom: isCustomId(item.id),
+    camera: item.camera,
   }));
 });
 
@@ -159,6 +181,8 @@ const faceCards: LoreCard[] = [
 ];
 
 const tab = ref<Tab>('wardrobe');
+/** 浏览时的尺度上限:库里有 nsfw 3 的条目,翻页时未必想让它们全铺出来。 */
+const maxNsfwFilter = ref(3);
 const keyword = ref('');
 const activeCategory = ref('all');
 const flash = ref('');
@@ -180,8 +204,11 @@ const allCards = computed<LoreCard[]>(() => {
 /** 关键字命中:名字 / tag 串 / 中文触发词,任一含子串即算。 */
 const searched = computed<LoreCard[]>(() => {
   const q = keyword.value.trim().toLowerCase();
-  if (!q) return allCards.value;
-  return allCards.value.filter(card => {
+  const pool = maxNsfwFilter.value >= 3
+    ? allCards.value
+    : allCards.value.filter(card => card.nsfw <= maxNsfwFilter.value);
+  if (!q) return pool;
+  return pool.filter(card => {
     const hay = `${card.name}\n${card.tags}\n${card.aliases.join(' ')}\n${card.extra}`.toLowerCase();
     return hay.includes(q);
   });
@@ -210,6 +237,136 @@ function pickTab(next: Tab) {
 }
 
 const NSFW_TEXT: Record<number, string> = { 1: '微诱惑', 2: '情趣', 3: 'NSFW' };
+
+/* —— 预览图：只有点过「生成预览」的条目才有，缓存在 IndexedDB，翻页不重画 —— */
+const thumbSrcMap = ref<Record<string, string>>({});
+const thumbBusy = ref<Record<string, boolean>>({});
+const thumbCount = ref(0);
+
+function thumbKindOf(): ThumbKind {
+  return tab.value === 'pose' ? 'pose' : tab.value === 'face' ? 'face' : 'wardrobe';
+}
+
+function cardKey(card: LoreCard): string {
+  return thumbKey(thumbKindOf(), card.id);
+}
+
+function thumbSrc(card: LoreCard): string | undefined {
+  return thumbSrcMap.value[cardKey(card)];
+}
+
+function isThumbBusy(card: LoreCard): boolean {
+  return !!thumbBusy.value[cardKey(card)];
+}
+
+function setThumbBusy(key: string, busy: boolean) {
+  const next = { ...thumbBusy.value };
+  if (busy) next[key] = true;
+  else delete next[key];
+  thumbBusy.value = next;
+}
+
+function mountThumb(key: string, blob: Blob) {
+  const old = thumbSrcMap.value[key];
+  if (old) URL.revokeObjectURL(old);
+  thumbSrcMap.value = { ...thumbSrcMap.value, [key]: URL.createObjectURL(blob) };
+}
+
+/** 当前列表里已缓存过的预览一次性挂上(只读不画，不花钱)。 */
+const thumbChecked = new Set<string>();
+
+async function syncThumbs(list: LoreCard[]) {
+  const kind = thumbKindOf();
+  for (const card of list) {
+    const key = thumbKey(kind, card.id);
+    if (thumbSrcMap.value[key]) continue;
+    // 查过一次没图的条目不必每次搜索都再查一遍(IndexedDB 往返虽然快，但搜索每敲一个字都会触发)
+    if (thumbChecked.has(key)) continue;
+    thumbChecked.add(key);
+    const record = await getThumb(key);
+    if (record && record.blob) mountThumb(key, record.blob);
+  }
+}
+
+watch(shown, list => {
+  void syncThumbs(list);
+}, { immediate: true });
+
+/** 预览提示词：一条素材要能被单独看懂，所以固定主体与背景，只换它自己的 tag。 */
+function thumbPrompt(card: LoreCard): string {
+  const base = 'masterpiece, best quality, very aesthetic, absurdres, 1girl, solo, cowboy shot, simple background, grey background';
+  const nude = tab.value === 'pose' ? 'completely nude' : '';
+  return [base, nude, card.tags].filter(Boolean).join(', ');
+}
+
+async function genThumb(card: LoreCard) {
+  const status = backendStatus();
+  if (!status.configured) {
+    toast(`后端还没配好：${status.reason || '先去「渠道」页配置'}`);
+    return;
+  }
+  const key = cardKey(card);
+  if (thumbBusy.value[key]) return;
+  setThumbBusy(key, true);
+  const prompt = thumbPrompt(card);
+  try {
+    const output = await generateImage({
+      prompt,
+      seed: decideSeed(settings.defaultBackend),
+      size: 'portrait',
+    });
+    const blob = await fetch(output.result.url).then(response => response.blob());
+    output.result.revoke();
+    await putThumb(key, blob, prompt);
+    mountThumb(key, blob);
+    thumbCount.value = await countThumbs();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : '生成预览失败');
+  } finally {
+    setThumbBusy(key, false);
+  }
+}
+
+/** 批量走串行:NAI 有并发闸门,并发发出去只会在闸门里排队,不如一条条来好显示进度。 */
+async function genVisibleThumbs() {
+  const status = backendStatus();
+  if (!status.configured) {
+    toast(`后端还没配好：${status.reason || '先去「渠道」页配置'}`);
+    return;
+  }
+  const pending = shown.value.filter(card => !thumbSrc(card));
+  if (!pending.length) {
+    toast('当前列表都已有预览');
+    return;
+  }
+  toast(`开始生成 ${pending.length} 张预览`);
+  for (const card of pending) {
+    if (!thumbSrc(card)) await genThumb(card);
+  }
+}
+
+async function dropThumb(card: LoreCard) {
+  const key = cardKey(card);
+  await deleteThumb(key);
+  const url = thumbSrcMap.value[key];
+  if (url) URL.revokeObjectURL(url);
+  const next = { ...thumbSrcMap.value };
+  delete next[key];
+  thumbSrcMap.value = next;
+  thumbCount.value = await countThumbs();
+}
+
+async function clearAllThumbs() {
+  if (!window.confirm('清空所有素材预览图？下次点生成会重新消耗 NAI 额度。')) return;
+  await clearThumbs();
+  Object.values(thumbSrcMap.value).forEach(url => URL.revokeObjectURL(url));
+  thumbSrcMap.value = {};
+  thumbCount.value = 0;
+}
+
+onUnmounted(() => {
+  Object.values(thumbSrcMap.value).forEach(url => URL.revokeObjectURL(url));
+});
 
 /* —— 套用到角色 —— */
 const applying = ref<LoreCard | null>(null);
@@ -303,8 +460,32 @@ const draftSlot = ref<WardrobeSlot>('full');
 const draftNsfw = ref(2);
 const draftCamera = ref('');
 const draftNote = ref('');
+const pasteRaw = ref('');
+
+/**
+ * 把网上分享的「英文 tag（中文说明）」整段贴进来，一次填好名称、tag 串、触发词、分类和部位。
+ * 这类文本里英文 tag 决定画得准不准，括号里的中文既是给用户看的说明，也正好是正文会
+ * 出现的触发词——所以直接拿来当 aliases，比让人再手打一遍更靠谱。
+ */
+function applyPaste() {
+  const draft = parseTagBundle(pasteRaw.value);
+  if (!draft.tags) {
+    toast('没解析到英文 tag：这段是不是只有中文？');
+    return;
+  }
+  if (!draftName.value.trim() && draft.name) draftName.value = draft.name;
+  draftTags.value = draft.tags;
+  if (!draftAliases.value.trim() && draft.aliases.length) draftAliases.value = draft.aliases.join(', ');
+  if (addingKind.value === 'wardrobe') {
+    draftCategory.value = guessWardrobeCategory(draft.tags, draft.aliases);
+    draftSlot.value = guessWardrobeSlot(draft.tags, draft.aliases) as WardrobeSlot;
+  }
+  const tagCount = draft.tags.split(',').length;
+  toast(`解析出 ${tagCount} 个 tag、${draft.aliases.length} 个中文触发词`);
+}
 
 function openAdd() {
+  editingId.value = null;
   addingKind.value = tab.value === 'pose' ? 'pose' : 'wardrobe';
   draftName.value = '';
   draftTags.value = '';
@@ -314,6 +495,7 @@ function openAdd() {
   draftNsfw.value = 2;
   draftCamera.value = '';
   draftNote.value = '';
+  pasteRaw.value = '';
   addingOpen.value = true;
 }
 
@@ -323,10 +505,33 @@ function switchKind(kind: 'wardrobe' | 'pose') {
   draftCategory.value = kind === 'pose' ? POSE_CATEGORIES[0].id : WARDROBE_CATEGORIES[0].id;
 }
 
+const editingId = ref<string | null>(null);
+
+/**
+ * 编辑已有条目:回填同一套表单。
+ * id 不改,所以已经生成的预览图继续对新内容生效——改错分类不必重画。
+ */
+function openEdit(card: LoreCard) {
+  const pose = tab.value === 'pose';
+  editingId.value = card.id;
+  addingKind.value = pose ? 'pose' : 'wardrobe';
+  draftName.value = card.name;
+  draftTags.value = card.tags;
+  draftAliases.value = card.aliases.join(', ');
+  draftCategory.value = card.group;
+  draftSlot.value = card.slot ?? 'full';
+  draftNsfw.value = card.nsfw;
+  draftCamera.value = card.camera ?? '';
+  draftNote.value = card.note ?? '';
+  pasteRaw.value = '';
+  addingOpen.value = true;
+}
+
 function submitAdd() {
   const nsfw = Math.min(3, Math.max(0, Math.round(Number(draftNsfw.value) || 0))) as NsfwLevel;
+  const editing = editingId.value;
   if (addingKind.value === 'pose') {
-    const result = addCustomPose({
+    const payload = {
       name: draftName.value,
       tags: draftTags.value,
       aliases: draftAliases.value,
@@ -334,14 +539,15 @@ function submitAdd() {
       nsfw: (nsfw === 0 ? 1 : nsfw) as NsfwLevel,
       camera: draftCamera.value,
       note: draftNote.value,
-    });
+    };
+    const result = editing ? updateCustomPose(editing, payload) : addCustomPose(payload);
     if (!result.ok) {
-      toast(result.error ?? '新增失败');
+      toast(result.error ?? '保存失败');
       return;
     }
     tab.value = 'pose';
   } else {
-    const result = addCustomWardrobe({
+    const payload = {
       name: draftName.value,
       tags: draftTags.value,
       aliases: draftAliases.value,
@@ -349,9 +555,10 @@ function submitAdd() {
       slot: draftSlot.value,
       nsfw,
       note: draftNote.value,
-    });
+    };
+    const result = editing ? updateCustomWardrobe(editing, payload) : addCustomWardrobe(payload);
     if (!result.ok) {
-      toast(result.error ?? '新增失败');
+      toast(result.error ?? '保存失败');
       return;
     }
     tab.value = 'wardrobe';
@@ -359,7 +566,8 @@ function submitAdd() {
   bumpLore();
   addingOpen.value = false;
   activeCategory.value = 'all';
-  toast('已加入素材库，下一次自动 tag 就能召回它');
+  toast(editing ? '已更新这一条' : '已加入素材库，下一次自动 tag 就能召回它');
+  editingId.value = null;
 }
 
 const importOpen = ref(false);
@@ -441,11 +649,20 @@ function clearCustom() {
         placeholder="搜名字 / tag / 中文触发词"
       />
       <div class="bbi-lore-tools">
+        <select v-model.number="maxNsfwFilter" class="bbi-input bbi-lore-scale" title="浏览尺度上限">
+          <option :value="1">日常</option>
+          <option :value="2">到情趣</option>
+          <option :value="3">全部</option>
+        </select>
         <button class="bbi-btn bbi-btn-sm bbi-btn-primary" type="button" @click="openAdd">
           新增
         </button>
         <button class="bbi-btn bbi-btn-sm" type="button" @click="openImport">导入</button>
         <button class="bbi-btn bbi-btn-sm" type="button" @click="copyAllCustom">导出</button>
+        <button class="bbi-btn bbi-btn-sm" type="button" title="为当前列表里还没有预览的条目生成一张小图（每条消耗一次 NAI 额度）" @click="genVisibleThumbs">
+          批量预览
+        </button>
+        <button class="bbi-btn bbi-btn-sm" type="button" @click="clearAllThumbs">清空预览</button>
         <button class="bbi-btn bbi-btn-sm" type="button" @click="clearCustom">清空自定义</button>
       </div>
     </div>
@@ -480,6 +697,27 @@ function clearCustom() {
           </span>
           <span v-if="card.quality" class="bbi-lore-q" title="表现力权重">Q{{ card.quality }}</span>
         </header>
+        <figure v-if="thumbSrc(card)" class="bbi-lore-thumb">
+          <img :src="thumbSrc(card) || ''" :alt="card.name" loading="lazy" />
+          <button
+            class="bbi-lore-thumb-x"
+            type="button"
+            title="删掉这张预览"
+            @click="dropThumb(card)"
+          >
+            ×
+          </button>
+        </figure>
+        <button
+          v-else
+          class="bbi-btn bbi-btn-sm bbi-lore-thumb-make"
+          type="button"
+          :disabled="isThumbBusy(card)"
+          title="按这条素材的 tag 单独生成一张预览（消耗一次 NAI 额度，之后会缓存）"
+          @click="genThumb(card)"
+        >
+          {{ isThumbBusy(card) ? '生成中…' : '生成预览' }}
+        </button>
         <p class="bbi-lore-tags">{{ card.tags }}</p>
         <p v-if="card.extra" class="bbi-lore-extra">{{ card.extra }}</p>
         <p v-if="card.note" class="bbi-lore-note">{{ card.note }}</p>
@@ -487,6 +725,15 @@ function clearCustom() {
           <span class="bbi-lore-alias">{{ card.aliases.join(' / ') }}</span>
           <span class="bbi-lore-acts">
             <button class="bbi-btn bbi-btn-sm" type="button" @click="copyTags(card)">复制</button>
+            <button
+              v-if="card.custom"
+              class="bbi-btn bbi-btn-sm"
+              type="button"
+              title="改名称、tag、分类或触发词"
+              @click="openEdit(card)"
+            >
+              编辑
+            </button>
             <button
               v-if="card.custom"
               class="bbi-btn bbi-btn-sm bbi-lore-del"
@@ -568,9 +815,9 @@ function clearCustom() {
     </ModalMask>
 
     <ModalMask :open="addingOpen" @close="addingOpen = false">
-      <div v-if="addingOpen" class="bbi-modal bbi-lore-modal" role="dialog" aria-modal="true" aria-label="新增素材">
+      <div v-if="addingOpen" class="bbi-modal bbi-lore-modal" role="dialog" aria-modal="true" :aria-label="editingId ? '编辑素材' : '新增素材'">
         <header class="bbi-modal-head">
-          <span class="bbi-modal-title">新增素材</span>
+          <span class="bbi-modal-title">{{ editingId ? '编辑素材' : '新增素材' }}</span>
           <button class="bbi-modal-x" type="button" aria-label="关闭" @click="addingOpen = false">
             <Icon name="close" />
           </button>
@@ -594,6 +841,20 @@ function clearCustom() {
             姿势
           </button>
         </div>
+
+        <label class="bbi-modal-field">
+          <span class="bbi-modal-label">从 tag 串填充（可选）</span>
+          <textarea
+            v-model="pasteRaw"
+            class="bbi-input bbi-lore-json"
+            rows="3"
+            placeholder="champagne_tulle_gown（香槟色薄纱晚礼服）, halter_neckline（挂脖领口）, sequin_embroidery（亮片刺绣）"
+          />
+          <span class="bbi-field-hint">
+            从别处复制的一整段「英文 tag（中文说明）」直接贴这里，点下面解析：会自动剥掉括号、把中文说明变触发词、并猜分类与部位。之后还能手动改。
+          </span>
+          <button class="bbi-btn bbi-btn-sm" type="button" @click="applyPaste">解析并填入下方</button>
+        </label>
 
         <label class="bbi-modal-field">
           <span class="bbi-modal-label">名称</span>
@@ -686,12 +947,13 @@ function clearCustom() {
         </header>
 
         <p class="bbi-field-hint">
-          粘贴 JSON。三种形态都认：<code>{"wardrobe":[…],"poses":[…]}</code>、一个数组（按 category 自动分流到服装或姿势）、
-          或单条对象。缺字段的条目会被跳过，不会整体失败。
+          两种都能贴：① JSON（<code>{"wardrobe":[…],"poses":[…]}</code>、一个数组、或单条对象，缺字段的条目只跳过不整体失败）；
+          ② 网上分享的 tag 串，形如 <code>champagne_tulle_gown（香槟色薄纱晚礼服）, halter_neckline（挂脖领口）</code>——
+          这类会自动剥括号、把中文说明当触发词、并猜分类与部位，导入后可在卡片上看到。
         </p>
 
         <label class="bbi-modal-field">
-          <span class="bbi-modal-label">JSON 内容</span>
+          <span class="bbi-modal-label">内容（JSON 或 tag 串）</span>
           <textarea
             v-model="importText"
             class="bbi-input bbi-lore-json"
@@ -771,6 +1033,49 @@ function clearCustom() {
   display: flex;
   flex: 0 0 auto;
   gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.bbi-lore-scale {
+  width: auto;
+  min-width: 84px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.bbi-lore-thumb {
+  position: relative;
+  margin: 0 0 8px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.bbi-lore-thumb img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.bbi-lore-thumb-x {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bbi-lore-thumb-make {
+  width: 100%;
+  margin: 0 0 8px;
 }
 
 .bbi-lore-kind {

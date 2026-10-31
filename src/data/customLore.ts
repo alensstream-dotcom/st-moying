@@ -280,6 +280,72 @@ export function addCustomPose(input: CustomPoseInput): AddResult<PoseEntry> {
   return { ok: true, item };
 }
 
+/** 修改一条自定义服装(id 不变,历史预览图因此不会失效)。 */
+export function updateCustomWardrobe(id: string, input: CustomWardrobeInput): AddResult<WardrobeItem> {
+  const store = loadCustomLore();
+  const index = store.wardrobe.findIndex(item => item.id === id);
+  if (index < 0) return { ok: false, error: '找不到要修改的条目(可能已被删除)' };
+  const name = input.name.trim();
+  const tags = input.tags.trim().replace(/\s+/g, ' ');
+  if (!name) return { ok: false, error: '名称不能为空' };
+  if (!tags) return { ok: false, error: 'tag 串不能为空' };
+  const aliases = splitList(input.aliases);
+  if (!aliases.length) return { ok: false, error: '至少给一个中文触发词' };
+  if (store.wardrobe.some((item, at) => at !== index && nameKey(item) === name.toLowerCase())) {
+    return { ok: false, error: `已经有同名条目「${name}」了` };
+  }
+  const before = store.wardrobe[index];
+  const item: WardrobeItem = {
+    ...before,
+    name,
+    tags,
+    aliases,
+    nsfw: input.nsfw,
+    quality: input.quality ?? before.quality ?? 4,
+    note: input.note?.trim() || undefined,
+    category: WARDROBE_CATEGORIES.some(c => c.id === input.category) ? input.category : before.category,
+    slot: SLOT_IDS.has(input.slot) ? (input.slot as WardrobeSlot) : before.slot,
+  };
+  const wardrobe = [...store.wardrobe];
+  wardrobe[index] = item;
+  persist({ wardrobe, poses: store.poses });
+  return { ok: true, item };
+}
+
+/** 修改一条自定义姿势。 */
+export function updateCustomPose(id: string, input: CustomPoseInput): AddResult<PoseEntry> {
+  const store = loadCustomLore();
+  const index = store.poses.findIndex(item => item.id === id);
+  if (index < 0) return { ok: false, error: '找不到要修改的条目(可能已被删除)' };
+  const name = input.name.trim();
+  const tags = input.tags.trim().replace(/\s+/g, ' ');
+  if (!name) return { ok: false, error: '名称不能为空' };
+  if (!tags) return { ok: false, error: 'tag 串不能为空' };
+  const aliases = splitList(input.aliases);
+  if (!aliases.length) return { ok: false, error: '至少给一个中文触发词' };
+  if (!POSE_CATEGORIES.some(category => category.id === input.category)) {
+    return { ok: false, error: '姿势分类不在内置分类表里，请从下拉里选' };
+  }
+  if (store.poses.some((item, at) => at !== index && nameKey(item) === name.toLowerCase())) {
+    return { ok: false, error: `已经有同名条目「${name}」了` };
+  }
+  const before = store.poses[index];
+  const item: PoseEntry = {
+    ...before,
+    name,
+    tags,
+    aliases,
+    nsfw: input.nsfw,
+    category: input.category,
+    camera: input.camera?.trim() || undefined,
+    note: input.note?.trim() || undefined,
+  };
+  const poses = [...store.poses];
+  poses[index] = item;
+  persist({ wardrobe: store.wardrobe, poses });
+  return { ok: true, item };
+}
+
 /** 删除一条自定义条目(只能删自定义的,内置条目不动)。 */
 export function removeCustomLore(kind: 'wardrobe' | 'pose', id: string): boolean {
   const store = loadCustomLore();
@@ -293,6 +359,124 @@ export function removeCustomLore(kind: 'wardrobe' | 'pose', id: string): boolean
   if (next.length === store.poses.length) return false;
   persist({ wardrobe: store.wardrobe, poses: next });
   return true;
+}
+
+/** 解析出来的素材草稿:还没入库,先让用户看一眼改分类。 */
+export interface TagBundleDraft {
+  /** 建议名称(第一个中文说明;没有中文时退回第一个 tag)。 */
+  name: string;
+  /** 规整后的 tag 串,逗号加空格分隔。 */
+  tags: string;
+  /** 中文说明直接当触发词用——它们本来就是正文里会出现的词。 */
+  aliases: string[];
+  note: string;
+}
+
+function normalizeFullwidth(raw: string): string {
+  return String(raw ?? '')
+    .replace(/[（【]/g, '(')
+    .replace(/[）】]/g, ')')
+    .replace(/[，、；;]/g, ',')
+    .replace(/[：]/g, ':');
+}
+
+/** 按逗号切,但括号里的逗号不算分隔符(中文说明里常有顿号)。 */
+function splitPieces(text: string): string[] {
+  const pieces: string[] = [];
+  let buffer = '';
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth = Math.max(0, depth - 1);
+    if ((ch === ',' || ch === '\n' || ch === '|') && depth === 0) {
+      if (buffer.trim()) pieces.push(buffer.trim());
+      buffer = '';
+      continue;
+    }
+    buffer += ch;
+  }
+  if (buffer.trim()) pieces.push(buffer.trim());
+  return pieces;
+}
+
+/** 把一段文字规整成 danbooru 风格的 tag:小写、下划线、去掉非字母数字。 */
+function cleanTag(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+    .replace(/[^a-z0-9_:]/g, '')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+/**
+ * 解析网上分享的「英文 tag（中文说明）」列表。
+ *
+ * 这类文本几乎都是 `champagne_tulle_gown（香槟色薄纱晚礼服）, halter_neckline（挂脖领口）`
+ * 的形状:tag 负责画得准,中文负责让用户认得出、也顺便当触发词。用户把它贴进 JSON 框
+ * 只会在第二个括号上报错,所以单独走一条解析路径。
+ */
+export function parseTagBundle(raw: string): TagBundleDraft {
+  const text = normalizeFullwidth(raw);
+  const tags: string[] = [];
+  const labels: string[] = [];
+  for (const piece of splitPieces(text)) {
+    const open = piece.indexOf('(');
+    const head = open >= 0 ? piece.slice(0, open) : piece;
+    const tag = cleanTag(head);
+    if (tag && /^[a-z0-9_]+$/.test(tag)) tags.push(tag);
+    if (open >= 0) {
+      const inside = piece.slice(open).replace(/[()]/g, ' ');
+      for (const label of inside.split(/[,/|]+/)) {
+        const value = label.trim();
+        if (value) labels.push(value);
+      }
+    } else if (!tag && piece.trim()) {
+      // 整片没有括号也没有英文:多半是纯中文说明,留着当触发词
+      labels.push(piece.trim());
+    }
+  }
+  const uniqueTags = [...new Set(tags)];
+  const uniqueLabels = [...new Set(labels)].filter(value => value.length >= 2);
+  return {
+    name: uniqueLabels[0] ?? uniqueTags[0] ?? '',
+    tags: uniqueTags.join(', '),
+    aliases: uniqueLabels.slice(0, 6),
+    note: '',
+  };
+}
+
+/** 从 tag 串猜分类:猜错只是排序位置不对,但总比一律塞进 costume 强。 */
+export function guessWardrobeCategory(tags: string, labels: string[] = []): string {
+  const hay = `${tags} ${labels.join(' ')}`.toLowerCase();
+  const rules: Array<[RegExp, string]> = [
+    [/pantyhose|thighhigh|thigh_high|stocking|tights|\bsocks?\b|leggings?|garter_strap/, 'hosiery'],
+    [/\bbra\b|panty|panties|lingerie|garter|thong|teddy|bodysuit_lingerie|corset|chemise/, 'lingerie'],
+    [/swimsuit|bikini|swimwear|one-piece_swim|beach/, 'swim'],
+    [/pajama|nightgown|nightdress|sleepwear|négligée|negligee|loungewear/, 'sleep'],
+    [/gown|evening_dress|dress\b|cocktail/, 'date'],
+    [/school_uniform|blazer|sailor|serafuku|jk\b|pleated_skirt/, 'campus'],
+    [/\bsuit\b|blouse|office|pencil_skirt|business/, 'office'],
+    [/kimono|hanfu|qipao|cheongsam|yukata|ao_dai/, 'eastern'],
+    [/armor|cloak|witch|robe|elf\b|fantasy/, 'fantasy'],
+    [/leotard|latex|cosplay|bunny_girl|maid|nurse|cheerleader|wet_look/, 'costume'],
+    [/sport|jersey|yoga|gym|tracksuit|sneaker/, 'sport'],
+    [/sweater|cardigan|apron|homewear|knit/, 'home'],
+  ];
+  for (const [pattern, id] of rules) {
+    if (pattern.test(hay)) return id;
+  }
+  return 'costume';
+}
+
+export function guessWardrobeSlot(tags: string, labels: string[] = []): string {
+  const hay = `${tags} ${labels.join(' ')}`.toLowerCase();
+  if (/pantyhose|thighhigh|thigh_high|stocking|tights|\bsocks?\b|leggings?/.test(hay)) return 'hosiery';
+  if (/\bbra\b|panties|lingerie_set|garter|thong|teddy|corset|chemise/.test(hay)) return 'underwear';
+  if (/high_heels|heels|boots|shoes|sneaker|sandals|flats/.test(hay)) return 'shoes';
+  if (/necklace|earring|choker|gloves|bracelet|ring\b|hairpin|veil/.test(hay)) return 'accessory';
+  return 'full';
 }
 
 /** 导出成 JSON 文本(可直接贴给别人,或存进网盘当备份)。 */
@@ -319,7 +503,40 @@ export function importCustomLoreJson(raw: string): ImportReport {
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { wardrobe: 0, poses: 0, skipped: 0, error: 'JSON 格式不对（多半是少了括号或多了逗号）' };
+    // 不是 JSON 就按「网上分享的 tag 串」再试一次:用户从别处复制一段 tag 列表粘进来
+    // 是常态,让他为此去学 JSON 语法没有意义——原来的报错「多了逗号或少了括号」正是
+    // 把人卡在这里的那句话。
+    const draft = parseTagBundle(text);
+    if (!draft.tags) {
+      return {
+        wardrobe: 0,
+        poses: 0,
+        skipped: 0,
+        error: '这段既不是 JSON，也没解析出英文 tag。如果只有中文，请用「新增素材」手填。',
+      };
+    }
+    if (!draft.aliases.length) {
+      return {
+        wardrobe: 0,
+        poses: 0,
+        skipped: 1,
+        error: '解析出了英文 tag，但没有任何中文说明。中文触发词是剧情命中的唯一入口，请补上一两个（正文里会怎么写这件衣服）再导入。',
+      };
+    }
+    const category = guessWardrobeCategory(draft.tags, draft.aliases);
+    const slot = guessWardrobeSlot(draft.tags, draft.aliases) as WardrobeSlot;
+    const added = addCustomWardrobe({
+      name: draft.name || draft.tags.slice(0, 40),
+      tags: draft.tags,
+      aliases: draft.aliases.join(', '),
+      category,
+      slot,
+      nsfw: 2,
+      quality: 5,
+      note: '从 tag 串导入',
+    });
+    if (!added.ok) return { wardrobe: 0, poses: 0, skipped: 1, error: added.error };
+    return { wardrobe: 1, poses: 0, skipped: 0 };
   }
   const store = loadCustomLore();
   const wardrobe = [...store.wardrobe];

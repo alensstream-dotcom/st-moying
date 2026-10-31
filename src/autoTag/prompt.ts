@@ -293,7 +293,7 @@ export async function buildAutoTagMessages(
     : '- 多人画面中，每个角色的发色、瞳色、体型、服装、物件和个人动作都必须使用该角色的区分性称谓邻接绑定，禁止把两人的外貌特征散放成无法归属的一串公共 tag。';
   const characterRule = `7. 角色状态与 changes：${newCharacterRule}
    ${libraryReferenceRule}
-   - 按正文 P 位置为每个角色维护临时服装状态：正文未明确初始穿着时可以合理决定一次；没有穿上、脱下、换装、衣物损坏或场景/时间跳跃时沿用上一状态，发生明确变化后从对应 P 位置起更新。首次确定一套临时服装时，必须冻结足以复现款式的“服装视觉指纹”：服装类别之外，再固定版型/剪裁、主色和关键部件，涉及裤袜时固定颜色与透明度；例如不能只写 school uniform, pantyhose，而应具体到 navy school blazer, white collared shirt, red ribbon, dark pleated skirt, opaque white pantyhose。只补少量关键特征，不堆无关装饰。相同状态复用同一视觉指纹；镜头外不可见的部件可以省略，但省略不等于脱掉，后续重新可见且中间没有变化时必须恢复。每张图的 ${nlOn ? 'tag 与 nl 都' : 'tag 都'}要写出当前镜头可见的关键服装特征。临时穿着不得写进固定 outfit，除非设定明确它是长期不换的招牌着装。
+   - 按正文 P 位置为每个角色维护临时服装状态：正文未明确初始穿着时可以合理决定一次；没有穿上、脱下、换装、衣物损坏或场景/时间跳跃时沿用上一状态，发生明确变化后从对应 P 位置起更新。首次确定一套临时服装时，必须冻结足以复现款式的“服装视觉指纹”：服装类别之外，再固定版型/剪裁、主色和关键部件，涉及裤袜时固定颜色与透明度；例如不能只写 school uniform, pantyhose，而应具体到 navy school blazer, white collared shirt, red ribbon, dark pleated skirt, opaque white pantyhose。只补少量关键特征，不堆无关装饰。相同状态复用同一视觉指纹；镜头外不可见的部件可以省略，但省略不等于脱掉，后续重新可见且中间没有变化时必须恢复。每张图的 ${nlOn ? 'tag 与 nl 都' : 'tag 都'}要写出当前镜头可见的关键服装特征。临时穿着不得写进固定 outfit，除非设定明确它是长期不换的招牌着装。同一次输出内同一角色的临时服装必须**逐字复用同一串**：先在第一张图把整套视觉指纹定死，后续图的服装部分直接复制这串，只允许在末尾追加衣物状态词（slipped down / unzipped / wet / clinging / pulled aside / torn），不许更换单品、改颜色或改长度；正文没有写出换衣、脱下、衣物被毁或场景时间跳跃时，换了就是错误。镜头外不可见的部件省略后，重新出现在画面里时必须恢复原样。
    ${multiCharacterBindingRule}
    - 库中已有角色发生**永久外貌变化**（染发、剪发、留疤、长大、永久变身、固定造型改变等）时，必须通过 changes 报告：{"name":"角色名","field":"hair","value":"short red hair","position":"P4","reason":"在此处染发并剪短"}；field 只能是 sex/hair/eyes/skin/body/extra/outfit/fandom。
    - 已建档角色被判定为同人、但档案里没有 fandom 的，必须补一条 changes：{"name":"角色名","field":"fandom","value":"character name (copyright name)","reason":"判定为同人，补身份 tag"}；档案已有 fandom 的直接照抄，不重复报告。
@@ -326,6 +326,7 @@ ${characterRule}
  - 下方【服装候选库】【姿势与机位候选库】命中正文时，必须使用库里的 tag 串：原样照抄，只允许删掉正文明确否定的部件；不许换成更泛的词（不许把 lace-trimmed sheer black pantyhose 简化成 pantyhose，不许把 mating press 简化成 sex）。
  - 库未命中时才自行编写，且同样要写到“版型/面料/结构”或“体位/肢体关系/机位”这一级粒度。
  - 一张图里只写必要的接触点；人数超过两人或需要复杂交叠时，优先采用候选库里标出的机位，不要自创极端透视。
+ - **服装一致性高于多样性**：本楼内同一角色只有一套衣服。候选项多只是供货，不是让你每张换一套；挑定后逐字复用，差异只出现在姿势/机位/景别/衣物状态词上。如果你发现自己给同一角色写了第二套服装，先回正文找换衣动作，找不到就改回第一套。
 11. 视角（决定一张图好不好看的一半）——先回答“谁的眼睛在看”，再写 tag：
  - 用第一视角（first-person view、pov、pov hands）的条件：读者本该代入观看者；正在偷看或窥视衣领、裙底、被窝、镜中、手机屏幕；有一个明确的“被看见”的瞬间；或画面吸引力主要来自“我伸手就能碰到”的距离感。
  - 第一视角必须保留进入画面的肢体作为锚点（hand、arm、fingers、held object、partially visible body），否则会退化成普通正脸；同时不要写第二个人物的完整站姿，否则模型会画成两人并排。
