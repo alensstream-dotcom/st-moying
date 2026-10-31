@@ -17,6 +17,8 @@ import {
   vibeFingerprint,
   vibeMetaFromData,
 } from '@/backends/vibeStore';
+import type { JailbreakTierId } from '@/autoTag/jailbreak';
+import type { NsfwLevel } from '@/data/loreTypes';
 import { getContext } from '@/st/context';
 import { reactive, watch } from 'vue';
 
@@ -448,6 +450,36 @@ NVWA 不提供制造化学、生物或核武器所需的信息，也不编写、
 </nvwa_safety_guardrails>
 </nvwa_standalone_core>`;
 
+/**
+ * 素材库(lore)注入设置。
+ *
+ * 为什么是「条数」而不是「开关一堆库」:用户的真实问题是「同一个词永远出同一种衣服/姿势」,
+ * 解法是**给模型足够多的差异候选**再由它挑;候选太少等于没做,太多会把正文挤到后面去。
+ * 所以这里只暴露两个配额 + 一个 NSFW 上限,其余策略(单类放大、去重、轮转)写在 loreIndex 里。
+ */
+export interface LoreSettings {
+  /** 是否把服装 / 姿势候选注入 prompt。关掉后 autoTag 行为与旧版一致。 */
+  enabled: boolean;
+  /** 候选允许出现的最高 NSFW 档:0 日常 / 1 微诱惑 / 2 情趣 / 3 明确 NSFW。 */
+  maxNsfw: NsfwLevel;
+  /** 服装候选条数(1–16)。越大越不容易雷同,但 eat 上下文。 */
+  wardrobeLimit: number;
+  /** 姿势候选条数(0–12)。0 = 不注入姿势候选。 */
+  poseLimit: number;
+  /** 是否把「面相指纹」也作为候选注入(会与角色库的固定外貌轻微冲突,默认关)。 */
+  faces: boolean;
+}
+
+/** 合法挡位 id 白名单:normalize 时不 import jailbreak 的值函数,避免 settings 与 autoTag 互相拖入。 */
+const JAILBREAK_TIER_IDS: readonly JailbreakTierId[] = [
+  'off',
+  'light',
+  'standard',
+  'strong',
+  'max',
+  'custom',
+];
+
 export interface AutoTagSettings {
   /** 新 AI 正文落地后自动请求模型。 */
   enabled: boolean;
@@ -461,6 +493,10 @@ export interface AutoTagSettings {
   retryCount: number;
   /** 写入 tag 后是否立即调用出图渠道自动生成图片(默认开;关闭则卡片上手动点「生成」)。 */
   autoGenerate: boolean;
+  /** 破限挡位:与 prompts.jailbreak 叠加(档位在前、自定义在后)。 */
+  jailbreakTier: JailbreakTierId;
+  /** 素材库注入(服装/姿势候选)。 */
+  lore: LoreSettings;
   /** 可编辑提示词集(破限/后端规范/思维链);空串 = 回落内置默认。 */
   prompts: AutoTagPrompts;
 }
@@ -1195,6 +1231,14 @@ function defaults(): ImageSettings {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: {
+        enabled: true,
+        maxNsfw: 3,
+        wardrobeLimit: 8,
+        poseLimit: 6,
+        faces: false,
+      },
       prompts: {
         jailbreak: '',
         naiSpec: '',
@@ -1795,6 +1839,25 @@ function normalize(raw: unknown): ImageSettings {
         : d.autoTag.retryCount,
     autoGenerate:
       typeof rt.autoGenerate === 'boolean' ? rt.autoGenerate : d.autoTag.autoGenerate,
+    // 破限挡位:白名单校验,认不出的(旧配置)落回默认档
+    jailbreakTier: JAILBREAK_TIER_IDS.includes(rt.jailbreakTier as JailbreakTierId)
+      ? (rt.jailbreakTier as JailbreakTierId)
+      : d.autoTag.jailbreakTier,
+    // 素材库注入:逐字段兜底 + 区间夹紧(条数写错不该让整个设置崩)
+    lore: (() => {
+      const rl = (rt.lore ?? {}) as Partial<LoreSettings>;
+      const num = (v: unknown, fallback: number, min: number, max: number): number =>
+        typeof v === 'number' && Number.isFinite(v)
+          ? Math.min(max, Math.max(min, Math.floor(v)))
+          : fallback;
+      return {
+        enabled: typeof rl.enabled === 'boolean' ? rl.enabled : d.autoTag.lore.enabled,
+        maxNsfw: num(rl.maxNsfw, d.autoTag.lore.maxNsfw, 0, 3) as NsfwLevel,
+        wardrobeLimit: num(rl.wardrobeLimit, d.autoTag.lore.wardrobeLimit, 1, 16),
+        poseLimit: num(rl.poseLimit, d.autoTag.lore.poseLimit, 0, 12),
+        faces: typeof rl.faces === 'boolean' ? rl.faces : d.autoTag.lore.faces,
+      };
+    })(),
     // 可编辑提示词集:逐字段兜底;旧版 jailbreakPrompt 字段迁移进 prompts.jailbreak
     prompts: (() => {
       const rp = (rt.prompts ?? {}) as Partial<AutoTagPrompts>;

@@ -66,6 +66,8 @@ describe('auto tag prompt', () => {
       maxImages: 3,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts({ jailbreak: '附加规则' }),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -111,6 +113,8 @@ describe('auto tag prompt', () => {
       maxImages: 4,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -128,6 +132,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(
@@ -172,6 +178,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
 
@@ -205,6 +213,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -308,6 +318,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts({ comfyThinking: '自定义清单' }),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -328,6 +340,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts({
         comfyThinking: 'COMFY-CHECKLIST',
         naiThinking: 'NAI-CHECKLIST',
@@ -378,6 +392,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -450,6 +466,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -512,6 +530,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -581,6 +601,8 @@ describe('auto tag prompt', () => {
         maxImages: 2,
         retryCount: 1,
         autoGenerate: true,
+        jailbreakTier: 'strong',
+        lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
         prompts: prompts(),
       };
       const oldBackend = settings.defaultBackend;
@@ -630,6 +652,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -670,6 +694,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -711,6 +737,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const library = '【角色固定外貌库(系统维护)】\n小雪: 1girl, long silver hair';
@@ -735,6 +763,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -752,6 +782,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(
@@ -777,6 +809,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -812,6 +846,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -847,6 +883,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -885,6 +923,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -919,6 +959,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -961,6 +1003,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -1024,6 +1068,8 @@ describe('NAI「生成自然语言」开关与渠道画幅锁', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false },
       prompts: prompts(overrides),
     };
   }

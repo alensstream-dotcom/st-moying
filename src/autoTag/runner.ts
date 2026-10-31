@@ -1,4 +1,4 @@
-import { requestCompletion, requestViaMainApi } from '@/api/client';
+import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
 import { readBookMemory } from '@/autoTag/bookMemory';
 import {
   applyPositionedCharRefs,
@@ -10,6 +10,7 @@ import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/g
 import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
+import { diagnoseTruncation, TRUNCATION_RETRY_NOTE } from '@/autoTag/truncation';
 import {
   BBI_CHAR_EXTRA_KEY,
   CHAR_TAG_FIELDS,
@@ -329,16 +330,28 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const retries = Math.max(0, Math.floor(Number(settings.autoTag.retryCount) || 0));
     let plan: ImagePlan | null = null;
     let lastError = '';
+    // 上一次 attempt 是否被判为「被截断」:是则下一次重发时追加降载指令。
+    // 不增加重试次数(那是用户的成本上限),只让重试打在正确的点上。
+    let retryNote = '';
     for (let attempt = 0; attempt <= retries && !plan; attempt++) {
       if (controller.signal.aborted) {
         processed.delete(identity);
         return;
       }
+      const attemptMessages: ChatMsg[] = retryNote
+        ? [...messages, { role: 'system', content: retryNote }]
+        : messages;
       try {
         // parsed 用对象壳装着:validate 闭包写入,await 之后读取——请求成功 + 验收通过才非空。
         // (直接 let 会被 TS 收窄成 null:闭包内的赋值控制流分析看不见。)
         const parsed: { plan: ImagePlan | null } = { plan: null };
         const validate = (raw: string) => {
+          const verdict = diagnoseTruncation(raw);
+          if (verdict.truncated) {
+            // 形态上就是被掐断的:重试要降载,而不是原样再发一遍同样长度的请求。
+            retryNote = TRUNCATION_RETRY_NOTE;
+            throw new Error(`输出被截断(${verdict.reason})`);
+          }
           const candidate = parseImagePlan(
             raw,
             preparedTarget.segments,
@@ -364,13 +377,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             ? `自动 tag(第 ${floor} 楼 · 第 ${attempt + 1} 次)`
             : `自动 tag(第 ${floor} 楼)`;
         if (channel) {
-          await requestCompletion(channel, messages, {
+          await requestCompletion(channel, attemptMessages, {
             signal: controller.signal,
             source,
             validate,
           });
         } else {
-          await requestViaMainApi(messages, {
+          await requestViaMainApi(attemptMessages, {
             signal: controller.signal,
             source,
             validate,

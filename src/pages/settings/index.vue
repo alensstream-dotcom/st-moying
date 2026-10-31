@@ -5,12 +5,13 @@ import Collapsible from '@/components/Collapsible.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
+import { JAILBREAK_TIERS, type JailbreakTierId } from '@/autoTag/jailbreak';
 import { fetchModels, testChannel } from '@/api/client';
+import type { NsfwLevel } from '@/data/loreTypes';
 import {
   BACKENDS,
   DEFAULT_COMFY_SPEC,
   DEFAULT_COMFY_THINKING,
-  DEFAULT_JAILBREAK_PROMPT,
   DEFAULT_NAI_V5_SPEC,
   DEFAULT_NAI_V5_THINKING,
   IMAGE_DISPLAY_SIZES,
@@ -120,6 +121,42 @@ function normalizeAutoTagNumbers(changed?: 'minImages' | 'maxImages' | Event) {
   settings.autoTag.minImages = minImages;
   settings.autoTag.maxImages = maxImages;
   settings.autoTag.retryCount = Math.min(5, Math.max(0, Math.floor(Number(settings.autoTag.retryCount) || 0)));
+  // 素材库条数:夹在硬上限内,手填 999 会把副 API 上下文挤爆(服装 1~16、姿势 0~12)
+  settings.autoTag.lore.wardrobeLimit = Math.min(
+    16,
+    Math.max(1, Math.floor(Number(settings.autoTag.lore.wardrobeLimit) || 1)),
+  );
+  settings.autoTag.lore.poseLimit = Math.min(
+    12,
+    Math.max(0, Math.floor(Number(settings.autoTag.lore.poseLimit) || 0)),
+  );
+}
+
+/* —— 破限挡位:难度阶梯 + 自定义叠加,文本见 autoTag/jailbreak.ts。
+   与「破限附加词」是叠加关系:选 off / custom 只发附加词,其余档位是「档位文本 + 附加词」。 */
+const JAILBREAK_OPTIONS = JAILBREAK_TIERS.map(t => ({ value: t.id, label: t.label }));
+const jailbreakTierSel = computed<string>({
+  get: () => settings.autoTag.jailbreakTier,
+  set: v => (settings.autoTag.jailbreakTier = v as JailbreakTierId),
+});
+const jailbreakTierSummary = computed(
+  () => JAILBREAK_TIERS.find(t => t.id === settings.autoTag.jailbreakTier)?.summary ?? '',
+);
+const jailbreakAddonOn = computed(() => settings.autoTag.prompts.jailbreak.trim().length > 0);
+
+/* —— 素材库召回尺度(见 data/loreIndex.ts 的 LoreOptions) —— */
+const NSFW_LEVEL_OPTIONS = [
+  { value: '0', label: '仅日常' },
+  { value: '1', label: '到微诱惑' },
+  { value: '2', label: '到情趣内衣' },
+  { value: '3', label: '全部(含明确 NSFW)' },
+];
+const loreMaxNsfwSel = computed<string>({
+  get: () => String(settings.autoTag.lore.maxNsfw),
+  set: v => (settings.autoTag.lore.maxNsfw = Math.min(3, Math.max(0, Number(v) || 0)) as NsfwLevel),
+});
+function openLorePage() {
+  ui.activePage = 'lore';
 }
 
 /* —— 自定义提示词(UI 照搬柏宝书):列表只读展示,编辑在弹窗里进行。
@@ -151,9 +188,9 @@ const NL_SECTION_MACROS = [
 const TAG_PROMPT_METAS: TagPromptMeta[] = [
   {
     key: 'jailbreak',
-    label: '破限词',
-    hint: '作为置顶 system 附加在自动 tag 请求里，降低副 API 拒答率。留空则用内置默认（与柏宝书同款文本）。全后端通用。',
-    builtin: DEFAULT_JAILBREAK_PROMPT,
+    label: '破限附加词',
+    hint: '叠加在【破限挡位】选中的内置文本之后，用来补自己的规矩（例如指定必须写全的解剖术语）。留空则只用挡位文本；挡位选 off / custom 时只发这一段。',
+    builtin: '',
     macros: [],
   },
   {
@@ -745,6 +782,78 @@ async function confirmUpdate() {
           />
         </label>
         <p class="bbi-field-hint">副 API 请求失败或返回无法解析时自动重试；0 = 不重试，最多 5 次。</p>
+
+        <!-- 破限挡位:按场合切换强度,不必一直用最狠那档把模型能力压死 -->
+        <div class="bbi-select-row">
+          <span class="bbi-field-label">破限挡位</span>
+          <BbiSelect v-model="jailbreakTierSel" :options="JAILBREAK_OPTIONS" aria-label="破限挡位" />
+        </div>
+        <p class="bbi-field-hint">{{ jailbreakTierSummary }}</p>
+        <p class="bbi-field-hint">
+          作为置顶 system 发出,与「破限附加词」是叠加关系:<template v-if="jailbreakAddonOn">当前已附加自定义文本,两者会拼在一起发。</template><template v-else>「破限附加词」为空,只发档位文本。</template>日常剧情嫌模型变笨就往下降一档;NSFW 楼老被截断就往上升。
+        </p>
+      </Collapsible>
+
+      <!-- 素材库召回:服装 / 姿势候选按正文命中后注入,见 data/loreIndex.ts 与 autoTag/prompt.ts -->
+      <Collapsible title="素材库召回" :open="false">
+        <label class="bbi-switch-row">
+          <span class="bbi-field-label">注入候选库</span>
+          <input v-model="settings.autoTag.lore.enabled" type="checkbox" class="bbi-checkbox" />
+        </label>
+        <p class="bbi-field-hint">
+          按正文里出现的衣着词与亲密动作,从内置库挑出具体 tag 串交给模型照抄。这是「写黑丝永远只出那几种」和「姿势构图总是太平」的主要解法:模型不再自己回忆款式,而是从候选里挑一条整组照抄。
+        </p>
+
+        <div class="bbi-select-row">
+          <span class="bbi-field-label">尺度上限</span>
+          <BbiSelect v-model="loreMaxNsfwSel" :options="NSFW_LEVEL_OPTIONS" aria-label="素材库尺度上限" />
+        </div>
+        <p class="bbi-field-hint">只决定能召回哪些候选,不改写正文。写日常剧情时降到「仅日常」,可避免情趣款被误召回。</p>
+
+        <label class="bbi-num-row">
+          <span class="bbi-field-label">服装候选条数</span>
+          <input
+            v-model.number="settings.autoTag.lore.wardrobeLimit"
+            class="bbi-input bbi-num"
+            type="number"
+            min="1"
+            max="16"
+            step="1"
+            @change="normalizeAutoTagNumbers"
+          />
+        </label>
+
+        <label class="bbi-num-row">
+          <span class="bbi-field-label">姿势候选条数</span>
+          <input
+            v-model.number="settings.autoTag.lore.poseLimit"
+            class="bbi-input bbi-num"
+            type="number"
+            min="0"
+            max="12"
+            step="1"
+            @change="normalizeAutoTagNumbers"
+          />
+        </label>
+        <p class="bbi-field-hint">姿势填 0 = 不注入姿势库。条数越多模型挑得越准,代价是占副 API 的上下文。</p>
+
+        <label class="bbi-switch-row">
+          <span class="bbi-field-label">注入人物外貌候选</span>
+          <input v-model="settings.autoTag.lore.faces" type="checkbox" class="bbi-checkbox" />
+        </label>
+        <p class="bbi-field-hint">
+          命中「清冷 / 银发 / 红瞳 / 丰腴」这类外形词时,把整套脸型或体型指纹交给模型整组照抄,治「生出来人物不好看」。同人角色指纹只在该作品的该角色明确出现时才会命中;已建档角色仍以角色固定外貌库为准。
+        </p>
+
+        <div class="bbi-channel-bar">
+          <span class="bbi-field-label">服装 / 姿势 / 面相</span>
+          <button class="bbi-btn bbi-btn-primary bbi-btn-sm" type="button" @click="openLorePage">
+            <Icon name="lore" /> 打开素材库
+          </button>
+        </div>
+        <p class="bbi-field-hint">
+          素材库里可以逐条浏览,点一条直接套到角色管理里的某个人物身上(写入该角色的固定着装或外貌字段)。
+        </p>
       </Collapsible>
 
       <!-- 排除角色:名单与柏宝书共享(见 state/settings.ts 的共享存储),任一端改动自动同步 -->
