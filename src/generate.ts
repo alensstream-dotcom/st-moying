@@ -30,6 +30,7 @@ import { effectiveOrientation, parseSize, pickSize, type Orientation } from '@/b
 import { acquireNaiSlot } from '@/floor/genQueue';
 import type { GenerationMeta } from '@/generationMeta';
 import { activeComfyPreset, activeNaiEndpoint, activeOrientationLock, effectiveComfyConn, effectiveNai, settings, type BackendId } from '@/state/settings';
+import { applyPresetToNaiConn, genPresetById } from '@/state/genPresets';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
@@ -49,10 +50,25 @@ export interface GenerateInput {
   /** 本次种子。由调用方经 decideSeed() 先行确定(埋点要在发请求前拿到它)。 */
   seed: number;
   /**
+   * 只对本次请求生效的后端覆盖(留空 = 用渠道默认)。
+   *
+   * 素材缩略图必须钉死 NAI:缩略图的提示词是 danbooru tag 串,拿去 ComfyUI 的
+   * SD 模型会出拼贴状碎片;而「跟随渠道当前模型」在用户把默认渠道设成 ComfyUI
+   * 时正好会踩这个坑。
+   */
+  backend?: BackendId;
+  /**
    * 只对本次请求生效的 NAI 模型覆盖(留空 = 用渠道配置)。素材缩略图用它走
    * `nai-diffusion-4-curated-preview` 这类不占额度的模型,免得为预览烧 Anlas。
    */
   naiModel?: string;
+  /**
+   * 只对本次请求生效的生图配置预设(留空 = 用渠道当前参数)。
+   *
+   * 素材库配图走这条:用户把「素材库配图」那套预设标成 forLore 之后,预览图按那套出,
+   * 不跟主出图参数走,也就不必为了配预览先把主配置改一遍。
+   */
+  genPresetId?: string;
 }
 
 /** 生成过程中的进度上报(卡片用它显示排队位置与退避进度)。 */
@@ -104,9 +120,7 @@ export interface BackendStatus {
  * ComfyUI 要按模式分别校验(custom 要工作流 JSON;simple 要模型/VAE/CLIP 选齐,
  * 与出图组装同一口径 validateSimpleConfig,避免「卡片能点、出图才报错」);NAI 要 url + key。
  */
-export function backendStatus(): BackendStatus {
-  const backend = settings.defaultBackend;
-
+export function backendStatus(backend: BackendId = settings.defaultBackend): BackendStatus {
   if (backend === 'nai') {
     const model = settings.nai.model;
     // 支持与否只看模型,与配没配齐无关:第三方要在出图前就知道该不该传 characters
@@ -186,7 +200,8 @@ export async function generateImage(
   signal?: AbortSignal,
   progress: GenerateProgress = {},
 ): Promise<GenerateOutput> {
-  const status = backendStatus();
+  const target = input.backend ?? settings.defaultBackend;
+  const status = backendStatus(target);
   // 兜底:卡片侧已用 configured 拦在按钮上,公开接口侧也会先报 not_configured。
   // 真漏到这里说明上游判据漂了,宁可明说也别发一个注定 401/404 的请求。
   if (!status.configured) throw new Error(status.reason || '出图后端未配置');
@@ -211,6 +226,9 @@ export async function generateImage(
       // 单次覆盖模型:素材缩略图走 V4 试用模型(不占 Anlas),不该为此改动用户保存的渠道设置。
       // effectiveNai() 返回的是浅拷贝,改它不会污染 settings。
       const naiConn = effectiveNai();
+      // 预设先套、模型覆盖后套:后者是调用方最具体的意图(naiModel 明确点名就用它)。
+      const preset = input.genPresetId ? genPresetById(input.genPresetId) : null;
+      if (preset) applyPresetToNaiConn(naiConn, preset);
       if (input.naiModel) naiConn.model = input.naiModel as typeof naiConn.model;
       const output = await generateNaiImage(
         naiConn,

@@ -1,6 +1,7 @@
 import { getThumb, putThumb, thumbKey, type ThumbKind } from '@/data/loreThumbs';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { settings } from '@/state/settings';
+import { loreGenPreset } from '@/state/genPresets';
 
 /**
  * 素材批量配图队列。
@@ -184,10 +185,14 @@ async function runNext(interval: number, force: boolean): Promise<void> {
         return;
       }
     }
+    const preset = loreGenPreset();
+    const backend = preset?.backend ?? 'nai';
     const model = settings.autoTag.lore.thumbModel.trim();
     const output = await generateImage({
       prompt: task.prompt,
-      seed: decideSeed(settings.defaultBackend),
+      backend,
+      genPresetId: preset?.id ?? settings.activeGenPreset,
+      seed: decideSeed(backend),
       size: 'portrait',
       ...(model ? { naiModel: model } : {}),
     });

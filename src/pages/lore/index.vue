@@ -40,7 +40,9 @@ import {
 } from '@/data/loreThumbJob';
 import { rollPose, rollPoolSize, rollWardrobe, type RollResult } from '@/data/loreRoll';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
-import { settings } from '@/state/settings';
+import { openLightbox } from '@/floor/lightbox';
+import { LORE_THUMB_MODELS, settings, type BackendId } from '@/state/settings';
+import { loreGenPreset } from '@/state/genPresets';
 import type { NsfwLevel, PoseCategoryId, WardrobeSlot } from '@/data/loreTypes';
 import {
   CHAR_TAG_FIELD_LABELS,
@@ -259,13 +261,7 @@ const thumbCount = ref(0);
  */
 const jobState = ref<ThumbJobState>(thumbJobState());
 const thumbSettingsOpen = ref(false);
-const THUMB_MODELS = [
-  { value: 'nai-diffusion-4-curated-preview', label: 'V4 试用 · 不耗额度' },
-  { value: 'nai-diffusion-4-full', label: 'V4 完整' },
-  { value: 'nai-diffusion-4-5-curated', label: 'V4.5 精选' },
-  { value: 'nai-diffusion-4-5-full', label: 'V4.5 完整' },
-  { value: '', label: '跟随渠道当前模型' },
-];
+const THUMB_MODELS = LORE_THUMB_MODELS;
 
 /** 间隔用秒来填，存的时候换回毫秒；夹在 3–120 秒之间，填错了自动纠正。 */
 const thumbIntervalSec = computed<number>({
@@ -344,17 +340,48 @@ watch(shown, list => {
   void syncThumbs(list);
 }, { immediate: true });
 
+/**
+ * 机位/景别词：一条素材的预览要能看全「这套东西」，所以服装强制全身、
+ * 姿势给七分身（要看得到肢体关系）。素材自带的景别词先剔掉，否则会和这里打架,
+ * 表现就是明明该看整套衣服、出图却只给了半身。
+ */
+const FRAMING_WORDS =
+  /(^|,\s*)(upper body|portrait|close-?up|extreme close-?up|cowboy shot|full body|feet out of frame|half body)(?=\s*,|$)/gi;
+
+function stripFraming(tags: string): string {
+  return tags
+    .replace(FRAMING_WORDS, '$1')
+    .replace(/(,\s*){2,}/g, ', ')
+    .replace(/^[\s,]+|[\s,]+$/g, '');
+}
+
 /** 预览提示词：一条素材要能被单独看懂，所以固定主体与背景，只换它自己的 tag。 */
 function thumbPrompt(card: LoreCard): string {
-  const base = 'masterpiece, best quality, very aesthetic, absurdres, 1girl, solo, cowboy shot, simple background, grey background';
-  const nude = tab.value === 'pose' ? 'completely nude' : '';
-  return [base, nude, card.tags].filter(Boolean).join(', ');
+  const pose = tab.value === 'pose';
+  const framing = pose ? 'cowboy shot' : 'full body, standing';
+  const base = `masterpiece, best quality, very aesthetic, absurdres, 1girl, solo, ${framing}, simple background, grey background`;
+  const nude = pose ? 'completely nude' : '';
+  return [base, nude, stripFraming(card.tags)].filter(Boolean).join(', ');
+}
+
+/**
+ * 素材库出图用的后端与预设。
+ *
+ * 优先用被标成 forLore 的那套预设:预览只看形状,不该跟着用户的主出图参数走。
+ * 没标就退回当前预设——不凭空造一套,设置不听话比参数不优更难受。
+ */
+function loreBackend(): BackendId {
+  return loreGenPreset()?.backend ?? 'nai';
+}
+
+function lorePresetId(): string {
+  return loreGenPreset()?.id ?? settings.activeGenPreset;
 }
 
 async function genThumb(card: LoreCard) {
-  const status = backendStatus();
+  const status = backendStatus(loreBackend());
   if (!status.configured) {
-    toast(`后端还没配好：${status.reason || '先去「渠道」页配置'}`);
+    toast(`素材预览固定走 NAI：${status.reason || '先去「渠道」页配好 NAI 接入点'}`);
     return;
   }
   const key = cardKey(card);
@@ -365,7 +392,9 @@ async function genThumb(card: LoreCard) {
     const model = settings.autoTag.lore.thumbModel.trim();
     const output = await generateImage({
       prompt,
-      seed: decideSeed(settings.defaultBackend),
+      backend: loreBackend(),
+      genPresetId: lorePresetId(),
+      seed: decideSeed(loreBackend()),
       size: 'portrait',
       ...(model ? { naiModel: model } : {}),
     });
@@ -383,9 +412,10 @@ async function genThumb(card: LoreCard) {
 
 /** 批量配图:交给后台队列，按设置间隔一条一条来，切页也不中断。 */
 function startBatchThumbs() {
-  const status = backendStatus();
+  const status = backendStatus(loreBackend());
+
   if (!status.configured) {
-    toast(`后端还没配好：${status.reason || '先去「渠道」页配置'}`);
+    toast(`素材预览固定走 NAI：${status.reason || '先去「渠道」页配好 NAI 接入点'}`);
     return;
   }
   const list = shown.value;
@@ -577,9 +607,26 @@ function openRoll() {
 }
 
 function rollPrompt(result: RollResult, pose: boolean): string {
-  const base =
-    'masterpiece, best quality, very aesthetic, absurdres, 1girl, solo, simple background, grey background';
-  return [base, pose ? 'completely nude' : '', result.tags].filter(Boolean).join(', ');
+  const framing = pose ? 'cowboy shot' : 'full body, standing';
+  const base = `masterpiece, best quality, very aesthetic, absurdres, 1girl, solo, ${framing}, simple background, grey background`;
+  return [base, pose ? 'completely nude' : '', stripFraming(result.tags)].filter(Boolean).join(', ');
+}
+
+/** 素材预览太小看不清，点开走全屏灯箱（与楼层卡片同一个灯箱）。 */
+function zoomThumb(card: LoreCard) {
+  const src = thumbSrc(card);
+  if (!src) return;
+  openLightbox({ src, prompt: thumbPrompt(card), filename: card.name });
+}
+
+function zoomRoll() {
+  if (!rollUrl.value) return;
+  const result = rollResult.value;
+  openLightbox({
+    src: rollUrl.value,
+    prompt: result ? rollPrompt(result, tab.value === 'pose') : '',
+    filename: result ? result.name : 'roll',
+  });
 }
 
 async function doRoll() {
@@ -588,9 +635,10 @@ async function doRoll() {
     toast('先打一个词，比如 jk、黑丝、旗袍');
     return;
   }
-  const status = backendStatus();
+  const status = backendStatus(loreBackend());
+
   if (!status.configured) {
-    toast(`后端还没配好：${status.reason || '先去「渠道」页配置'}`);
+    toast(`素材预览固定走 NAI：${status.reason || '先去「渠道」页配好 NAI 接入点'}`);
     return;
   }
   const pose = tab.value === 'pose';
@@ -606,7 +654,9 @@ async function doRoll() {
     const model = settings.autoTag.lore.thumbModel.trim();
     const output = await generateImage({
       prompt: rollPrompt(result, pose),
-      seed: decideSeed(settings.defaultBackend),
+      backend: loreBackend(),
+      genPresetId: lorePresetId(),
+      seed: decideSeed(loreBackend()),
       size: 'portrait',
       ...(model ? { naiModel: model } : {}),
     });
@@ -921,7 +971,13 @@ function clearCustom() {
           <span v-if="card.quality" class="bbi-lore-q" title="表现力权重">Q{{ card.quality }}</span>
         </header>
         <figure v-if="thumbSrc(card)" class="bbi-lore-thumb">
-          <img :src="thumbSrc(card) || ''" :alt="card.name" loading="lazy" />
+          <img
+            :src="thumbSrc(card) || ''"
+            :alt="card.name"
+            loading="lazy"
+            title="点一下看大图"
+            @click="zoomThumb(card)"
+          />
           <button
             class="bbi-lore-thumb-x"
             type="button"
@@ -1190,9 +1246,10 @@ function clearCustom() {
           <button class="bbi-btn" type="button" @click="importOpen = false">取消</button>
         </div>
       </div>
+    </ModalMask>
 
+    <ModalMask :open="thumbSettingsOpen" @close="thumbSettingsOpen = false">
       <div
-        v-if="thumbSettingsOpen"
         class="bbi-modal bbi-lore-modal"
         role="dialog"
         aria-modal="true"
@@ -1229,9 +1286,10 @@ function clearCustom() {
           <button class="bbi-btn bbi-btn-primary" type="button" @click="thumbSettingsOpen = false">好</button>
         </div>
       </div>
+    </ModalMask>
 
+    <ModalMask :open="rollOpen" @close="rollOpen = false">
       <div
-        v-if="rollOpen"
         class="bbi-modal bbi-lore-modal"
         role="dialog"
         aria-modal="true"
@@ -1266,7 +1324,7 @@ function clearCustom() {
         </p>
 
         <figure v-if="rollUrl" class="bbi-lore-roll-figure">
-          <img :src="rollUrl" alt="roll 预览" />
+          <img :src="rollUrl" alt="roll 预览" title="点一下看大图" @click="zoomRoll" />
         </figure>
         <p v-else-if="rollBusy" class="bbi-field-hint">正在出图……</p>
 
@@ -1378,6 +1436,7 @@ function clearCustom() {
   display: block;
   width: 100%;
   height: auto;
+  cursor: zoom-in;
 }
 
 .bbi-lore-thumb-x {
@@ -1455,6 +1514,7 @@ function clearCustom() {
   max-width: 220px;
   border-radius: var(--bbi-radius-sm);
   border: 1px solid var(--bbi-line);
+  cursor: zoom-in;
 }
 
 .bbi-lore-kind {

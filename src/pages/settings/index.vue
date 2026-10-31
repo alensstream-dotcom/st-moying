@@ -18,12 +18,26 @@ import {
   IMAGE_DISPLAY_SIZES,
   newChannel,
   sanitizeTagName,
+  LORE_THUMB_MODELS,
   settings,
   type ApiChannel,
   type AutoTagPrompts,
   type BackendId,
   type ImageDisplaySize,
 } from '@/state/settings';
+import {
+  applyGenPreset,
+  linkPresetToPrompt,
+  presetForPrompt,
+  activeGenPreset,
+  captureIntoGenPreset,
+  markLoreGenPreset,
+  promptsLinkedTo,
+  removeGenPreset,
+  renameGenPreset,
+  snapshotGenPreset,
+  upsertGenPreset,
+} from '@/state/genPresets';
 import { getContext } from '@/st/context';
 import {
   ORB_SHAPES,
@@ -44,6 +58,81 @@ const NAV_OPTIONS: { value: NavPosition; label: string }[] = [
 
 // 出图后端可选项:与渠道页页签同口径,藏掉未开放的 webui
 const BACKEND_OPTIONS = BACKENDS.filter(b => b.value !== 'webui');
+
+/** 生图配置预设:一套参数 = 模型/步数/采样/相关性/负面词/画师串。 */
+const GEN_PRESET_OPTIONS = computed(() =>
+  settings.genPresets.map(preset => ({
+    value: preset.id,
+    label: preset.forLore ? preset.name + ' · 素材库' : preset.name,
+  })),
+);
+
+const genPresetSel = computed<string>({
+  get: () => settings.activeGenPreset,
+  set: v => {
+    if (!applyGenPreset(v)) presetNotice.value = '预设不存在,已忽略';
+  },
+});
+
+const presetNameDraft = ref('');
+const presetNotice = ref('');
+const presetLore = computed(() => activeGenPreset().forLore);
+const presetLinked = computed(() => promptsLinkedTo(settings.activeGenPreset).join('、') || '未绑定任何提示词项');
+
+/** 素材库配图间隔:界面用秒,存的是毫秒。 */
+const thumbIntervalSec = computed<number>({
+  get: () => Math.round(settings.autoTag.lore.thumbIntervalMs / 1000),
+  set: v => {
+    const sec = Math.min(120, Math.max(3, Math.round(Number(v) || 10)));
+    settings.autoTag.lore.thumbIntervalMs = sec * 1000;
+  },
+});
+
+function flashPreset(text: string) {
+  presetNotice.value = text;
+  window.setTimeout(() => {
+    if (presetNotice.value === text) presetNotice.value = '';
+  }, 2400);
+}
+
+function savePresetAs() {
+  const name = presetNameDraft.value.trim();
+  if (!name) return flashPreset('先给它起个名字');
+  const preset = snapshotGenPreset(name);
+  upsertGenPreset(preset);
+  settings.activeGenPreset = preset.id;
+  presetNameDraft.value = '';
+  flashPreset(`已另存为「${preset.name}」,当前就用它`);
+}
+
+function updatePreset() {
+  flashPreset(captureIntoGenPreset(settings.activeGenPreset) ? '已用当前参数覆盖这套预设' : '这套预设不见了');
+}
+
+function renamePreset() {
+  const name = presetNameDraft.value.trim();
+  if (!name) return flashPreset('先在输入框填新名字,再点重命名');
+  flashPreset(renameGenPreset(settings.activeGenPreset, name) ? '已重命名' : '重命名失败');
+  presetNameDraft.value = '';
+}
+
+function toggleLorePreset() {
+  const current = activeGenPreset();
+  if (current.forLore) {
+    markLoreGenPreset('');
+    flashPreset('已取消素材库标记,配图改跟当前预设');
+    return;
+  }
+  markLoreGenPreset(current.id);
+  flashPreset(`「${current.name}」已设为素材库配图专用`);
+}
+
+function deletePreset() {
+  if (settings.genPresets.length <= 1) return flashPreset('至少要留一套预设');
+  const current = activeGenPreset();
+  if (!window.confirm(`删除预设「${current.name}」?`)) return;
+  flashPreset(removeGenPreset(current.id) ? '已删除' : '删除失败');
+}
 
 /**
  * 思考强度候选:各家取值的并集,**不是**某一家的官方列表。
@@ -232,6 +321,32 @@ function applyNaiScenePreset() {
 
 // 正在编辑的提示词;draft 是草稿,点「完成」才写回 settings(取消则丢弃)。
 const editingTagPrompt = ref<TagPromptMeta | null>(null);
+const PRESET_LINK_OPTIONS = computed(() => [
+  { value: '', label: '不绑定' },
+  ...settings.genPresets.map(preset => ({
+    value: preset.id,
+    label: preset.name + (preset.forLore ? ' · 素材库' : ''),
+  })),
+]);
+
+/**
+ * 这一组提示词绑定的生图配置。
+ *
+ * 绑定之后打开它(openTagPrompt)会自动 applyGenPreset:用户换的是「规范/思维链」,
+ * 但配套的模型、步数、负面词、画师串往往也得一起换,这里替他一起换。
+ */
+const promptPresetLink = computed<string>({
+  get: () => {
+    const key = editingTagPrompt.value?.key;
+    return key ? (settings.promptPresetLinks[key] ?? '') : '';
+  },
+  set: v => {
+    const key = editingTagPrompt.value?.key;
+    if (!key) return;
+    linkPresetToPrompt(key, v);
+    if (v) flashPreset('下次打开这组提示词时自动切到这套生图配置');
+  },
+});
 const tagPromptDraft = ref('');
 const tagPromptArea = ref<InstanceType<typeof BbiTextarea> | null>(null);
 
@@ -241,6 +356,12 @@ function isTagPromptCustom(key: keyof AutoTagPrompts): boolean {
 }
 
 function openTagPrompt(meta: TagPromptMeta) {
+  // 绑过生图配置就顺手切过去:换的是这一组提示词,配套参数一起换才不用重配
+  const linked = presetForPrompt(meta.key);
+  if (linked) {
+    applyGenPreset(linked.id);
+    flashPreset('配套生图配置已切到「' + linked.name + '」');
+  }
   editingTagPrompt.value = meta;
   // 已自定义→载入用户内容;未自定义→预填内置模板,方便直接在其上改
   tagPromptDraft.value = settings.autoTag.prompts[meta.key].trim() || meta.builtin;
@@ -603,6 +724,43 @@ async function confirmUpdate() {
           <span class="bbi-field-label">导航位置</span>
           <BbiSelect v-model="navSel" :options="NAV_OPTIONS" aria-label="导航位置" />
         </div>
+
+        <!-- 生图配置预设:换风格时一次换掉整组参数,而不是逐项手改 -->
+        <div class="bbi-select-row">
+          <span class="bbi-field-label">生图配置预设</span>
+          <BbiSelect v-model="genPresetSel" :options="GEN_PRESET_OPTIONS" aria-label="生图配置预设" />
+        </div>
+        <p class="bbi-field-hint">
+          一套预设 = 模型 · 步数 · 采样器 · 相关性 · 负面词 · 画师串。切换即整套生效。
+          标成「素材库」的那套专供素材库配图预览;其余预设可绑到提示词项上,打开那一项时自动套用。
+        </p>
+        <div class="bbi-channel-bar bbi-preset-bar">
+          <input v-model="presetNameDraft" class="bbi-input" type="text" placeholder="新名字" />
+          <button class="bbi-btn bbi-btn-sm" type="button" @click="savePresetAs">另存为</button>
+          <button class="bbi-btn bbi-btn-sm" type="button" @click="updatePreset">更新当前</button>
+          <button class="bbi-btn bbi-btn-sm" type="button" @click="renamePreset">重命名</button>
+          <button class="bbi-btn bbi-btn-sm" type="button" @click="toggleLorePreset">
+            {{ presetLore ? '取消素材库标记' : '设为素材库专用' }}
+          </button>
+          <button class="bbi-btn bbi-btn-sm" type="button" @click="deletePreset">删除</button>
+        </div>
+        <p v-if="presetNotice" class="bbi-field-hint">{{ presetNotice }}</p>
+        <p class="bbi-field-hint">当前预设被这些提示词项绑定:{{ presetLinked }}</p>
+
+        <!-- 素材库配图:以前在素材库里点齿轮,位置太深,挪到默认设置 -->
+        <div class="bbi-select-row">
+          <span class="bbi-field-label">素材库配图模型</span>
+          <BbiSelect v-model="settings.autoTag.lore.thumbModel" :options="LORE_THUMB_MODELS" aria-label="素材库配图模型" />
+        </div>
+        <p class="bbi-field-hint">
+          留「跟随素材库预设」时用那套预设的模型;想单独钉一个不耗额度的模型就选 V4 试用。
+        </p>
+
+        <div class="bbi-num-row">
+          <span class="bbi-field-label">素材库配图间隔(秒)</span>
+          <input v-model.number="thumbIntervalSec" class="bbi-input bbi-num" type="number" min="3" max="120" />
+        </div>
+        <p class="bbi-field-hint">批量配图时两条之间等多久。默认 10 秒,是给风控留的余量,别调太小。</p>
 
         <div class="bbi-select-row">
           <span class="bbi-field-label">出图后端</span>
@@ -1221,6 +1379,13 @@ async function confirmUpdate() {
         </header>
 
         <p class="bbi-modal-label">{{ editingTagPrompt.hint }}</p>
+        <div class="bbi-select-row">
+          <span class="bbi-field-label">配套生图配置</span>
+          <BbiSelect v-model="promptPresetLink" :options="PRESET_LINK_OPTIONS" aria-label="配套生图配置" />
+        </div>
+        <p class="bbi-field-hint">
+          绑一套之后,每次打开这组提示词(换一组规范 / 思维链)生图配置会自动跟着切,不用再手动改一遍。
+        </p>
 
         <!-- 可用宏:点一下插入到光标处(规范与思维链四份都有自然语言条件段,ComfyUI 规范另有 {{nl}};
              无宏的条目不显示这一栏) -->
@@ -1804,5 +1969,18 @@ async function confirmUpdate() {
   .bbi-btn-label-short {
     display: inline;
   }
+}
+
+/* 预设操作条:名字输入 + 一排按钮,窄屏自动折行 */
+.bbi-preset-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.bbi-preset-bar .bbi-input {
+  flex: 1 1 120px;
+  min-width: 96px;
 }
 </style>

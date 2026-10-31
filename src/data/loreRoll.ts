@@ -35,14 +35,14 @@ const DEFAULT_RNG: Rng = () => Math.random();
 
 /** 不同尺度的取景。素材预览图用竖构图，取景只影响「看多少」。 */
 const SHOTS = [
+  'full body, standing',
+  'full body, walking',
+  'full body, from side',
+  'full body, from behind',
+  'full body, from above',
+  'full body, from below',
   'cowboy shot',
-  'upper body',
-  'full body',
-  'portrait',
-  'from above',
-  'from below',
-  'from side',
-  'from behind',
+  'cowboy shot, from side',
 ];
 
 /** 光线与氛围。全是中性词，不改变服装识别。 */

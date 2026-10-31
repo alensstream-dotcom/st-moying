@@ -457,6 +457,14 @@ NVWA 不提供制造化学、生物或核武器所需的信息，也不编写、
  * 解法是**给模型足够多的差异候选**再由它挑;候选太少等于没做,太多会把正文挤到后面去。
  * 所以这里只暴露两个配额 + 一个 NSFW 上限,其余策略(单类放大、去重、轮转)写在 loreIndex 里。
  */
+/** 素材库配图可选的 NAI 模型（设置页与素材库页共用，避免两处文案漂移）。 */
+export const LORE_THUMB_MODELS = [
+  { value: '', label: '跟随素材库预设' },
+  { value: 'nai-diffusion-4-curated-preview', label: 'V4 试用 · 不耗额度' },
+  { value: 'nai-diffusion-4-full', label: 'V4 完整' },
+  { value: 'nai-diffusion-4-5-curated', label: 'V4.5 精选' },
+  { value: 'nai-diffusion-4-5-full', label: 'V4.5 完整' },
+];
 export interface LoreSettings {
   /** 是否把服装 / 姿势候选注入 prompt。关掉后 autoTag 行为与旧版一致。 */
   enabled: boolean;
@@ -1081,6 +1089,116 @@ export interface AutoTagPrompts {
   naiV5Thinking: string;
 }
 
+/**
+ * 生图配置预设:一套「怎么画」的参数。
+ *
+ * 动机:换提示词组(NAI 规范 / NAI 思维链)时往往也要跟着换模型、步数、负面词、画师串,
+ * 一次手改五处很容易漏一处。预设把这一组参数捆成可命名的整体,切换即整体生效。
+ *
+ * 其中恰有一套标记 forLore:素材库预览图不看剧情、只认形状,用它出图更省额度也更稳;
+ * 其余预设可以绑到提示词项上(promptKeys),打开那一项时自动套用,省掉重复配。
+ */
+export interface GenPreset {
+  id: string;
+  name: string;
+  /** 素材库配图专用;全局最多一个(normalize 兜底)。 */
+  forLore: boolean;
+  /** 关联的提示词项(AutoTagPrompts 的键);打开该项时自动应用本预设。 */
+  promptKeys: string[];
+  backend: BackendId;
+  model: NaiModel;
+  undesiredContent: string;
+  sampler: string;
+  steps: number;
+  scale: number;
+  cfgRescale: number;
+  noiseSchedule: string;
+  varietyBoost: boolean;
+  naturalLanguage: boolean;
+  activeArtistId: string;
+}
+
+function normalizeGenPresets(raw: unknown, fallback: GenPreset[]): GenPreset[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const seen = new Set<string>();
+  const out: GenPreset[] = [];
+  const base = fallback[0];
+  const int = (v: unknown, fb: number, min: number, max: number): number =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.floor(v))) : fb;
+  const real = (v: unknown, fb: number): number =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.min(10, Math.max(0, v)) : fb;
+  for (const item of list) {
+    const preset = (item ?? {}) as Partial<GenPreset>;
+    const id = typeof preset.id === 'string' ? preset.id.trim() : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      name: typeof preset.name === 'string' && preset.name.trim() ? preset.name.trim() : '未命名预设',
+      forLore: preset.forLore === true,
+      promptKeys: Array.isArray(preset.promptKeys)
+        ? preset.promptKeys.filter((key): key is string => typeof key === 'string')
+        : [],
+      backend: preset.backend === 'comfyui' ? 'comfyui' : 'nai',
+      model: (typeof preset.model === 'string' && preset.model.trim() ? preset.model : base.model) as NaiModel,
+      undesiredContent: typeof preset.undesiredContent === 'string' ? preset.undesiredContent : '',
+      sampler: typeof preset.sampler === 'string' && preset.sampler ? preset.sampler : base.sampler,
+      steps: int(preset.steps, base.steps, 1, 50),
+      scale: real(preset.scale, base.scale),
+      cfgRescale: real(preset.cfgRescale, base.cfgRescale),
+      noiseSchedule:
+        typeof preset.noiseSchedule === 'string' && preset.noiseSchedule
+          ? preset.noiseSchedule
+          : base.noiseSchedule,
+      varietyBoost: typeof preset.varietyBoost === 'boolean' ? preset.varietyBoost : base.varietyBoost,
+      naturalLanguage:
+        typeof preset.naturalLanguage === 'boolean' ? preset.naturalLanguage : base.naturalLanguage,
+      activeArtistId: typeof preset.activeArtistId === 'string' ? preset.activeArtistId : '',
+    });
+  }
+  if (!out.length) return fallback;
+  // forLore 全局只能有一套:多出来的按普通预设处理,避免素材库随机挑到两套不同的画法。
+  let loreKept = false;
+  for (const preset of out) {
+    if (!preset.forLore) continue;
+    if (loreKept) preset.forLore = false;
+    loreKept = true;
+  }
+  return out;
+}
+function genPresetsDefaults(): GenPreset[] {
+  const nai = naiDefaults();
+  const base = {
+    forLore: false,
+    promptKeys: [] as string[],
+    backend: 'nai' as BackendId,
+    model: nai.model,
+    undesiredContent: nai.undesiredContent,
+    sampler: nai.sampler,
+    steps: nai.steps,
+    scale: nai.scale,
+    cfgRescale: nai.cfgRescale,
+    noiseSchedule: nai.noiseSchedule,
+    varietyBoost: nai.varietyBoost,
+    naturalLanguage: nai.naturalLanguage,
+    activeArtistId: nai.activeArtistId,
+  };
+  return [
+    { ...base, id: 'default', name: '默认' },
+    {
+      ...base,
+      id: 'lore',
+      name: '素材库配图',
+      forLore: true,
+      // 预览只认形状:V4 试用模型不扣 Anlas,步数压低换速度。
+      model: 'nai-diffusion-4-curated-preview',
+      steps: 23,
+      scale: 5,
+      activeArtistId: '',
+      naturalLanguage: false,
+    },
+  ];
+}
 export interface ImageSettings {
   /** 插件总开关。 */
   enabled: boolean;
@@ -1096,6 +1214,12 @@ export interface ImageSettings {
   channels: ApiChannel[];
   /** 任务指派的渠道 id。tagGen=生成画图 tag;空串=跟随主 API。 */
   assignments: { tagGen: string };
+  /** 生图配置预设(见 GenPreset)。**不变式:恒非空**。 */
+  genPresets: GenPreset[];
+  /** 当前使用的生图配置预设 id;悬空时回落第一条。 */
+  activeGenPreset: string;
+  /** 提示词项 → 生图配置预设的绑定;打开该项时自动应用,省掉重复配。 */
+  promptPresetLinks: Record<string, string>;
   /** 自动判断并向正文插入生图 tag。 */
   autoTag: AutoTagSettings;
   /** 排除设置(镜像共享存储;真身在 extensionSettings['baibai_exclude_settings'])。 */
@@ -1246,6 +1370,9 @@ function defaults(): ImageSettings {
     webui: backendDefaults('http://127.0.0.1:7860'),
     comfyui: comfyDefaults(),
     nai: naiDefaults(),
+    genPresets: genPresetsDefaults(),
+    activeGenPreset: 'default',
+    promptPresetLinks: {},
     channels: [],
     assignments: { tagGen: '' },
     autoTag: {
@@ -1262,7 +1389,8 @@ function defaults(): ImageSettings {
         wardrobeLimit: 8,
         poseLimit: 6,
         faces: false,
-        thumbModel: 'nai-diffusion-4-curated-preview',
+        // 留空 = 用「素材库配图」那套预设的模型;填了就是硬覆盖。
+    thumbModel: '',
         thumbIntervalMs: 10000,
       },
       prompts: {
@@ -1920,6 +2048,19 @@ function normalize(raw: unknown): ImageSettings {
       };
     })(),
   };
+  merged.genPresets = normalizeGenPresets((r as Partial<ImageSettings>).genPresets, d.genPresets);
+  const storedActive = (r as Partial<ImageSettings>).activeGenPreset;
+  merged.activeGenPreset =
+    typeof storedActive === 'string' && merged.genPresets.some(preset => preset.id === storedActive)
+      ? storedActive
+      : merged.genPresets[0].id;
+  const storedLinks = (r as Partial<ImageSettings>).promptPresetLinks;
+  merged.promptPresetLinks =
+    storedLinks && typeof storedLinks === 'object'
+      ? Object.fromEntries(
+          Object.entries(storedLinks).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+        )
+      : {};
   merged.excludes = normalizeExcludes(r.excludes);
   // 存储行为:嵌套对象逐字段兜底(老数据无 storage 键 → 默认关)
   const rs = (r.storage ?? {}) as Partial<StoragePrefs>;
