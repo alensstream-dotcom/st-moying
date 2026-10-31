@@ -29,6 +29,16 @@ import {
   thumbKey,
   type ThumbKind,
 } from '@/data/loreThumbs';
+import {
+  onThumbJobState,
+  onThumbTaskDone,
+  startThumbJob,
+  stopThumbJob,
+  thumbJobState,
+  type ThumbJobState,
+  type ThumbTask,
+} from '@/data/loreThumbJob';
+import { rollPose, rollPoolSize, rollWardrobe, type RollResult } from '@/data/loreRoll';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { settings } from '@/state/settings';
 import type { NsfwLevel, PoseCategoryId, WardrobeSlot } from '@/data/loreTypes';
@@ -243,6 +253,48 @@ const thumbSrcMap = ref<Record<string, string>>({});
 const thumbBusy = ref<Record<string, boolean>>({});
 const thumbCount = ref(0);
 
+/**
+ * 批量配图的进度。队列在模块级跑(loreThumbJob)，这里只订阅——
+ * 于是切到别的页面再回来，进度还在，图也还在继续配。
+ */
+const jobState = ref<ThumbJobState>(thumbJobState());
+const thumbSettingsOpen = ref(false);
+const THUMB_MODELS = [
+  { value: 'nai-diffusion-4-curated-preview', label: 'V4 试用 · 不耗额度' },
+  { value: 'nai-diffusion-4-full', label: 'V4 完整' },
+  { value: 'nai-diffusion-4-5-curated', label: 'V4.5 精选' },
+  { value: 'nai-diffusion-4-5-full', label: 'V4.5 完整' },
+  { value: '', label: '跟随渠道当前模型' },
+];
+
+/** 间隔用秒来填，存的时候换回毫秒；夹在 3–120 秒之间，填错了自动纠正。 */
+const thumbIntervalSec = computed<number>({
+  get: () => Math.round(settings.autoTag.lore.thumbIntervalMs / 1000),
+  set: raw => {
+    const sec = Math.min(120, Math.max(3, Math.round(Number(raw) || 10)));
+    settings.autoTag.lore.thumbIntervalMs = sec * 1000;
+  },
+});
+
+const stopJobState = onThumbJobState(state => {
+  jobState.value = state;
+});
+
+const stopJobTask = onThumbTaskDone(task => {
+  const key = thumbKey(task.kind, task.id);
+  void getThumb(key).then(record => {
+    if (record?.blob) mountThumb(key, record.blob);
+  });
+  void countThumbs().then(total => {
+    thumbCount.value = total;
+  });
+});
+
+onUnmounted(() => {
+  stopJobState();
+  stopJobTask();
+});
+
 function thumbKindOf(): ThumbKind {
   return tab.value === 'pose' ? 'pose' : tab.value === 'face' ? 'face' : 'wardrobe';
 }
@@ -310,10 +362,12 @@ async function genThumb(card: LoreCard) {
   setThumbBusy(key, true);
   const prompt = thumbPrompt(card);
   try {
+    const model = settings.autoTag.lore.thumbModel.trim();
     const output = await generateImage({
       prompt,
       seed: decideSeed(settings.defaultBackend),
       size: 'portrait',
+      ...(model ? { naiModel: model } : {}),
     });
     const blob = await fetch(output.result.url).then(response => response.blob());
     output.result.revoke();
@@ -327,22 +381,29 @@ async function genThumb(card: LoreCard) {
   }
 }
 
-/** 批量走串行:NAI 有并发闸门,并发发出去只会在闸门里排队,不如一条条来好显示进度。 */
-async function genVisibleThumbs() {
+/** 批量配图:交给后台队列，按设置间隔一条一条来，切页也不中断。 */
+function startBatchThumbs() {
   const status = backendStatus();
   if (!status.configured) {
     toast(`后端还没配好：${status.reason || '先去「渠道」页配置'}`);
     return;
   }
-  const pending = shown.value.filter(card => !thumbSrc(card));
-  if (!pending.length) {
-    toast('当前列表都已有预览');
+  const list = shown.value;
+  if (!list.length) {
+    toast('当前列表是空的');
     return;
   }
-  toast(`开始生成 ${pending.length} 张预览`);
-  for (const card of pending) {
-    if (!thumbSrc(card)) await genThumb(card);
-  }
+  const tasks: ThumbTask[] = list.map(card => ({
+    kind: thumbKindOf(),
+    id: card.id,
+    name: card.name,
+    prompt: thumbPrompt(card),
+  }));
+  const interval = settings.autoTag.lore.thumbIntervalMs;
+  startThumbJob(tasks, interval);
+  toast(
+    `排队 ${tasks.length} 条，每 ${Math.round(interval / 1000)} 秒一条；可以切页，回来还在跑`,
+  );
 }
 
 async function dropThumb(card: LoreCard) {
@@ -386,7 +447,9 @@ const characters = computed<CharTagEntry[]>(() => charTagLib.entries);
 
 function startApply(card: LoreCard) {
   applying.value = card;
-  applyField.value = card.field;
+  // 默认写 extra 而不是 outfit:outfit 是「招牌着装」，写进去这角色以后每张图都穿它。
+  // 临时想试的裙子(尤其是情趣类)写 extra 才合适，想改成固定着装可以在下拉里自己切。
+  applyField.value = card.field === 'outfit' ? 'extra' : card.field;
   applyMode.value = card.tags.split(',').length > 3 ? 'replace' : 'append';
   flash.value = '';
 }
@@ -435,7 +498,7 @@ async function copyTags(card: LoreCard) {
     flash.value = '';
     toast(`已复制「${card.name}」的 tag 串`);
   } catch (error) {
-    console.warn('[柏宝绘] 复制失败', error);
+    console.warn('[墨影] 复制失败', error);
   }
 }
 
@@ -482,6 +545,118 @@ function applyPaste() {
   }
   const tagCount = draft.tags.split(',').length;
   toast(`解析出 ${tagCount} 个 tag、${draft.aliases.length} 个中文触发词`);
+}
+
+/**
+ * Roll 素材:打一个词，随机给一套细化过的搭配并出图。
+ * 满意就连图一起存进库，不满意换一个——比手动翻几百条再拼 tag 快得多。
+ */
+const rollOpen = ref(false);
+const rollKeyword = ref('');
+const rollResult = ref<RollResult | null>(null);
+const rollBusy = ref(false);
+const rollUrl = ref('');
+let rollBlob: Blob | null = null;
+
+const rollPool = computed(() => {
+  if (!rollKeyword.value.trim()) return 0;
+  return rollPoolSize(rollKeyword.value, tab.value === 'pose' ? 'pose' : 'wardrobe');
+});
+
+function clearRollResult() {
+  if (rollUrl.value) URL.revokeObjectURL(rollUrl.value);
+  rollUrl.value = '';
+  rollBlob = null;
+  rollResult.value = null;
+}
+
+function openRoll() {
+  rollOpen.value = true;
+  rollKeyword.value = '';
+  clearRollResult();
+}
+
+function rollPrompt(result: RollResult, pose: boolean): string {
+  const base =
+    'masterpiece, best quality, very aesthetic, absurdres, 1girl, solo, simple background, grey background';
+  return [base, pose ? 'completely nude' : '', result.tags].filter(Boolean).join(', ');
+}
+
+async function doRoll() {
+  const keyword = rollKeyword.value.trim();
+  if (!keyword) {
+    toast('先打一个词，比如 jk、黑丝、旗袍');
+    return;
+  }
+  const status = backendStatus();
+  if (!status.configured) {
+    toast(`后端还没配好：${status.reason || '先去「渠道」页配置'}`);
+    return;
+  }
+  const pose = tab.value === 'pose';
+  const result = pose ? rollPose(keyword) : rollWardrobe(keyword);
+  if (!result) {
+    toast(`库里没有匹配「${keyword}」的${pose ? '姿势' : '服装'}，先补一条再 roll`);
+    return;
+  }
+  clearRollResult();
+  rollResult.value = result;
+  rollBusy.value = true;
+  try {
+    const model = settings.autoTag.lore.thumbModel.trim();
+    const output = await generateImage({
+      prompt: rollPrompt(result, pose),
+      seed: decideSeed(settings.defaultBackend),
+      size: 'portrait',
+      ...(model ? { naiModel: model } : {}),
+    });
+    const blob = await fetch(output.result.url).then(response => response.blob());
+    output.result.revoke();
+    rollBlob = blob;
+    rollUrl.value = URL.createObjectURL(blob);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : '生成失败');
+  } finally {
+    rollBusy.value = false;
+  }
+}
+
+async function adoptRoll() {
+  const result = rollResult.value;
+  if (!result || !rollBlob) {
+    toast('先 roll 出一张图再存');
+    return;
+  }
+  const pose = tab.value === 'pose';
+  const common = {
+    name: result.name,
+    tags: result.tags,
+    aliases: result.aliases.join(', '),
+    nsfw: result.nsfw,
+    note: `roll 自「${result.source}」`,
+  };
+  const saved = pose
+    ? addCustomPose({
+        ...common,
+        category: result.category as PoseCategoryId,
+      })
+    : addCustomWardrobe({
+        ...common,
+        category: result.category,
+        slot: result.slot as WardrobeSlot,
+      });
+  if (!saved.ok || !saved.item) {
+    toast(saved.error ?? '保存失败');
+    return;
+  }
+  const kind: ThumbKind = pose ? 'pose' : 'wardrobe';
+  await putThumb(thumbKey(kind, saved.item.id), rollBlob, rollPrompt(result, pose));
+  rollBlob = null;
+  bumpLore();
+  thumbChecked.clear();
+  toast('已存进素材库，连带预览图一起');
+  rollOpen.value = false;
+  clearRollResult();
 }
 
 function openAdd() {
@@ -596,7 +771,7 @@ async function copyAllCustom() {
     await navigator.clipboard.writeText(exportCustomLoreJson());
     toast('已复制全部自定义条目（可直接存成 .json 当备份）');
   } catch (error) {
-    console.warn('[柏宝绘] 导出失败', error);
+    console.warn('[墨影] 导出失败', error);
     toast('浏览器拦了剪贴板，请允许后重试');
   }
 }
@@ -606,6 +781,24 @@ function removeCard(card: LoreCard) {
   if (!removeCustomLore(kind, card.id)) return;
   bumpLore();
   toast(`已删除「${card.name}」`);
+}
+
+/** 批量删：只删当前筛出来的自定义条目，内置条目永远不动。 */
+function removeVisibleCustom() {
+  const kind = tab.value === 'pose' ? 'pose' : 'wardrobe';
+  const targets = shown.value.filter(card => card.custom);
+  if (!targets.length) {
+    toast('当前列表里没有自定义条目');
+    return;
+  }
+  if (!window.confirm(`删除当前列表里的 ${targets.length} 条自定义素材？（内置条目不受影响）`)) return;
+  let removed = 0;
+  for (const card of targets) {
+    if (removeCustomLore(kind, card.id)) removed += 1;
+  }
+  bumpLore();
+  thumbChecked.clear();
+  toast(`已删除 ${removed} 条自定义素材`);
 }
 
 function clearCustom() {
@@ -659,13 +852,43 @@ function clearCustom() {
         </button>
         <button class="bbi-btn bbi-btn-sm" type="button" @click="openImport">导入</button>
         <button class="bbi-btn bbi-btn-sm" type="button" @click="copyAllCustom">导出</button>
-        <button class="bbi-btn bbi-btn-sm" type="button" title="为当前列表里还没有预览的条目生成一张小图（每条消耗一次 NAI 额度）" @click="genVisibleThumbs">
-          批量预览
+        <button
+          class="bbi-btn bbi-btn-sm"
+          type="button"
+          title="随机拼一套搭配并出图，满意的连图一起存进库"
+          @click="openRoll"
+        >
+          Roll
+        </button>
+        <button
+          class="bbi-btn bbi-btn-sm"
+          type="button"
+          title="把当前列表缺的预览图交给后台队列，按设置的间隔一条一条配"
+          @click="startBatchThumbs"
+        >
+          一键配图
+        </button>
+        <button class="bbi-btn bbi-btn-sm" type="button" title="配图模型与间隔" @click="thumbSettingsOpen = true">
+          配图设置
         </button>
         <button class="bbi-btn bbi-btn-sm" type="button" @click="clearAllThumbs">清空预览</button>
-        <button class="bbi-btn bbi-btn-sm" type="button" @click="clearCustom">清空自定义</button>
+        <button class="bbi-btn bbi-btn-sm" type="button" @click="removeVisibleCustom">删当前列表自定义</button>
+          <button class="bbi-btn bbi-btn-sm" type="button" @click="clearCustom">清空自定义</button>
       </div>
     </div>
+
+    <div v-if="jobState.running" class="bbi-lore-queue">
+      <span class="bbi-lore-queue-text">
+        正在配图 {{ jobState.done }} / {{ jobState.total }}
+        <template v-if="jobState.current"> · {{ jobState.current }}</template>
+        <template v-if="jobState.failed"> · 失败 {{ jobState.failed }}</template>
+      </span>
+      <span class="bbi-lore-queue-bar"><i :style="{ width: `${jobState.total ? Math.round((jobState.done / jobState.total) * 100) : 0}%` }" /></span>
+      <button class="bbi-btn bbi-btn-sm" type="button" @click="stopThumbJob">停止</button>
+    </div>
+    <p v-if="jobState.lastError && !jobState.running" class="bbi-field-hint bbi-lore-queue-err">
+      上次批量配图中断：{{ jobState.lastError }}
+    </p>
 
     <div class="bbi-lore-cats">
       <button
@@ -967,6 +1190,105 @@ function clearCustom() {
           <button class="bbi-btn" type="button" @click="importOpen = false">取消</button>
         </div>
       </div>
+
+      <div
+        v-if="thumbSettingsOpen"
+        class="bbi-modal bbi-lore-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="配图设置"
+      >
+        <header class="bbi-modal-head">
+          <span class="bbi-modal-title">配图设置</span>
+          <button class="bbi-modal-x" type="button" aria-label="关闭" @click="thumbSettingsOpen = false">
+            <Icon name="close" />
+          </button>
+        </header>
+
+        <label class="bbi-modal-field">
+          <span class="bbi-modal-label">预览用模型</span>
+          <select v-model="settings.autoTag.lore.thumbModel" class="bbi-input">
+            <option v-for="option in THUMB_MODELS" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
+        <p class="bbi-field-hint">
+          预览只是认形状，不需要顶配：V4 试用模型不扣 Anlas 点数，几百条素材配下来也花不到额度。
+        </p>
+
+        <label class="bbi-modal-field">
+          <span class="bbi-modal-label">两条之间间隔（秒）</span>
+          <input v-model.number="thumbIntervalSec" class="bbi-input" type="number" min="3" max="120" />
+        </label>
+        <p class="bbi-field-hint">
+          一次只发一个请求，中间等这么久。密了容易被上游当成脚本刷，账号会被临时限流——默认 10 秒是稳的。
+        </p>
+
+        <div class="bbi-channel-bar">
+          <button class="bbi-btn bbi-btn-primary" type="button" @click="thumbSettingsOpen = false">好</button>
+        </div>
+      </div>
+
+      <div
+        v-if="rollOpen"
+        class="bbi-modal bbi-lore-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Roll 素材"
+      >
+        <header class="bbi-modal-head">
+          <span class="bbi-modal-title">Roll 一套搭配</span>
+          <button class="bbi-modal-x" type="button" aria-label="关闭" @click="rollOpen = false">
+            <Icon name="close" />
+          </button>
+        </header>
+
+        <p class="bbi-field-hint">
+          打一个词（jk / 黑丝 / 旗袍 / 后入），从库里随机挑一条当骨架，再叠同类部件和光机位，
+          出图给你看。满意就「存进库」，这张图会跟着条目一起留着。
+        </p>
+
+        <div class="bbi-lore-roll-row">
+          <input
+            v-model="rollKeyword"
+            class="bbi-input"
+            type="text"
+            :placeholder="tab === 'pose' ? '例如：后入、骑乘、第一视角' : '例如：jk、黑丝、旗袍'"
+            @keydown.enter.prevent="doRoll"
+          />
+          <button class="bbi-btn bbi-btn-primary" type="button" :disabled="rollBusy" @click="doRoll">
+            {{ rollBusy ? '出图中…' : rollResult ? '换一个' : 'Roll' }}
+          </button>
+        </div>
+        <p v-if="rollKeyword.trim()" class="bbi-field-hint">
+          库里匹配到 {{ rollPool }} 条；只有 1 条时每次都是它，去补几条更耐 roll。
+        </p>
+
+        <figure v-if="rollUrl" class="bbi-lore-roll-figure">
+          <img :src="rollUrl" alt="roll 预览" />
+        </figure>
+        <p v-else-if="rollBusy" class="bbi-field-hint">正在出图……</p>
+
+        <template v-if="rollResult">
+          <p class="bbi-lore-tags">{{ rollResult.tags }}</p>
+          <p class="bbi-field-hint">
+            骨架来自「{{ rollResult.source }}」· 分类 {{ rollResult.category }} · 尺度 {{ rollResult.nsfw }}
+          </p>
+        </template>
+
+        <div class="bbi-channel-bar">
+          <button
+            class="bbi-btn bbi-btn-primary"
+            type="button"
+            :disabled="!rollResult || !rollUrl"
+            @click="adoptRoll"
+          >
+            存进库（含这张图）
+          </button>
+          <button class="bbi-btn" type="button" @click="rollOpen = false">关闭</button>
+        </div>
+      </div>
     </ModalMask>
 
     <p v-if="toastText" class="bbi-lore-toast">{{ toastText }}</p>
@@ -1076,6 +1398,63 @@ function clearCustom() {
 .bbi-lore-thumb-make {
   width: 100%;
   margin: 0 0 8px;
+}
+
+.bbi-lore-queue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--bbi-line);
+  border-radius: var(--bbi-radius-sm);
+  background: var(--bbi-accent-soft);
+  font-size: 12px;
+}
+
+.bbi-lore-queue-text {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.bbi-lore-queue-bar {
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bbi-line);
+  overflow: hidden;
+}
+
+.bbi-lore-queue-bar i {
+  display: block;
+  height: 100%;
+  background: var(--bbi-accent);
+  transition: width 0.3s;
+}
+
+.bbi-lore-queue-err {
+  color: var(--bbi-danger);
+}
+
+.bbi-lore-roll-row {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.bbi-lore-roll-row .bbi-input {
+  flex: 1 1 auto;
+}
+
+.bbi-lore-roll-figure {
+  margin: 10px 0;
+  text-align: center;
+}
+
+.bbi-lore-roll-figure img {
+  max-width: 220px;
+  border-radius: var(--bbi-radius-sm);
+  border: 1px solid var(--bbi-line);
 }
 
 .bbi-lore-kind {

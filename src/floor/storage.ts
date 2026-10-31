@@ -11,7 +11,7 @@ import { settings } from '@/state/settings';
  * 楼层卡片结果存储层（DESIGN-FLOOR-UI.md §7）。
  *
  * 两层分离：
- * - 新图片二进制 → ST 文件系统（user/images/柏宝绘_<角色名>/），extra 只存指针 path。
+ * - 新图片二进制 → ST 文件系统（user/images/墨影_<角色名>/），extra 只存指针 path。
  *   旧 user/files 图片保留原位，不迁移、不删除。
  * - 元数据 → message.extra.bbiImage = { [swipeId]: { [promptHash]: BbiImageEntry[] } }
  *   按 swipeId 分桶（滑动互不污染）；promptHash 键下是历史列表（时间正序，
@@ -227,7 +227,7 @@ export async function mutateStore(
     await ctx.saveChat();
     return true;
   }
-  console.warn('[柏宝绘] extra 写入重试耗尽，放弃本次写入');
+  console.warn('[墨影] extra 写入重试耗尽，放弃本次写入');
   return false;
 }
 
@@ -328,7 +328,7 @@ export async function prepareImageForStorage(result: ComfyImageResult): Promise<
       }
       return { base64: await blobToBase64(original), format: result.format };
     } catch (error) {
-      console.warn('[柏宝绘] JPG 转码失败，本次回退保存原格式', error);
+      console.warn('[墨影] JPG 转码失败，本次回退保存原格式', error);
     }
   }
   return { base64: await resultToBase64(result), format: result.format };
@@ -341,7 +341,7 @@ export async function prepareImageForStorage(result: ComfyImageResult): Promise<
  * (第三方自己决定图显示在哪,图不进任何楼层正文)。
  *
  * 文件名与目录必须走这里,不能各自另起一套:
- * - 目录 `柏宝绘_<角色名>` 是图库的**唯一**分组依据(index.vue 只列 FOLDER_PREFIX 开头的目录),
+ * - 目录 `墨影_<角色名>` 是图库的**唯一**分组依据(index.vue 只列 FOLDER_PREFIX 开头的目录),
  *   名字换个前缀,图存下去了但图库里看不见;
  * - 文件名 `bbi_…-<genId>.<ext>` 要能被 sidecarPathFor 的正则认出来,否则它返回空串、
  *   图库压根不去请求侧写 —— 症状是图在、提示词空白、**且没有任何报错**。
@@ -359,7 +359,7 @@ async function uploadImageWithSidecar(
   // 先按设置决定落盘格式(开关开启时重编码为 JPG),文件名后缀跟随实际格式
   const { base64, format } = await prepareImageForStorage(result);
   const imageFile = imageFileName(characterName, swipeId, hash, genId, format);
-  const path = await uploadUserImage(`柏宝绘_${characterName}`, imageFile, base64, format);
+  const path = await uploadUserImage(`墨影_${characterName}`, imageFile, base64, format);
   const createdAt = Date.now();
 
   // 侧写:图库跨聊天浏览时,提示词只能从这里拿。
@@ -376,7 +376,7 @@ async function uploadImageWithSidecar(
   try {
     await uploadBase64File(sidecarFileName(imageFile), utf8ToBase64(JSON.stringify(sidecar)));
   } catch (error) {
-    console.warn('[柏宝绘] 侧写元数据写入失败（不影响图片）', error);
+    console.warn('[墨影] 侧写元数据写入失败（不影响图片）', error);
   }
 
   return { path, genId, createdAt, imageFile };
@@ -387,7 +387,7 @@ async function uploadImageWithSidecar(
  *
  * 与 saveImageResult 的分工:那个存完还要写 extra 指针、触发重水合,让楼层卡片显示它;
  * 这个只把文件放进图库就收工 —— 第三方插件自己决定图显示在哪(这正是公开接口的意义),
- * 柏宝绘不替它往聊天记录里塞任何东西。
+ * 墨影不替它往聊天记录里塞任何东西。
  *
  * swipeId 固定 0:文件名里那一格本是「同一楼的第几个 swipe」,外部图没有楼层坐标,
  * 取 0 只为让文件名保持同一格式(图库与 sidecarPathFor 都靠格式认图)。
@@ -450,7 +450,7 @@ export async function saveImageResult(
 
   const saved = await mutateStore(ctx, messageId, store => appendEntry(store, swipeId, hash, entry));
   if (!saved) {
-    console.warn('[柏宝绘] 图片已上传但 extra 写入失败，文件留作孤儿', path);
+    console.warn('[墨影] 图片已上传但 extra 写入失败，文件留作孤儿', path);
     throw new Error('图片已上传，但聊天记录保存失败');
   }
   return entry;
@@ -482,7 +482,7 @@ export async function deleteImageFileOnly(path: string): Promise<void> {
   try {
     await deleteUploadedFile(sidecar);
   } catch (error) {
-    console.warn('[柏宝绘] 删除侧写元数据失败（留作孤儿）', error);
+    console.warn('[墨影] 删除侧写元数据失败（留作孤儿）', error);
   }
 }
 
@@ -523,7 +523,7 @@ export async function deleteImageResult(
     try {
       await deleteUserImage(pathToDelete);
     } catch (error) {
-      console.warn('[柏宝绘] 删除图片文件失败（留作孤儿）', error);
+      console.warn('[墨影] 删除图片文件失败（留作孤儿）', error);
     }
     // 侧写跟着走。deleteUploadedFile 对 404 返回 false 不抛（老图本就没有侧写，属正常）
     const sidecar = sidecarPathFor(pathToDelete);
@@ -531,7 +531,7 @@ export async function deleteImageResult(
       try {
         await deleteUploadedFile(sidecar);
       } catch (error) {
-        console.warn('[柏宝绘] 删除侧写元数据失败（留作孤儿）', error);
+        console.warn('[墨影] 删除侧写元数据失败（留作孤儿）', error);
       }
     }
   }

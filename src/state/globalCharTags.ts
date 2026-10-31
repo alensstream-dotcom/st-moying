@@ -78,7 +78,7 @@ function persist(): void {
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     window.dispatchEvent(
       new CustomEvent(GLOBAL_EVENT, {
-        detail: { revision: store.revision, source: 'ST-BaiBai-Image' },
+        detail: { revision: store.revision, source: 'moying' },
       }),
     );
   }

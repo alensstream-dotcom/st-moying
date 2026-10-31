@@ -29,6 +29,7 @@ import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import type { Orientation } from '@/backends/size';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { consumeAutoGenerate } from '@/floor/autoGenerate';
+import { beginGen, clearGen, failGen, getGenRecord, setGenPhase, slotKey } from '@/floor/genState';
 import { hydrateMessage } from '@/floor/hydrate';
 import { saveImageResult } from '@/floor/storage';
 import { activeComfyPreset, settings } from '@/state/settings';
@@ -139,7 +140,7 @@ function safeHistory<T>(run: () => T): T | null {
   try {
     return run();
   } catch (error) {
-    console.warn('[柏宝绘] 后台出图埋点失败:', error);
+    console.warn('[墨影] 后台出图埋点失败:', error);
     return null;
   }
 }
@@ -152,6 +153,13 @@ function safeHistory<T>(run: () => T): T | null {
 async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 'skipped' | 'failed'> {
   if (!backendStatus().configured) return 'skipped';
   if (!chatMatches(job.chatId)) return 'skipped';
+
+  const key = slotKey(job.chatId, job.messageId, job.swipeId, job.seq);
+  // 前台卡片正在这个槽位上跑时不接管:beginGen 会 abort 同 key 的 controller,
+  // 抢过来等于把用户眼前那次生成掐掉。前台跑了,这张就交给前台。
+  const running = getGenRecord(key);
+  if (running && running.phase !== 'error') return 'skipped';
+  const handle = beginGen(key, job.prompt, 'queued');
 
   const seed = decideSeed(settings.defaultBackend);
   const naiActive = settings.defaultBackend === 'nai';
@@ -171,6 +179,7 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
   );
 
   try {
+    setGenPhase(key, handle.token, 'generating');
     const { result, meta } = await generateImage(
       {
         prompt: job.prompt,
@@ -180,11 +189,12 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
         size: job.size,
         seed,
       },
-      signal,
+      handle.signal ?? signal,
     );
     await saveImageResult(job.messageId, job.swipeId, job.seq, job.tag, seed, result, meta);
     result.revoke();
     if (historyId !== null) safeHistory(() => finishImage(historyId));
+    clearGen(key, handle.token);
     dropPending(jobKey(job));
     // 落盘后反推界面:前台卡片从 extra 变成 ready,后台回来时一进聊天就已就绪
     const ctx = getContext();
@@ -194,7 +204,11 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
     const aborted = error instanceof DOMException && error.name === 'AbortError';
     const message = error instanceof Error ? error.message : String(error);
     if (historyId !== null) safeHistory(() => failImage(historyId, message, aborted));
-    if (aborted) return 'skipped';
+    if (aborted) {
+      clearGen(key, handle.token);
+      return 'skipped';
+    }
+    failGen(key, handle.token, message);
     enqueue(job, message);
     return 'failed';
   }

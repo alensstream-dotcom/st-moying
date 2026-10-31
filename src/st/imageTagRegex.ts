@@ -3,7 +3,7 @@ import { normalizeOrientation, type Orientation } from '@/backends/size';
 import { getContext } from '@/st/context';
 
 /**
- * 柏宝绘生图 tag 的两条托管正则（DESIGN-FLOOR-UI.md §4）：
+ * 墨影生图 tag 的两条托管正则（DESIGN-FLOOR-UI.md §4）：
  *
  * - bbi-image-tag-slot（markdownOnly）：显示路径把 <bbi_image>…</bbi_image> 整体
  *   替换为空锚点 <div data-bbi-slot=""></div>，提示词永不进 DOM。
@@ -69,7 +69,7 @@ export interface ManagedRegexScript extends Record<string, unknown> {
 export function imageTagSlotScript(): ManagedRegexScript {
   return {
     id: IMAGE_TAG_SLOT_REGEX_ID,
-    scriptName: '柏宝绘 · 生图标签占位',
+    scriptName: '墨影 · 生图标签占位',
     findRegex: IMAGE_TAG_FIND_REGEX_LITERAL,
     replaceString: '<div data-bbi-slot=""></div>',
     trimStrings: [],
@@ -88,7 +88,7 @@ export function imageTagSlotScript(): ManagedRegexScript {
 export function imageTagHideScript(): ManagedRegexScript {
   return {
     id: IMAGE_TAG_HIDE_REGEX_ID,
-    scriptName: '柏宝绘 · 隐藏生图标签',
+    scriptName: '墨影 · 隐藏生图标签',
     findRegex: IMAGE_TAG_FIND_REGEX_LITERAL,
     replaceString: '',
     trimStrings: [],
@@ -309,7 +309,7 @@ const MANAGED_SCRIPTS: Array<() => ManagedRegexScript> = [
 ];
 
 /**
- * 向 ST 全局正则列表注册柏宝绘托管规则。
+ * 向 ST 全局正则列表注册墨影托管规则。
  * 固定 id 保证幂等：旧版本或用户改动过的同 id 规则会被更新，其它正则原样保留，
  * 不重复添加。旧版单条 bbi-image-tag-hide（markdownOnly+promptOnly 双开）会被
  * 新 hide 定义原位覆盖，并新增 slot 规则，存量用户无缝迁移。

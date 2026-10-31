@@ -108,9 +108,9 @@ async function hydrateWhenReady(attempt = 0) {
       // ready 事件里的 revision 已经对应真实角色库。
       registerPublicInterface();
       void checkForUpdate();
-      console.log(`[柏宝绘] 已加载 v${__BBI_VERSION__},设置已同步`);
+      console.log(`[墨影] 已加载 v${__BBI_VERSION__},设置已同步`);
     } catch (e) {
-      console.error('[柏宝绘] 设置载入失败', e);
+      console.error('[墨影] 设置载入失败', e);
     }
     return;
   }

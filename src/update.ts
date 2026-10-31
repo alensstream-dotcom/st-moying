@@ -8,7 +8,7 @@ import { PLUGIN_VERSION } from '@/version';
 import { reactive } from 'vue';
 
 const CURRENT_VERSION = PLUGIN_VERSION;
-const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/alensstream-dotcom/ST-BaiBai-Image/main/manifest.json';
+const REMOTE_MANIFEST_URL = '';
 
 export const updateState = reactive({
   current: CURRENT_VERSION,
@@ -35,6 +35,8 @@ export function isNewer(a: string, b: string): boolean {
 }
 
 async function readRemoteVersion(): Promise<string> {
+  // 没填远端清单地址就当作「不检查更新」,免得部署在私有副本上还去请求别人的仓库。
+  if (!REMOTE_MANIFEST_URL) return '';
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
@@ -82,7 +84,7 @@ function extensionFolderName(): string {
   } catch {
     // 解析失败时回退固定目录名。
   }
-  return 'ST-BaiBai-Image';
+  return 'moying';
 }
 
 async function discoverExtensionType(folder: string): Promise<'global' | 'local' | 'system' | null> {

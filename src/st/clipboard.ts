@@ -36,10 +36,10 @@ export async function copyText(text: string, okMessage = '已复制'): Promise<b
       throw new Error('Clipboard copy failed');
     }
 
-    toastr.success(okMessage, '柏宝绘');
+    toastr.success(okMessage, '墨影');
     return true;
   } catch {
-    toastr.error('复制失败，请手动选择文本', '柏宝绘');
+    toastr.error('复制失败，请手动选择文本', '墨影');
     return false;
   }
 }

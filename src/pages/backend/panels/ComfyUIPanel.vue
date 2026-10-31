@@ -153,7 +153,7 @@ async function onFetchModels(silent = false) {
         lists.value.mode === 'server'
           ? '已拉取模型列表(ST 转发;LoRA/CLIP 需手输文件名)'
           : '已拉取模型列表',
-        '柏宝绘',
+        '墨影',
       );
     }
   } catch (error) {
@@ -315,7 +315,7 @@ async function onAutoConfigure() {
   try {
     const result = await configureWorkflowWithAi(active.value.workflow);
     if (!result.changes.length) {
-      toastr.info('工作流中的动态参数已经配置，无需修改', '柏宝绘');
+      toastr.info('工作流中的动态参数已经配置，无需修改', '墨影');
       return;
     }
     assistResult.value = result;
@@ -345,9 +345,9 @@ function applyAssist() {
     target.workflow = assistDraft.value;
     const name = target.name;
     closeAssist();
-    toastr.success(`已应用 AI 配置的工作流（${name}）`, '柏宝绘');
+    toastr.success(`已应用 AI 配置的工作流（${name}）`, '墨影');
     if (placeholders.includes('nl') && !target.naturalLanguage) {
-      toastr.info('工作流已配置 %nl%；需要时请开启「生成自然语言」', '柏宝绘');
+      toastr.info('工作流已配置 %nl%；需要时请开启「生成自然语言」', '墨影');
     }
   } catch (error) {
     toastr.error(errorMessage(error), '工作流无法应用');

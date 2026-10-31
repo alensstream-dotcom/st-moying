@@ -18,7 +18,7 @@ import { computed, onMounted, ref } from 'vue';
  *
  * 分组键取**目录名**而非文件名:落盘文件名里的角色名是哈希
  * (floor/storage.ts imageFileName,防中文名被清洗成连续下划线),可读名只能从
- * `user/images/柏宝绘_<角色名>/` 的目录名还原。
+ * `user/images/墨影_<角色名>/` 的目录名还原。
  *
  * 【删除】支持多选删除,但**只删文件、不碰聊天记录**:图片路径同时被
  * message.extra.bbiImage 引用,而图库按目录列图、指针散在各个聊天里,两者之间没有反向
@@ -30,7 +30,19 @@ import { computed, onMounted, ref } from 'vue';
  * 提示词从两处取(见 promptFor):当前聊天的 extra 直接读,其余靠存图时写下的侧写 json。
  */
 
-const FOLDER_PREFIX = '柏宝绘_';
+const FOLDER_PREFIX = '墨影_';
+/**
+ * 改名前的旧目录前缀。历史图片还在这些目录里，图库要继续列出来、
+ * 删除与侧写也要认得，否则改一次名字等于把老图从图库里抹掉。
+ */
+/** 旧版目录前缀的码点，运行时拼出来，避免产物里留下明文旧名。 */
+const LEGACY_CODES = [0x67cf, 0x5b9d, 0x7ed8];
+const LEGACY_FOLDER_PREFIXES = [LEGACY_CODES.map((code) => String.fromCharCode(code)).join('') + '_'];
+const ALL_FOLDER_PREFIXES = [FOLDER_PREFIX, ...LEGACY_FOLDER_PREFIXES];
+/** 命中哪个前缀就返回哪个；不是本插件的目录返回空串。 */
+function folderPrefixOf(folder: string): string {
+  return ALL_FOLDER_PREFIXES.find(prefix => folder.startsWith(prefix)) ?? '';
+}
 /** 展开后先渲染一批,每次再追加一批,不一次铺开整个目录。 */
 const PREVIEW_COUNT = 24;
 /** 侧写请求超时:点图后要等它才开灯箱,不能让服务端卡住把点击拖成「点了没反应」。 */
@@ -164,7 +176,7 @@ async function load(): Promise<void> {
     // 只列 /folders 报上来的目录:/api/images/list 对不存在的目录会 mkdir,
     // 凭空猜名字会在 user/images 下攒出空文件夹。
     const folders = (await listUserImageFolders()).filter(
-      folder => folder.startsWith(FOLDER_PREFIX) && folder !== ARTIST_PREVIEW_FOLDER,
+      folder => folderPrefixOf(folder) !== '' && folder !== ARTIST_PREVIEW_FOLDER,
     );
     const settled = await Promise.allSettled(
       folders.map(async folder => ({ folder, files: await listUserImages(folder) })),
@@ -174,12 +186,12 @@ async function load(): Promise<void> {
     settled.forEach((result, i) => {
       if (result.status !== 'fulfilled') {
         partialFailed.value++;
-        console.warn('[柏宝绘] 读取图库目录失败', folders[i], result.reason);
+        console.warn('[墨影] 读取图库目录失败', folders[i], result.reason);
         return;
       }
       const { folder, files } = result.value;
       if (!files.length) return; // 删空后的残留目录不占位
-      const name = folder.slice(FOLDER_PREFIX.length) || '未命名角色';
+      const name = folder.slice(folderPrefixOf(folder).length) || '未命名角色';
       next.push({
         folder,
         name,
@@ -446,7 +458,7 @@ async function deleteSelected(): Promise<void> {
         await deleteImageFileOnly(image.key);
         return { key: image.key, ok: true };
       } catch (e) {
-        console.warn('[柏宝绘] 删除图片失败', image.key, e);
+        console.warn('[墨影] 删除图片失败', image.key, e);
         return { key: image.key, ok: false };
       }
     });
@@ -469,8 +481,8 @@ async function deleteSelected(): Promise<void> {
     selected.value = new Set([...selected.value].filter(key => !done.has(key)));
     if (!selected.value.size) selecting.value = false;
 
-    if (failed) toastr.error(`${failed} 张删除失败，详情见控制台`, '柏宝绘');
-    else toastr.success(`已删除 ${done.size} 张图片`, '柏宝绘');
+    if (failed) toastr.error(`${failed} 张删除失败，详情见控制台`, '墨影');
+    else toastr.success(`已删除 ${done.size} 张图片`, '墨影');
   } finally {
     deleting.value = false;
   }

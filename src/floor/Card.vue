@@ -250,13 +250,13 @@ const barText = computed(() => {
 /** 无图且后端未就绪时,占位区中央的配置引导。 */
 const pendingHint = computed(() => {
   if (!comfyActive.value && !naiActive.value)
-    return '出图后端未选择,请到柏宝绘「渠道」页选择出图渠道';
+    return '出图后端未选择,请到墨影「渠道」页选择出图渠道';
   return naiActive.value
-    ? '未配置 NAI,请到柏宝绘「渠道」页填写 API Key'
-    : '未配置 ComfyUI,请到柏宝绘「渠道」页填写工作流';
+    ? '未配置 NAI,请到墨影「渠道」页填写 API Key'
+    : '未配置 ComfyUI,请到墨影「渠道」页填写工作流';
 });
 
-async function generate(): Promise<void> {
+async function generate(fresh = false): Promise<void> {
   if (busy.value || planning.value || !configured.value) return;
   const slot = key.value;
   const currentHash = hash.value;
@@ -281,7 +281,7 @@ async function generate(): Promise<void> {
   try {
     // 发起时就确定种子(NAI 面板种子 > 0 时用固定值;否则随机),随结果落盘进 extra
     // (entry.seed),历史翻页可查/可复用。口径在 generate.ts,与公开接口同源。
-    const seed = decideSeed(settings.defaultBackend);
+    const seed = decideSeed(settings.defaultBackend, undefined, fresh);
     // 历史埋点:seed 已定、请求将发,此刻登记。图片本身不进 store(dataURL 会爆内存,
     // 且图随后就落盘进 ST 了)——只留元信息 + 楼层坐标,够回溯「这张图是怎么来的」。
     historyId = safeHistory(() =>
@@ -422,7 +422,7 @@ async function removeEntry(
     target.generationId,
   );
   if (!removed) {
-    toastr.error('删除失败,聊天记录未能保存', '柏宝绘');
+    toastr.error('删除失败,聊天记录未能保存', '墨影');
     return;
   }
   const ctx = getContext();
@@ -523,7 +523,7 @@ onMounted(() => {
 
       <!-- 无图且空闲:生成入口 / 配置引导 -->
       <div v-if="!imageSrc && !busy" class="bbi-figure__pending">
-        <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate">
+        <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate()">
           <Icon name="palette" :size="15" />
           {{ phase === 'error' ? '重试' : '生成图片' }}
         </button>
@@ -559,8 +559,8 @@ onMounted(() => {
             class="bbi-fab"
             type="button"
             :disabled="!configured"
-            :title="configured ? '重绘' : '请先在柏宝绘「渠道」页完成配置'"
-            @click="menuOpen = false; generate()"
+            :title="configured ? '重绘' : '请先在墨影「渠道」页完成配置'"
+            @click="menuOpen = false; generate(true)"
           >
             <Icon name="refresh" :size="15" />
           </button>
@@ -622,7 +622,7 @@ onMounted(() => {
     <!-- 状态行:仅出错 / 提示词已改时出现,平时零占位 -->
     <p v-if="phase === 'error'" class="bbi-figure__status bbi-figure__status--error">
       {{ error
-      }}<button v-if="configured" class="bbi-figure__retry" type="button" @click="generate">
+      }}<button v-if="configured" class="bbi-figure__retry" type="button" @click="generate()">
         重试
       </button>
     </p>

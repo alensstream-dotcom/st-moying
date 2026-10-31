@@ -45,12 +45,12 @@ async function onActivate(button: HTMLElement): Promise<void> {
   const message = Number.isInteger(floor) ? context?.chat?.[floor] : undefined;
   // 点了必须有下文:静默 return 在用户那里就是「按钮点了没反应」,连日志都没有
   if (!context || !message) {
-    console.warn('[柏宝绘] 楼层按钮找不到对应消息', { mesid: button.closest('.mes')?.getAttribute('mesid') });
-    toastr.warning('找不到这一楼的消息，请刷新页面后重试', '柏宝绘');
+    console.warn('[墨影] 楼层按钮找不到对应消息', { mesid: button.closest('.mes')?.getAttribute('mesid') });
+    toastr.warning('找不到这一楼的消息，请刷新页面后重试', '墨影');
     return;
   }
   if (!settings.enabled) {
-    toastr.warning('柏宝绘已停用，请先在插件设置里开启', '柏宝绘');
+    toastr.warning('墨影已停用，请先在插件设置里开启', '墨影');
     return;
   }
 

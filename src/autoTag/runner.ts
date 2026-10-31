@@ -84,7 +84,7 @@ function abort(
   payload: Record<string, unknown> = {},
 ): void {
   diagnostic('runForFloor:skip', { floor, reason, ...payload });
-  if (manual) toastr.warning(hint, '柏宝绘');
+  if (manual) toastr.warning(hint, '墨影');
 }
 
 function activeSwipeId(message: STMessage): number | null {
@@ -193,7 +193,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     return;
   }
   if (!settings.enabled) {
-    abort(floor, 'extension-disabled', opts.manual, '柏宝绘已停用，请先在插件设置里开启');
+    abort(floor, 'extension-disabled', opts.manual, '墨影已停用，请先在插件设置里开启');
     return;
   }
   if (!opts.manual && !settings.autoTag.enabled) {
@@ -246,7 +246,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       opts.manual,
       '本楼已有生图 tag，没有确认重新生成，本次未改动',
     );
-    if (!opts.manual) console.debug(`[柏宝绘] 第 ${floor} 楼已经含有 bbi_image tag，跳过自动分析`);
+    if (!opts.manual) console.debug(`[墨影] 第 ${floor} 楼已经含有 bbi_image tag，跳过自动分析`);
     return;
   }
   // replace / slot:分析都基于剔除旧 tag 后的正文。写回时 replace 让旧 tag 随之消失,
@@ -401,7 +401,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           return;
         }
         lastError = error instanceof Error ? error.message : String(error);
-        console.warn(`[柏宝绘] 第 ${floor} 楼第 ${attempt + 1}/${retries + 1} 次生成 tag 失败`, error);
+        console.warn(`[墨影] 第 ${floor} 楼第 ${attempt + 1}/${retries + 1} 次生成 tag 失败`, error);
       }
     }
     if (!plan) {
@@ -409,7 +409,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       processed.delete(identity);
       toastr.error(
         `${lastError}${retries > 0 ? `(已自动重试 ${retries} 次)` : ''}`,
-        '柏宝绘自动 tag 失败',
+        '墨影自动 tag 失败',
       );
       return;
     }
@@ -487,19 +487,19 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       // 模型认为这是角色、却没给它建档 —— 该角色在图里将完全没有外貌。
       // 这是漏建档唯一的确定性信号,藏进控制台等于没有,必须让用户看见。
       const names = [...unknownNames].join('、');
-      console.warn('[柏宝绘] AI 引用了库里没有的角色占位符,已剥除:', names);
-      toastr.warning(`角色「${names}」没有建档，本次画面中缺少其外貌`, '柏宝绘');
+      console.warn('[墨影] AI 引用了库里没有的角色占位符,已剥除:', names);
+      toastr.warning(`角色「${names}」没有建档，本次画面中缺少其外貌`, '墨影');
     }
 
     // 单槽重写没给出新提示词:保留原提示词与原图,不替换(空 images 不是错误)。
     if (slot && !plan.images.length) {
-      toastr.info('模型没有给出新的提示词，本张保持原样', '柏宝绘');
+      toastr.info('模型没有给出新的提示词，本张保持原样', '墨影');
       return;
     }
     // 没有图片、没有角色变化、也没有旧楼层变化要清理时,保持原来的无写入早退。
     if (!plan.images.length && !floorOps.length && !previousDelta) {
-      if (opts.manual) toastr.info('模型认为本楼没有值得插图的画面', '柏宝绘');
-      else console.debug(`[柏宝绘] 第 ${floor} 楼无需插图`);
+      if (opts.manual) toastr.info('模型认为本楼没有值得插图的画面', '墨影');
+      else console.debug(`[墨影] 第 ${floor} 楼无需插图`);
       return;
     }
 
@@ -582,17 +582,17 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         );
       }
       if (slot) {
-        toastr.success(`已重写第 ${slot.seq + 1} 张的提示词，正在按新提示词出图`, '柏宝绘');
+        toastr.success(`已重写第 ${slot.seq + 1} 张的提示词，正在按新提示词出图`, '墨影');
         return;
       }
       recomputeCharTags();
-      if (rebaseNote) console.info(`[柏宝绘] 第 ${floor} 楼 tag 位置重定位:${rebaseNote}`);
+      if (rebaseNote) console.info(`[墨影] 第 ${floor} 楼 tag 位置重定位:${rebaseNote}`);
       if (plan.images.length) {
-        toastr.success(`已在第 ${floor} 楼插入 ${plan.images.length} 个生图 tag`, '柏宝绘');
+        toastr.success(`已在第 ${floor} 楼插入 ${plan.images.length} 个生图 tag`, '墨影');
       } else if (opts.manual) {
-        toastr.info('模型认为本楼没有值得插图的画面', '柏宝绘');
+        toastr.info('模型认为本楼没有值得插图的画面', '墨影');
       } else {
-        console.debug(`[柏宝绘] 第 ${floor} 楼无需插图`);
+        console.debug(`[墨影] 第 ${floor} 楼无需插图`);
       }
       return;
     }
@@ -601,12 +601,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       if (slot) consumeAutoGenerate(chatId, floor, markSwipeId, slot.seq);
       else clearAutoGenerateForFloor(chatId, floor);
     }
-    console.info(`[柏宝绘] 第 ${floor} 楼放弃写入生图 tag：${result}`);
+    console.info(`[墨影] 第 ${floor} 楼放弃写入生图 tag：${result}`);
     // 单槽重写的放弃原因与全量不同:正文其它部分改没改不重要,关键是这一条 tag 被改过
     if (slot && result === 'build-failed') {
-      toastr.warning('这张图的提示词在生成期间已被改动，本次没有覆盖它', '柏宝绘');
+      toastr.warning('这张图的提示词在生成期间已被改动，本次没有覆盖它', '墨影');
     } else {
-      toastr.warning(ABANDON_REASON[result] ?? '本次没有写入生图 tag', '柏宝绘');
+      toastr.warning(ABANDON_REASON[result] ?? '本次没有写入生图 tag', '墨影');
     }
   } catch (error) {
     // 请求失败或被切换聊天取消时允许同一正文在后续重新渲染后重试。
@@ -617,8 +617,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     else clearAutoGenerateForFloor(chatId, floor);
     if (controller.signal.aborted) return;
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[柏宝绘] 第 ${floor} 楼自动生成 tag 失败`, error);
-    toastr.error(message, '柏宝绘自动 tag 失败');
+    console.error(`[墨影] 第 ${floor} 楼自动生成 tag 失败`, error);
+    toastr.error(message, '墨影自动 tag 失败');
   } finally {
     if (running.get(runKey) === controller) running.delete(runKey);
   }

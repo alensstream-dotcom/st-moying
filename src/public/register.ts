@@ -26,8 +26,8 @@ import {
  * 公开接口的注册与事件面(与柏宝书 src/public/register.ts 同款,第三方学一套就够)。
  *
  * 第三方怎么拿到接口——**两条路都得给**,因为插件加载顺序不确定:
- * - 它比柏宝绘晚加载:直接读 globalThis.STBaiBaiImage 就有;
- * - 它比柏宝绘早加载:读到 undefined,只能等 window 的 'st-baibai-image:ready'。
+ * - 它比墨影晚加载:直接读 globalThis.STBaiBaiImage 就有;
+ * - 它比墨影早加载:读到 undefined,只能等 window 的 'st-baibai-image:ready'。
  * 只给其中一条,另一半场合的第三方就得写轮询——那是我们的锅,不是它的。
  */
 
@@ -73,7 +73,7 @@ function emitNotice(type: PublicChangeNotice['type']): void {
     try {
       listener(clonePublic(detail));
     } catch (error) {
-      console.warn('[柏宝绘] 公共接口订阅回调异常', error);
+      console.warn('[墨影] 公共接口订阅回调异常', error);
     }
   }
   const eventName = type === 'ready' ? PUBLIC_READY_EVENT : PUBLIC_CHANGED_EVENT;
@@ -134,5 +134,5 @@ export function registerPublicInterface(): void {
 
   ready = true;
   emitNotice('ready');
-  console.log('[柏宝绘] 公共接口已就绪', clonePublic(capabilities));
+  console.log('[墨影] 公共接口已就绪', clonePublic(capabilities));
 }

@@ -26,7 +26,7 @@ function flush(): void {
     try {
       listener();
     } catch (error) {
-      console.error('[柏宝绘] #chat 变更回调异常', error);
+      console.error('[墨影] #chat 变更回调异常', error);
     }
   }
 }

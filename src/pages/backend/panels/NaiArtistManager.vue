@@ -20,7 +20,7 @@ import { newNaiArtist, settings, type NaiArtistPreset } from '@/state/settings';
  * - 点卡片主体 = 启用该条(再点当前条 = 停用,回「不使用」);
  * - 左上角勾选框 = 管理态多选,只服务于批量删除,与启用状态无关;
  * - 内置条(bi_*)随插件版本更新,只读:无勾选框、不可删改,「复制」是唯一自定义入口;
- * - 预览图上传后压成最长边 512 的 jpeg,落 user/images/柏宝绘_画师串/<条目id>.jpg,
+ * - 预览图上传后压成最长边 512 的 jpeg,落 user/images/墨影_画师串/<条目id>.jpg,
  *   路径记在条目 previewPath 上,不维护额外索引;换图同名覆盖,删条目时连带删文件。
  */
 

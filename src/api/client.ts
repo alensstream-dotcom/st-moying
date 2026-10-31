@@ -106,7 +106,7 @@ async function estimateTokens(id: number, messages: ChatMsg[], response: string)
       ),
     );
   } catch (e) {
-    console.debug('[柏宝绘] token 估算失败(已忽略)', e);
+    console.debug('[墨影] token 估算失败(已忽略)', e);
   }
 }
 

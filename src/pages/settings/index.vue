@@ -538,9 +538,9 @@ async function confirmUpdate() {
   const toastr = (globalThis as Record<string, any>).toastr;
   try {
     await performUpdate();
-    toastr?.success?.('更新成功,正在刷新页面…', '柏宝绘');
+    toastr?.success?.('更新成功,正在刷新页面…', '墨影');
   } catch (error) {
-    toastr?.error?.(`更新失败:${error instanceof Error ? error.message : String(error)}`, '柏宝绘');
+    toastr?.error?.(`更新失败:${error instanceof Error ? error.message : String(error)}`, '墨影');
   }
 }
 </script>
@@ -577,7 +577,7 @@ async function confirmUpdate() {
     <!-- 总开关:整个插件的主控。全页唯一的大号滑动开关,与下方各项的小复选框拉开层级。 -->
     <div class="bbi-master" :class="{ 'is-off': !settings.enabled }">
       <span class="bbi-master-spine" aria-hidden="true"></span>
-      <span class="bbi-master-title">柏宝绘 · 文生图</span>
+      <span class="bbi-master-title">墨影 · 文生图</span>
       <button
         type="button"
         role="switch"
@@ -644,13 +644,13 @@ async function confirmUpdate() {
           <span class="bbi-field-label">在 ST 顶栏显示按钮</span>
           <input v-model="ui.showTopBar" type="checkbox" class="bbi-checkbox" />
         </label>
-        <p class="bbi-field-hint">在酒馆顶部导航栏加一个快速打开柏宝绘的按钮。左下角魔杖入口照旧保留。</p>
+        <p class="bbi-field-hint">在酒馆顶部导航栏加一个快速打开墨影的按钮。左下角魔杖入口照旧保留。</p>
 
         <label class="bbi-switch-row">
           <span class="bbi-field-label">显示屏幕悬浮球</span>
           <input v-model="ui.showOrb" type="checkbox" class="bbi-checkbox" />
         </label>
-        <p class="bbi-field-hint">在屏幕边缘挂一枚可拖动的悬浮球,点击即开柏宝绘。拖到中间可常驻悬浮,拖近左右边缘则吸附贴边。</p>
+        <p class="bbi-field-hint">在屏幕边缘挂一枚可拖动的悬浮球,点击即开墨影。拖到中间可常驻悬浮,拖近左右边缘则吸附贴边。</p>
 
         <!-- 悬浮球外观:配置项多,开启后才收进小分组 -->
         <Collapsible v-if="ui.showOrb" title="悬浮球外观" :open="false">

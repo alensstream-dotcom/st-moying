@@ -22,7 +22,7 @@ export class ImageStoreError extends Error {
  * 常量名:CJK + 下划线经服务端 sanitize-filename 原样保留。
  * 动态角色目录名也由上传接口清洗，无需额外请求 sanitize-filename。
  */
-export const ARTIST_PREVIEW_FOLDER = '柏宝绘_画师串';
+export const ARTIST_PREVIEW_FOLDER = '墨影_画师串';
 
 async function postImage(
   endpoint: string,

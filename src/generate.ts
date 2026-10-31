@@ -12,7 +12,7 @@
  * **闸门不可绕过**,这是本模块存在的首要理由:直接调 backends/nai.ts 的
  * generateNaiImage 会跑在 floor/genQueue.ts 的并发闸门与全局节奏之外,0.2.0 整版的
  * NAI 限流自愈(429 全局冷却、相邻请求最小间隔、退避重试)当场失效。第三方并发调用
- * 是常态,绕过去的症状是用户 NAI 账号吃一串密集 429 —— 而用户只会认为柏宝绘坏了。
+ * 是常态,绕过去的症状是用户 NAI 账号吃一串密集 429 —— 而用户只会认为墨影坏了。
  * 故公开接口与卡片共用本函数,闸门在这里包死。
  *
  * 本模块**刻意不碰**:楼层坐标、genState、extra、水合、请求历史埋点。
@@ -48,6 +48,11 @@ export interface GenerateInput {
   size?: Orientation;
   /** 本次种子。由调用方经 decideSeed() 先行确定(埋点要在发请求前拿到它)。 */
   seed: number;
+  /**
+   * 只对本次请求生效的 NAI 模型覆盖(留空 = 用渠道配置)。素材缩略图用它走
+   * `nai-diffusion-4-curated-preview` 这类不占额度的模型,免得为预览烧 Anlas。
+   */
+  naiModel?: string;
 }
 
 /** 生成过程中的进度上报(卡片用它显示排队位置与退避进度)。 */
@@ -144,7 +149,7 @@ export function backendStatus(): BackendStatus {
     configured: false,
     model: '',
     supportsCharacters: false,
-    reason: '出图后端未选择,请在柏宝绘「渠道」页选择出图渠道',
+    reason: '出图后端未选择,请在墨影「渠道」页选择出图渠道',
   };
 }
 
@@ -155,9 +160,15 @@ export function backendStatus(): BackendStatus {
  * 口径:显式指定 > NAI 面板固定种子(>0)> 随机。
  * NAI 与 ComfyUI 的随机上界不同(各自协议的合法范围),故分开取。
  */
-export function decideSeed(backend: BackendId, override?: number): number {
-  if (override !== undefined && Number.isFinite(override) && override > 0) return Math.floor(override);
-  if (backend === 'nai') return settings.nai.seed > 0 ? settings.nai.seed : naiRandomSeed();
+/**
+ * 决定这一张的种子。
+ *
+ * `fresh` 为重绘场景:面板里写死的种子在重绘时必须让位,否则每点一次「重新生成」
+ * 都拿同一个 seed 求同一张图,用户会以为按钮坏了。
+ */
+export function decideSeed(backend: BackendId, override?: number, fresh = false): number {
+  if (!fresh && override !== undefined && Number.isFinite(override) && override > 0) return Math.floor(override);
+  if (backend === 'nai') return !fresh && settings.nai.seed > 0 ? settings.nai.seed : naiRandomSeed();
   return randomSeed();
 }
 
@@ -197,8 +208,12 @@ export async function generateImage(
     let result: ComfyImageResult;
     let meta: GenerationMeta;
     if (isNai) {
+      // 单次覆盖模型:素材缩略图走 V4 试用模型(不占 Anlas),不该为此改动用户保存的渠道设置。
+      // effectiveNai() 返回的是浅拷贝,改它不会污染 settings。
+      const naiConn = effectiveNai();
+      if (input.naiModel) naiConn.model = input.naiModel as typeof naiConn.model;
       const output = await generateNaiImage(
-        effectiveNai(),
+        naiConn,
         // characters 原样透传:不支持的模型由 buildNaiParameters 自己滤掉(同一口径
         // naiSupportsCharacterPrompts),在这儿再滤一遍只会多一处会漂的判据
         { prompt: input.prompt, nl: input.nl ?? '', characters, seed: input.seed, size },

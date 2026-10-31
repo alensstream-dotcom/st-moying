@@ -479,7 +479,7 @@ function detachFromExistingFloors(...rawNames: Array<string | undefined>): void 
   }
   if (changed) {
     void context.saveChat?.().catch(error => {
-      console.warn('[柏宝绘] 手动角色变更已生效,但清理旧楼层角色记录保存失败', error);
+      console.warn('[墨影] 手动角色变更已生效,但清理旧楼层角色记录保存失败', error);
     });
   }
 }

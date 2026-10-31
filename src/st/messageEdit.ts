@@ -128,14 +128,14 @@ export async function applyMessageText(
   }
 
   await emitMessageEvent(context, context.eventTypes.MESSAGE_EDITED, floor).catch(error => {
-    console.warn('[柏宝绘] tag 已保存，但 MESSAGE_EDITED 事件发送失败', error);
+    console.warn('[墨影] tag 已保存，但 MESSAGE_EDITED 事件发送失败', error);
   });
   if (!settleActiveEditor(floor, message.mes)) {
     await refreshRenderedMessage(context, message, floor).catch(error => {
-      console.warn('[柏宝绘] tag 已保存，但楼层刷新失败', error);
+      console.warn('[墨影] tag 已保存，但楼层刷新失败', error);
     });
     await emitMessageEvent(context, context.eventTypes.MESSAGE_UPDATED, floor).catch(error => {
-      console.warn('[柏宝绘] tag 已保存，但 MESSAGE_UPDATED 事件发送失败', error);
+      console.warn('[墨影] tag 已保存，但 MESSAGE_UPDATED 事件发送失败', error);
     });
   }
   return 'saved';

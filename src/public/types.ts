@@ -3,7 +3,7 @@ import type { BackendId } from '@/state/settings';
 import type { CharTagField } from '@/state/charTags';
 
 /**
- * 柏宝绘公开接口的数据结构(DTO)。**第三方插件的契约面。**
+ * 墨影公开接口的数据结构(DTO)。**第三方插件的契约面。**
  *
  * 纪律(与柏宝书 src/public/types.ts 同款,第三方作者学一套就够):
  * - apiVersion 独立于 pluginVersion:前者是**本文件这些结构**的版本,插件版本天天涨,
@@ -24,13 +24,13 @@ export interface PublicCapabilities {
   characterLibrary: true;
   /** 能调生图(generate)。 */
   generate: true;
-  /** 生成的图能落盘进柏宝绘图库(generate 的 save 选项)。 */
+  /** 生成的图能落盘进墨影图库(generate 的 save 选项)。 */
   saveToGallery: true;
   /** ready/changed 事件可用。 */
   events: true;
 }
 
-/** 一个角色的外貌字段。键与柏宝绘设置页的「角色库」逐项对应。 */
+/** 一个角色的外貌字段。键与墨影设置页的「角色库」逐项对应。 */
 export type PublicCharacterFields = Record<CharTagField, string>;
 
 export interface PublicCharacter {
@@ -133,10 +133,10 @@ export interface GenerateRequest {
   /** 指定种子(正整数)。省略 = 按用户设置决定(NAI 面板固定种子,否则随机)。 */
   seed?: number;
   /**
-   * 落盘进柏宝绘图库,**默认 true**。
+   * 落盘进墨影图库,**默认 true**。
    *
-   * true:图存进 user/images/柏宝绘_<character>/ 并写侧写 json,于是
-   *       用户能在柏宝绘图库页里按角色分组看到它、连提示词一起。
+   * true:图存进 user/images/墨影_<character>/ 并写侧写 json,于是
+   *       用户能在墨影图库页里按角色分组看到它、连提示词一起。
    * false:只返回 dataUrl,不碰磁盘——适合「预览一下就丢」的用法。
    *
    * ⚠ 落盘**不写聊天记录**:图不会出现在任何楼层的正文里,也不占楼层卡片。
@@ -144,7 +144,7 @@ export interface GenerateRequest {
    */
   save?: boolean;
   /**
-   * 落盘归到哪个角色名下(图库的分组名,即目录 柏宝绘_<character>)。
+   * 落盘归到哪个角色名下(图库的分组名,即目录 墨影_<character>)。
    * 省略 = 当前聊天的角色名。save=false 时无意义。
    */
   character?: string;
@@ -159,7 +159,7 @@ export interface GenerateOptions {
 
 export interface PublicGenerateProgress {
   /**
-   * - 'queued'     在柏宝绘的 NAI 并发闸门里排队(等别的请求让出槽位)
+   * - 'queued'     在墨影的 NAI 并发闸门里排队(等别的请求让出槽位)
    * - 'generating' 请求已发出,后端正在画
    * - 'queued-remote' 在 ComfyUI **服务端**队列里(ahead 为前面还有几个)
    * - 'retrying'   被限流了,正在退避重试(attempt/max)
@@ -187,7 +187,7 @@ export interface GenerateResult {
   /** 图片格式,如 'png' / 'jpg'。 */
   format: string;
   /**
-   * 落盘后的 ST 静态路径(形如 /user/images/柏宝绘_小雪/bbi_….png),可直接 <img src>。
+   * 落盘后的 ST 静态路径(形如 /user/images/墨影_小雪/bbi_….png),可直接 <img src>。
    * save=false 或落盘失败时为 null——**落盘失败不抛错**,图已经在 dataUrl 里了,
    * 不能因为存不进图库就让你连图都拿不到。
    */
@@ -199,7 +199,7 @@ export interface GenerateResult {
   /**
    * characters 是否真的发给了后端。
    * 你传了 characters 但这里是 false = 被丢弃了(通常是用户在用 ComfyUI)。
-   * 柏宝绘**刻意不降级把角色拼进 prompt**:那会画出多份躯干重叠的图。
+   * 墨影**刻意不降级把角色拼进 prompt**:那会画出多份躯干重叠的图。
    */
   charactersApplied: boolean;
 }
@@ -215,7 +215,7 @@ export type PublicErrorCode =
   | 'not_configured'
   /** 入参不合法(prompt 空、seed 不是数字之类)。 */
   | 'invalid_args'
-  /** 被后端限流,且柏宝绘的自动退避重试已用尽。 */
+  /** 被后端限流,且墨影的自动退避重试已用尽。 */
   | 'rate_limited'
   /** 后端报错(网络不通、工作流有问题、API Key 失效……)。 */
   | 'backend_error';
@@ -239,14 +239,14 @@ export type PublicChangeListener = (notice: PublicChangeNotice) => void;
 export interface STBaiBaiImageApi {
   /** 本接口数据结构的版本。第三方按它判兼容(当前恒为 1)。 */
   readonly apiVersion: typeof PUBLIC_API_VERSION;
-  /** 柏宝绘插件版本(仅供展示/排查,别解析它做兼容判断)。 */
+  /** 墨影插件版本(仅供展示/排查,别解析它做兼容判断)。 */
   readonly pluginVersion: string;
   readonly capabilities: PublicCapabilities;
-  /** 取柏宝绘已记录的角色列表(含可直接出图的 tag)。返回深拷贝,改它不影响柏宝绘。 */
+  /** 取墨影已记录的角色列表(含可直接出图的 tag)。返回深拷贝,改它不影响墨影。 */
   getCharacters(options?: GetCharactersOptions): PublicCharacterList;
   /** 出图前先问问:后端配好了吗、支不支持多角色。 */
   getBackendStatus(): PublicBackendStatus;
-  /** 调柏宝绘生图。图返回给你,显示在哪由你决定。 */
+  /** 调墨影生图。图返回给你,显示在哪由你决定。 */
   generate(request: GenerateRequest, options?: GenerateOptions): Promise<GenerateResult>;
   /** 订阅角色库变更;返回取消订阅的函数。 */
   subscribe(listener: PublicChangeListener): () => void;

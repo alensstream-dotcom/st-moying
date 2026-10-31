@@ -100,7 +100,7 @@ function hasPublicCode(error: unknown): error is PublicError {
  * instanceof 在我们这边是 false —— 于是用户主动取消会被报成 backend_error。
  *
  * rate_limited 与 backend_error 分开,是因为两者的**处置方式**不同:前者该等一会儿再来
- * (柏宝绘的自动退避已经用尽了),后者是配置/网络问题,再来一次也是同样的错。
+ * (墨影的自动退避已经用尽了),后者是配置/网络问题,再来一次也是同样的错。
  */
 export function toPublicError(error: unknown): PublicError {
   if (hasPublicCode(error)) return error;
@@ -224,7 +224,7 @@ function safeProgress(
     try {
       onProgress(progress);
     } catch (error) {
-      console.warn('[柏宝绘] 公共接口 onProgress 回调异常', error);
+      console.warn('[墨影] 公共接口 onProgress 回调异常', error);
     }
   };
 }
@@ -245,7 +245,7 @@ export async function generate(
   // 先报 not_configured,别让第三方等一个注定 401 的请求
   const status = backendStatus();
   if (!status.configured) {
-    throw publicError('not_configured', status.reason || '柏宝绘出图后端未配置');
+    throw publicError('not_configured', status.reason || '墨影出图后端未配置');
   }
 
   const report = safeProgress(options.onProgress);
@@ -330,7 +330,7 @@ async function saveToGallery(
   try {
     return await saveExternalImage(name, tag, seed, result, meta);
   } catch (error) {
-    console.warn('[柏宝绘] 公共接口生成的图片落盘失败（图片本身已返回给调用方）', error);
+    console.warn('[墨影] 公共接口生成的图片落盘失败（图片本身已返回给调用方）', error);
     return null;
   }
 }

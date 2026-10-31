@@ -23,7 +23,7 @@ import { getContext } from '@/st/context';
 import { reactive, watch } from 'vue';
 
 /**
- * 柏宝绘设置(全局,跨聊天)。存进 ST 的 extension_settings(→ 服务器 settings.json),
+ * 墨影设置(全局,跨聊天)。存进 ST 的 extension_settings(→ 服务器 settings.json),
  * 因而跨设备同步:手机/局域网另一端打开同一 ST 账户即可见到同一份设置。
  * 骨架阶段:字段只覆盖界面搭建所需,后端/提示词的具体参数随功能迭代往里加。
  */
@@ -207,7 +207,7 @@ export interface NaiArtistPreset {
   /** 绑定的负面提示词;空串 = 跟随渠道级 undesiredContent。 */
   negative: string;
   /**
-   * 预览图路径(/api/images/upload 落在 user/images/柏宝绘_画师串/ 的相对路径)。
+   * 预览图路径(/api/images/upload 落在 user/images/墨影_画师串/ 的相对路径)。
    * 可选:老数据没有此键;空 = 管理器卡片显示占位。文件归属随条目:
    * 删条目时按此路径删文件;复制条目不带走(否则两条目共指一个文件,删一边另一边破图)。
    */
@@ -324,7 +324,7 @@ export interface UiPrefs {
   navTapClose: boolean;
   /** 在 ST 顶栏注入一个快速打开按钮(魔杖菜单入口照旧保留)。默认关。 */
   showTopBar: boolean;
-  /** 屏幕边缘悬浮球,点击打开柏宝绘。默认关。 */
+  /** 屏幕边缘悬浮球,点击打开墨影。默认关。 */
   showOrb: boolean;
   /** 悬浮球自定义图标(ST 服务器图片路径;空=默认画笔图标)。跨设备同步。 */
   orbImage: string;
@@ -337,7 +337,7 @@ export interface UiPrefs {
   /**
    * 楼层卡片主题(合法值同 theme,见 state/ui.ts 的 THEMES)。
    * 默认 'st' = 从宿主 --SmartTheme* 派生,卡片融进当前 ST 配色;
-   * 想让卡片走柏宝绘品牌观感就选 night/pastel 等。与设置窗口主题(theme)分开,
+   * 想让卡片走墨影品牌观感就选 night/pastel 等。与设置窗口主题(theme)分开,
    * 因为两者诉求不同:窗口是独立界面,卡片嵌在聊天流里。
    */
   cardTheme: string;
@@ -468,6 +468,15 @@ export interface LoreSettings {
   poseLimit: number;
   /** 是否把「面相指纹」也作为候选注入(会与角色库的固定外貌轻微冲突,默认关)。 */
   faces: boolean;
+  /**
+   * 素材预览图用哪个 NAI 模型。空串 = 跟随渠道当前模型。
+   *
+   * 默认 `nai-diffusion-4-curated-preview`:V4 试用模型,不占 Anlas 额度,
+   * 拿来给几百条素材配缩略图正合适——预览只是认形状,不需要顶配画质。
+   */
+  thumbModel: string;
+  /** 批量配图两条之间的间隔毫秒数。太密容易被上游当成脚本刷。 */
+  thumbIntervalMs: number;
 }
 
 /** 合法挡位 id 白名单:normalize 时不 import jailbreak 的值函数,避免 settings 与 autoTag 互相拖入。 */
@@ -1253,6 +1262,8 @@ function defaults(): ImageSettings {
         wardrobeLimit: 8,
         poseLimit: 6,
         faces: false,
+        thumbModel: 'nai-diffusion-4-curated-preview',
+        thumbIntervalMs: 10000,
       },
       prompts: {
         jailbreak: '',
@@ -1582,7 +1593,7 @@ async function migrateLegacyVibesInPlace(
   const total = vibes.reduce((count, vibe) => count + (readLegacyVibeData(vibe) ? 1 : 0), 0);
   if (!total) return { migrated: 0, error: null };
 
-  toastr.info(`检测到 ${total} 个旧版 Vibe，正在自动搬迁大文件…`, '柏宝绘');
+  toastr.info(`检测到 ${total} 个旧版 Vibe，正在自动搬迁大文件…`, '墨影');
   let migrated = 0;
   let firstError: unknown = null;
   for (let index = 0; index < vibes.length; index++) {
@@ -1604,17 +1615,17 @@ async function migrateLegacyVibesInPlace(
         normalized.group,
       );
       migrated++;
-      console.info(`[柏宝绘] 旧版 Vibe 自动搬迁 ${migrated}/${total}`);
+      console.info(`[墨影] 旧版 Vibe 自动搬迁 ${migrated}/${total}`);
     } catch (error) {
       firstError ??= error;
-      console.error(`[柏宝绘] Vibe「${normalized.name}」自动搬迁失败`, error);
+      console.error(`[墨影] Vibe「${normalized.name}」自动搬迁失败`, error);
     }
   }
   if (firstError) {
-    toastr.error('部分旧版 Vibe 搬迁失败，原数据已保留；刷新后会自动重试。', '柏宝绘');
+    toastr.error('部分旧版 Vibe 搬迁失败，原数据已保留；刷新后会自动重试。', '墨影');
     return { migrated, error: firstError };
   }
-  toastr.success(`已自动修复 ${migrated} 个旧版 Vibe，后续加载将恢复正常。`, '柏宝绘');
+  toastr.success(`已自动修复 ${migrated} 个旧版 Vibe，后续加载将恢复正常。`, '墨影');
   return { migrated, error: null };
 }
 
@@ -1695,7 +1706,7 @@ function normalizeNai(raw: unknown, def: NaiSettings): NaiSettings {
   // 已下线模型(4.5 以下)静默回落会换掉画风与 vibe 编码 key。不弹窗(该人群已基本不存在),
   // 但留一条控制台告警 —— 否则「我的模型自己变了」这类反馈完全无据可查。
   if (stored && stored !== model) {
-    console.warn(`[柏宝绘] NAI 模型「${stored}」已下线,本次回落为 ${model}`);
+    console.warn(`[墨影] NAI 模型「${stored}」已下线,本次回落为 ${model}`);
   }
 
   // 画师串库:允许为空,故没有「恒非空」兜底(与 normalizeComfyUI 刻意不同)
@@ -1882,6 +1893,8 @@ function normalize(raw: unknown): ImageSettings {
         wardrobeLimit: num(rl.wardrobeLimit, d.autoTag.lore.wardrobeLimit, 1, 16),
         poseLimit: num(rl.poseLimit, d.autoTag.lore.poseLimit, 0, 12),
         faces: typeof rl.faces === 'boolean' ? rl.faces : d.autoTag.lore.faces,
+        thumbModel: typeof rl.thumbModel === 'string' ? rl.thumbModel : d.autoTag.lore.thumbModel,
+        thumbIntervalMs: num(rl.thumbIntervalMs, d.autoTag.lore.thumbIntervalMs, 3000, 120000),
       };
     })(),
     // 可编辑提示词集:逐字段兜底;旧版 jailbreakPrompt 字段迁移进 prompts.jailbreak
@@ -1994,7 +2007,7 @@ function writeSharedChannels(dispatch = true): void {
   if (dispatch) {
     window.dispatchEvent(
       new CustomEvent(SHARED_CHANNELS_EVENT, {
-        detail: { revision: store.revision, source: 'ST-BaiBai-Image' },
+        detail: { revision: store.revision, source: 'moying' },
       }),
     );
   }
@@ -2121,7 +2134,7 @@ function writeSharedExcludes(dispatch = true): void {
   if (dispatch) {
     window.dispatchEvent(
       new CustomEvent(SHARED_EXCLUDES_EVENT, {
-        detail: { revision: store.revision, source: 'ST-BaiBai-Image' },
+        detail: { revision: store.revision, source: 'moying' },
       }),
     );
   }

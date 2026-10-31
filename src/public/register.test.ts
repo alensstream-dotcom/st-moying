@@ -33,7 +33,7 @@ beforeEach(() => {
 describe('registerPublicInterface', () => {
   it('publishes on globalThis and announces readiness (the two ways to find it)', async () => {
     const ready = vi.fn();
-    // 比柏宝绘先加载的第三方只能靠事件——只给 globalThis 会逼它自己写轮询
+    // 比墨影先加载的第三方只能靠事件——只给 globalThis 会逼它自己写轮询
     window.addEventListener(PUBLIC_READY_EVENT, ready);
     vi.spyOn(console, 'log').mockImplementation(() => {});
 

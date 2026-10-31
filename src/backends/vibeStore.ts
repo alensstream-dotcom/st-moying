@@ -150,7 +150,7 @@ export async function saveVibeFiles(
     return await saveServerVibeFiles(data, current, localKey);
   } catch (error) {
     if (current) throw error;
-    console.warn('[柏宝绘] Vibe 写入 ST 文件存储失败，回退浏览器 IndexedDB:', error);
+    console.warn('[墨影] Vibe 写入 ST 文件存储失败，回退浏览器 IndexedDB:', error);
     return { dataPath: await writeLocalData(localKey, data), thumbnailPath: '' };
   }
 }

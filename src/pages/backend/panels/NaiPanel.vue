@@ -288,7 +288,7 @@ const chatu8ArtistDetect = ref<Chatu8ArtistDetectInfo>({ found: false, total: 0 
 /** 弹窗打开时算一次的预览结果(纯函数,不落盘);plans 逐条带徽标状态。 */
 const artistImportResult = ref<Chatu8ArtistImportResult | null>(null);
 const artistImportOpen = ref(false);
-/** 导入后是否把智绘姬当前使用的预设设为柏宝绘当前画师串。 */
+/** 导入后是否把智绘姬当前使用的预设设为墨影当前画师串。 */
 const switchActiveArtist = ref(true);
 
 const chatu8ActiveRef = computed(() => artistImportResult.value?.plans.find(p => p.active) ?? null);
@@ -1538,7 +1538,7 @@ async function removeVibe(vibe: NaiVibe) {
           </button>
         </header>
         <p class="bbi-modal-label">
-          将把智绘姬的 {{ chatu8Detect.total }} 个 vibe 复制到柏宝绘 Vibe
+          将把智绘姬的 {{ chatu8Detect.total }} 个 vibe 复制到墨影 Vibe
           库，只是创建副本，不会改动智绘姬的数据。内容相同的会自动跳过，重复迁移不会产生重复条目。
         </p>
         <p class="bbi-modal-label">
@@ -1562,7 +1562,7 @@ async function removeVibe(vibe: NaiVibe) {
           </button>
         </header>
         <p class="bbi-modal-label">
-          把智绘姬的全部 {{ artistImportResult?.plans.length ?? 0 }} 个提示词预设复制到柏宝绘，只建副本、不改动智绘姬的数据。
+          把智绘姬的全部 {{ artistImportResult?.plans.length ?? 0 }} 个提示词预设复制到墨影，只建副本、不改动智绘姬的数据。
           映射：前置固定正向 → 画师串，后置固定正向 → 正面质量词，固定负向 → 负面提示词（前面自动拼上当前模型的官方基线）。
           同名条目会覆盖更新（之前导入过的可直接重新导入修复），内容完全相同的自动跳过。
         </p>
