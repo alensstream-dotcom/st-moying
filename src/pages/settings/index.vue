@@ -10,6 +10,7 @@ import { fetchModels, testChannel } from '@/api/client';
 import type { NsfwLevel } from '@/data/loreTypes';
 import {
   BACKENDS,
+  applyRecommendedNaiScenePreset,
   DEFAULT_COMFY_SPEC,
   DEFAULT_COMFY_THINKING,
   DEFAULT_NAI_V5_SPEC,
@@ -228,6 +229,13 @@ const TAG_PROMPT_METAS: TagPromptMeta[] = [
     macros: NL_SECTION_MACROS,
   },
 ];
+
+const scenePresetConfirmOpen = ref(false);
+function applyNaiScenePreset() {
+  applyRecommendedNaiScenePreset();
+  scenePresetConfirmOpen.value = false;
+  toastr.success('已选择剧情原味画师配方，并恢复配套的 NAI 规范和思维链。', 'NAI 配置');
+}
 
 // 正在编辑的提示词;draft 是草稿,点「完成」才写回 settings(取消则丢弃)。
 const editingTagPrompt = ref<TagPromptMeta | null>(null);
@@ -962,6 +970,12 @@ async function confirmUpdate() {
 
       <!-- 自定义提示词(与柏宝书同款入口,独立成区) -->
       <Collapsible title="自定义提示词" :open="false">
+        <div class="bbi-field-hint">
+          二创推荐：保留细腻半写实画风，按剧情区分日常与成年人亲密场景，女主主画面、男主按需要局部入镜。不会修改 API 密钥、出图数量或角色库。
+        </div>
+        <button class="bbi-btn bbi-btn-primary" type="button" @click="scenePresetConfirmOpen = true">
+          应用推荐 NAI 配置（正/负面 + 思维链 + 规范）
+        </button>
         <ul class="bbi-prompt-list">
           <li v-for="m in TAG_PROMPT_METAS" :key="m.key" class="bbi-prompt-item">
             <button class="bbi-prompt-open" type="button" @click="openTagPrompt(m)">
@@ -1249,6 +1263,16 @@ async function confirmUpdate() {
         </footer>
       </div>
     </ModalMask>
+
+    <ConfirmDialog
+      v-model:open="scenePresetConfirmOpen"
+      title="应用推荐 NAI 配置"
+      confirm-text="应用配置"
+      @confirm="applyNaiScenePreset"
+    >
+      将启用内置「剧情原味·电影感半写实」画师配方（包含正负面词），并把你当前自定义的 NAI 思维链与规范切回新版内置规则。
+      此操作不会影响 ComfyUI、渠道、API 密钥、图数、角色外貌库和服装档案。现有自定义文本不会保留在对应设置字段，建议需要时提前复制备份。
+    </ConfirmDialog>
 
     <ConfirmDialog
       v-model:open="updateConfirmOpen"

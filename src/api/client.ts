@@ -2,6 +2,7 @@ import { getContext } from '@/st/context';
 import type { ApiChannel } from '@/state/settings';
 import {
   beginLlm,
+  captureLlmResponse,
   failLlm,
   finishLlm,
   patchLlmTokens,
@@ -281,11 +282,12 @@ async function requestCompletionAtUrl(
 
       // 流式:按 SSE 增量拼接;非流式:直接解析 JSON。
       if (stream) {
-        const streamed = await readSseContent(resp);
+        const finish = { finishReason: null as string | null, nativeFinishReason: null as string | null };
+        const streamed = await readSseContent(resp, finish);
         if (!streamed) throw new ApiError('副 API 返回空内容');
         // 流式无 usage:ST 构造上游请求体是字段白名单,不含 stream_options,
         // 没法让上游在末尾回 usage chunk。只能事后本地估算。
-        return { content: streamed, usage: { prompt: null, completion: null } };
+        return { content: streamed, usage: { prompt: null, completion: null }, ...finish };
       }
 
       const data = await resp.json();
@@ -296,10 +298,27 @@ async function requestCompletionAtUrl(
       const parsed = extractContent(data);
       if (!parsed) throw new ApiError('副 API 返回空内容');
       // ST 代理非流式分支是 response.send(json) 原样透传,故 usage 是上游真值。
-      return { content: parsed, usage: readUsage(data) };
+      const choice = data?.choices?.[0];
+      return {
+        content: parsed,
+        usage: readUsage(data),
+        finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : null,
+        nativeFinishReason: typeof choice?.native_finish_reason === 'string' ? choice.native_finish_reason : null,
+      };
     });
 
-    // 验收在记历史之前:验收不过 → 落进 catch 记失败,不给「HTTP 成功」的假象
+    // Preserve the raw answer and finish metadata before validation: failed JSON is diagnostic evidence.
+    if (historyId !== null) {
+      safeHistory(() => captureLlmResponse(historyId, {
+        response: result.content,
+        promptTokens: result.usage.prompt,
+        completionTokens: result.usage.completion,
+        tokensEstimated: false,
+        finishReason: result.finishReason,
+        nativeFinishReason: result.nativeFinishReason,
+      }));
+    }
+    // A response is still marked successful only after caller validation passes.
     opts.validate?.(result.content);
 
     if (historyId !== null) {
@@ -331,11 +350,19 @@ async function requestCompletionAtUrl(
  * 推理模型的思维链增量(delta.reasoning 等)单独缓冲:只有 content 全空时才回退用它,
  * 避免在 content 正常时把思维链混进正文。
  */
-export async function readSseContent(resp: Response): Promise<string> {
+export async function readSseContent(
+  resp: Response,
+  finish?: { finishReason: string | null; nativeFinishReason: string | null },
+): Promise<string> {
   const reader = resp.body?.getReader();
   if (!reader) {
     // 无法流式读取(理论上不会):退回当作整体 JSON 处理
     const data = await resp.json().catch(() => null);
+    const choice = data?.choices?.[0];
+    if (finish) {
+      if (typeof choice?.finish_reason === 'string') finish.finishReason = choice.finish_reason;
+      if (typeof choice?.native_finish_reason === 'string') finish.nativeFinishReason = choice.native_finish_reason;
+    }
     return data ? extractContent(data) : '';
   }
   const decoder = new TextDecoder();
@@ -358,6 +385,10 @@ export async function readSseContent(resp: Response): Promise<string> {
         const json = JSON.parse(payload);
         if (json?.error) throw new ApiError(json.error.message || '副 API 返回错误');
         const choice = json?.choices?.[0];
+        if (finish) {
+          if (typeof choice?.finish_reason === 'string') finish.finishReason = choice.finish_reason;
+          if (typeof choice?.native_finish_reason === 'string') finish.nativeFinishReason = choice.native_finish_reason;
+        }
         const src = choice?.delta ?? choice?.message;
         const piece = textOf(src?.content) || textOf(choice?.text);
         if (piece) out += piece;

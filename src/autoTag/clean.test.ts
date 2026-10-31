@@ -146,3 +146,34 @@ second useful line \u27e6P2\u27e7`,
     });
   });
 });
+
+
+describe('story-model content extraction', () => {
+  const source = [
+    '<cot>', '规划内容不要画', '</cot>',
+    '<content>', '第一段正文', '第二段正文', '</content>',
+    '<options>选项不该画</options>', '<tucao>复盘不该画</tucao>',
+  ].join('\n');
+
+  it('keeps only drawable prose and its original source-line coordinates', () => {
+    expect(prepareTargetText(source, []).segments).toEqual([
+      { id: 'P1', sourceLine: 4, text: '第一段正文' },
+      { id: 'P2', sourceLine: 5, text: '第二段正文' },
+    ]);
+  });
+
+  it('removes planning from prior context while preserving narrative text', () => {
+    expect(cleanHistoryText(source, [])).toBe('第一段正文\n第二段正文');
+  });
+
+  it('removes <cot>/<options> even without a story wrapper', () => {
+    const input = '<cot>丢弃</cot>\n实在的剧情\n<options>丢弃</options>';
+    expect(prepareTargetText(input, []).segments).toEqual([
+      { id: 'P1', sourceLine: 1, text: '实在的剧情' },
+    ]);
+  });
+
+  it('tolerates incomplete story wrappers without discarding the prose', () => {
+    expect(cleanTargetText('<content>\n实在的剧情', [])).toBe('实在的剧情');
+  });
+});

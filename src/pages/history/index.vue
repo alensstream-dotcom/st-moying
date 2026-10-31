@@ -118,6 +118,8 @@ function facts(record: HistoryRecord): string[] {
   const out = [subtitle(record), duration(record.durationMs), new Date(record.startedAt).toLocaleString()];
   if (record.kind === 'llm') {
     if (record.stream) out.push('流式');
+    if (record.finishReason) out.push(`结束原因 ${record.finishReason}`);
+    if (record.nativeFinishReason) out.push(`上游结束原因 ${record.nativeFinishReason}`);
     // 标题行那个数字是提示词 token(标题行地方紧,不带单位);这里补全口径。
     if (record.promptTokens !== null) out.push(`提示词 ${tokenLabel(record)} token`);
     if (record.completionTokens !== null) {
@@ -138,6 +140,9 @@ function copyAll(record: HistoryRecord): void {
       ? `提示词 token：${tokenLabel(record)}`
       : '',
     record.error ? `错误：${record.error}` : '',
+    record.kind === 'llm' && record.finishReason ? `finish_reason：${record.finishReason}` : '',
+    record.kind === 'llm' && record.nativeFinishReason ? `native_finish_reason：${record.nativeFinishReason}` : '',
+    record.kind === 'llm' && record.completionTokens !== null ? `输出 token：${record.completionTokens}` : '',
   ].filter(Boolean);
   const body = segments(record).map(s => `--- ${s.label} ---\n${s.text}`);
   void copyText([...head, '', ...body].join('\n'), '记录已复制');

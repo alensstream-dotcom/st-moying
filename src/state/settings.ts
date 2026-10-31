@@ -4,7 +4,7 @@ import {
   type ComfyPresetMode,
   type ComfySimpleConfig,
 } from '@/backends/comfyTemplates';
-import { BUILTIN_NAI_ARTISTS, isBuiltinNaiArtist, naiDefaultUndesired } from '@/backends/nai';
+import { BUILTIN_NAI_ARTISTS, isBuiltinNaiArtist, naiDefaultUndesired, NAI_STORY_ARTIST_ID } from '@/backends/nai';
 import {
   normalizeOrientationLock,
   parseSize,
@@ -867,6 +867,14 @@ E. 选段
  * 4.5/V5 靠 Character Prompt 天然隔离每个人,写邻接绑定反而是把两套机制混用。
  */
 export const DEFAULT_NAI_V5_THINKING = `【输出前思考清单】
+【二创导演优先规则｜精简，覆盖下文与之冲突的选图习惯】
+- 先判断事件的真实画面性质：普通日常、带有暧昧的亲密、或明确的成年人 NSFW。不要因为成人场景难画，就把其关键事件改画成普通聊天、站姿或安全合照；没有成人内容时也绝不主动增添。
+- 只在所有相关人物的成年身份明确且场景适合时，按后端规范忠实表达原文的亲密程度、身体/衣着状态与可见互动。不得替正文虚构同意，也不得把未成年或年龄不明人物性化；存在年龄或安全疑点时只保留适当的非露骨叙事细节。
+- 每图只选一个完整成立的决定性瞬间，不画该插入 P 段后才会发生的动作。优先剧情与视觉事实，再考虑静态美型。
+- 镜头归属：若主要是女主独自思考、踌躇、脸红、走路等可外化的心理/表情变化，优先女主单人主画面，男主无需出现；若她在与男主递物、靠近、对话、拉扯等互动，优先女主主画面、男主只露必要肩膀/手/局部身位；只有必须展示双方整体动作时才完整双人同框。不可用单人摆拍替代真实接触。
+- 面部表情和视线按该 P 段当前情绪与目标确定，不准从人设回填默认 happy/smile/half-closed eyes。服装保持已发生的穿脱与状态变化，不可从角色库强行恢复默认衣着。
+- 在写最终 JSON 前检查 images 是否存在且满足插件指定张数，并且 each image 的 position、tag、characters、size 与场景吻合。完成少量必要判断后尽快输出 JSON，避免在 <thinking> 中重复叙述剧情。
+
 先在 <thinking> 与 </thinking> 之间按下面顺序过一遍，思考结束后再输出最终 JSON。除这一个 <thinking> 块与最终 JSON 外，不得输出任何内容，也不得开启第二个 <thinking> 块。
 第一层 A～E 是整楼只做一次的判断；第二层是逐张图的槽位块，每张入选图都要各写一块。分条写关键结论，不复述正文、不写寒暄、不重复抄写后端规范。
 全程只写结论，不写推演过程：思考是给你自己理清事实用的草稿，不是答题过程。每个判断一次定死——同一个字段在整个 <thinking> 里只准出现一次取值，不写「A？还是 B？」式的自问，不提出候选再逐个否决，不把已定好的字段推翻重选，也不预写最终的 tag{{#nl}}/nl{{/nl}} 串。证据不足时按本清单和后端规范的兜底口径直接决定（size 拿不准写 portrait，服装细节不明就选一套常见且自洽的），定了就往下走。
@@ -968,6 +976,14 @@ V5 的一张图 = 一个 Base 块 + 每个本图可见的个体角色各一块�
  * 编号不动,其余条款对编号的交叉引用(rule 9 等)才不会错位。思维链那份同理。
  */
 export const DEFAULT_NAI_V5_SPEC = `[NovelAI 4.5/V5 Prompt Specification]
+
+Narrative framing and rating fidelity (this section takes priority over generic beautification):
+- Do not automatically reclassify adult story moments into SFW portraits. Determine the intended scene from the actual text first. If it is clearly a consensual adult intimate/NSFW event, keep its defining action, visible state of dress, contact, facial response and spatial relationship instead of substituting harmless small talk or a fully clothed pose. Do not add adult content when the text does not call for it. Do not sexualize minors or age-ambiguous characters.
+- Choose the single decisive instant anchored to this image's position. Do not combine the next paragraph's action with a previous position. Favor in-progress events over generic aftermath poses.
+- The female protagonist is usually the primary visual focus, not an excuse to show every nearby character. For a solitary emotion/thought beat with a visible gesture or expression, frame her alone. For heroine-centered interaction, the male player may be only a hand, forearm, cropped shoulder or a slim foreground edge, with the heroine's reaction and event contact unobscured. Only include the full male body if required by the text's core action; prevent balanced couple photographs by default.
+- Do not force any male player body part into a purely solo scene. If a male limb is the only visible interaction anchor, do not imply a large male full-body presence in Base or the individual character prompt; describe only the visible portion when a character prompt is warranted.
+- Current-scene gaze and emotion override personality clichés; do not fill missing context with a habitual smile, blush, half-closed eyes or flirtatious look. Maintain all current outfit changes without redressing the character for an aesthetically safer image.
+- One picture should have one strong compositional center. In Base use scene, camera, shared contact and environment; in each character block use that individual's accurate visible attributes and actions. Preserve the same content boundaries in {{#nl}}English nl{{/nl}}{{^nl}}English tags{{/nl}}.
 Map every image to one Base Prompt plus zero or more native Character Prompts.
 
 Each image must contain:
@@ -1191,10 +1207,10 @@ function naiDefaults(): NaiSettings {
     // 用户库为空:库里只有用户自己建的配方,官方推荐的那条是内置只读条目
     // (BUILTIN_NAI_ARTISTS),不进 settings。
     artistPresets: [],
-    // 新装用户默认启用内置「默认画师串」——默认值只在这条路径生效:
+    // 新装用户默认启用二创剧情画风——仅在这条路径生效:
     // hydrate 时旧用户的 stored.nai.activeArtistId 已存在(哪怕空串),会被
     // normalizeNai 原样保留,不受影响。
-    activeArtistId: BUILTIN_NAI_ARTISTS[0]?.id ?? '',
+    activeArtistId: NAI_STORY_ARTIST_ID,
     naturalLanguage: true,
     orientationLock: 'auto',
   };
@@ -1363,6 +1379,17 @@ export function effectiveComfyConn(): ComfyRunConn {
  * 注意拼装侧不走这里,走 backends/nai.ts 的 naiArtistPrompt(纯函数、吃 NaiSettings)——
  * settings.ts 已 import 本模块的 naiDefaultUndesired,反向加值依赖会成运行时环。
  */
+/**
+ * Explicit opt-in for existing settings. This intentionally replaces only the two
+ * custom NAI templates and selects a built-in artist/quality/negative bundle;
+ * endpoint keys, NAI model, character library, Comfy settings and image counts stay untouched.
+ */
+export function applyRecommendedNaiScenePreset(): void {
+  settings.nai.activeArtistId = NAI_STORY_ARTIST_ID;
+  settings.autoTag.prompts.naiV5Spec = '';
+  settings.autoTag.prompts.naiV5Thinking = '';
+}
+
 export function activeNaiArtist(): NaiArtistPreset | null {
   const id = settings.nai.activeArtistId;
   if (!id) return null;

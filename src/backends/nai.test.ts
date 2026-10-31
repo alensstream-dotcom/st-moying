@@ -716,3 +716,24 @@ describe('内置画师串配方(只读、随版本更新、不进 settings)', ()
     expect(naiArtistPrompt(s)).toBe('');
   });
 });
+
+describe('二创剧情画风预设', () => {
+  it('bundles artist style, quality and negative without inheriting channel overrides', async () => {
+    const { NAI_STORY_ARTIST_ID, NAI_STORY_NEGATIVE, NAI_STORY_POSITIVE_QUALITY } =
+      await import('@/backends/nai');
+    const preset = BUILTIN_NAI_ARTISTS.find(p => p.id === NAI_STORY_ARTIST_ID);
+    expect(preset).toBeDefined();
+    const opts = nai({
+      model: 'nai-diffusion-5-full',
+      activeArtistId: NAI_STORY_ARTIST_ID,
+      qualityTags: 'channel override',
+      undesiredContent: 'other negative',
+    });
+    expect(fullPositivePrompt(opts, '1girl, corridor')).toContain('artist:kurono_mitsuki');
+    expect(fullPositivePrompt(opts, '1girl, corridor')).toContain(NAI_STORY_POSITIVE_QUALITY);
+    expect(fullNegativePrompt(opts)).toBe(NAI_STORY_NEGATIVE);
+    expect(fullNegativePrompt(opts)).not.toContain('shy, blush, sweat');
+    expect(preset?.prompt).not.toContain('half-closed eyes');
+    expect(preset?.prompt).not.toContain('dark simple background');
+  });
+});

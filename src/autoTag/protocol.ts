@@ -115,16 +115,20 @@ function jsonObjects(raw: string): string[] {
 }
 
 function parseObject(raw: string): Record<string, unknown> {
+  let firstObject: Record<string, unknown> | null = null;
   for (const candidate of jsonObjects(raw)) {
     try {
       const value: unknown = JSON.parse(candidate);
       if (value && typeof value === 'object' && !Array.isArray(value)) {
-        return value as Record<string, unknown>;
+        const object = value as Record<string, unknown>;
+        if (Array.isArray(object.images)) return object;
+        firstObject ??= object;
       }
     } catch {
       // 尝试下一个候选 JSON 块。
     }
   }
+  if (firstObject) return firstObject;
   throw new Error('AI 没有返回可解析的 JSON 对象');
 }
 

@@ -362,3 +362,20 @@ describe('changes parsing', () => {
     });
   });
 });
+
+
+describe('JSON image-plan candidate selection', () => {
+  it('ignores an explanatory JSON object preceding the actual images', () => {
+    const raw = '例子 {"name":"甲","field":"new"}\n{"images":[{"position":"P1","tag":"1girl, corridor"}],"changes":[]}';
+    expect(parseImagePlan(raw, segments, 1).images[0].tag).toBe('1girl, corridor');
+  });
+
+  it('selects an image plan among separate fenced JSON objects', () => {
+    const raw = '```json\n{"field":"new","name":"甲"}\n```\n```json\n{"images":[{"position":"P2","tag":"2girls"}]}\n```';
+    expect(parseImagePlan(raw, segments, 1).images[0].position).toBe('P2');
+  });
+
+  it('still reports missing images when no image plan is present', () => {
+    expect(() => parseImagePlan('{"changes":[]}', segments, 1)).toThrow('缺少 images 数组');
+  });
+});

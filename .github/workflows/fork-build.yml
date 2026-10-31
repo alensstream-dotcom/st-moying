@@ -1,0 +1,41 @@
+name: Fork repair test and bundle
+on:
+  push:
+    branches:
+      - fix/story-cleaning-json-diagnostics
+      - feat/nai-story-presets-20261017
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - name: Install
+        run: pnpm install --no-frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
+      - name: Bundle extension
+        run: pnpm build
+      - name: Commit verified dist bundle to repair branch
+        if: github.ref == 'refs/heads/fix/story-cleaning-json-diagnostics' || github.ref == 'refs/heads/feat/nai-story-presets-20261017'
+        run: |
+          if ! git diff --quiet -- dist manifest.json pnpm-lock.yaml; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add dist manifest.json pnpm-lock.yaml
+            git commit -m "build: update compiled image extension [skip ci]"
+            git push
+          fi

@@ -7,6 +7,28 @@
 const RE_THINK_BLOCK = /<think(?:ing)?\b[\s\S]*?<\/think(?:ing)?>/gi;
 const RE_START = /<bbs_start\b[^>]*>([\s\S]*?)<\/bbs_start>/gi;
 const RE_END = /<bbs_end\b[^>]*>([\s\S]*?)<\/bbs_end>/gi;
+/** Planning, options and review notes are not image-eligible story text. */
+const STORY_META_TAG_NAMES = ['cot', 'options', 'tucao', 'analysis', 'konatan_planning'] as const;
+const RE_CONTENT = /<content\b[^>]*>([\s\S]*?)<\/content\s*>/gi;
+
+function storyMetaRegexes(): RegExp[] {
+  return STORY_META_TAG_NAMES.map(tag =>
+    new RegExp('<' + tag + '(?=[\\s/>~])[^>]*>[\\s\\S]*?<\\/' + tag + '(?=[\\s/>~])[^>]*>', 'gi'),
+  );
+}
+
+function stripStoryMetaBlocks(text: string): string {
+  let result = text;
+  for (const pattern of storyMetaRegexes()) result = result.replace(pattern, '');
+  return result;
+}
+
+function unwrapStoryContent(text: string): string {
+  const blocks = [...text.matchAll(RE_CONTENT)];
+  return blocks.length
+    ? blocks.map(block => block[1]).join('\n\n')
+    : text.replace(/<\/?content\b[^>]*>/gi, '');
+}
 
 /**
  * 按标签名生成「整块删除」正则(含标签本身与内部内容)。tag 已由 sanitizeTagName 剔除正则元字符,
@@ -72,6 +94,7 @@ function clampToStoryBody(
     .replace(RE_THINK_BLOCK, noiseReplacement)
     .replace(/<!--[\s\S]+?-->/g, noiseReplacement)
     .replace(/<horae[\s\S]*?>[\s\S]*?<\/horae[\s\S]*?>/gi, noiseReplacement);
+  s = unwrapStoryContent(stripStoryMetaBlocks(s));
   s = replaceCustomTags(s, customTags, noiseReplacement);
   s = stripManagedTags(s);
 
@@ -188,6 +211,7 @@ function targetRemovalRanges(source: string, tags: string[]): RemovalRange[] {
     ...rangesForRegex(source, /<!--[\s\S]+?-->/g),
     ...rangesForRegex(source, /<horae[\s\S]*?>[\s\S]*?<\/horae[\s\S]*?>/gi),
   ];
+  for (const pattern of storyMetaRegexes()) noise.push(...rangesForRegex(source, pattern));
   for (const tag of [...tags, 'bbs_items', 'bbs_vars']) {
     if (!tag) continue;
     for (const regex of blockStripRegexes(tag)) noise.push(...rangesForRegex(source, regex));
@@ -195,6 +219,22 @@ function targetRemovalRanges(source: string, tags: string[]): RemovalRange[] {
 
   const masked = maskedSource(source, noise);
   const crop: RemovalRange[] = [];
+  // Preserve original physical-line anchors: remove text outside <content> by masking.
+  const contentBlocks = [...masked.matchAll(RE_CONTENT)];
+  if (contentBlocks.length) {
+    let cursor = 0;
+    for (const block of contentBlocks) {
+      const start = block.index ?? 0;
+      const innerStart = start + block[0].indexOf('>') + 1;
+      const innerEnd = innerStart + block[1].length;
+      crop.push({ start: cursor, end: innerStart });
+      cursor = innerEnd;
+    }
+    crop.push({ start: cursor, end: source.length });
+  } else {
+    // Malformed wrapper: keep narrative but suppress the tag literals.
+    noise.push(...rangesForRegex(source, /<\/?content\b[^>]*>/gi));
+  }
   const startRe = /<bbs_start\b/gi;
   let lastStart = -1;
   for (let match = startRe.exec(masked); match; match = startRe.exec(masked)) lastStart = match.index;
