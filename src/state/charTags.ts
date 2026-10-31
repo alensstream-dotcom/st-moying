@@ -90,7 +90,7 @@ export interface CharTagFloorDelta {
 }
 
 export const BBI_CHAR_EXTRA_KEY = 'bbiCharChanges';
-const META_KEY = 'baibai_image_char_tags';
+const META_KEY = 'moying_image_char_tags';
 const HISTORY_CAP = 50;
 
 interface CharTagStore {

@@ -4,7 +4,7 @@ import type { NaiVibe, NaiVibeData, NaiVibeEncodings } from '@/state/settings';
 import { randomUuid } from '@/randomUuid';
 
 const FETCH_TIMEOUT_MS = 20_000;
-const LOCAL_DB_NAME = 'baibai_image_vibes';
+const LOCAL_DB_NAME = 'moying_image_vibes';
 const LOCAL_DB_VERSION = 1;
 const LOCAL_STORE_NAME = 'vibes';
 const LOCAL_PATH_PREFIX = 'idb:';

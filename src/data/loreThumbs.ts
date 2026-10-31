@@ -10,7 +10,7 @@
  * 不会和内置的撞）。
  */
 
-const DB_NAME = 'baibai_image_lore';
+const DB_NAME = 'moying_image_lore';
 const STORE = 'thumbs';
 const DB_VERSION = 1;
 

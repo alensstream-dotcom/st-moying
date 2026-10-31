@@ -21,7 +21,7 @@ vi.mock('@/st/context', () => ({
 
 async function hydrateWithNai(nai: Record<string, unknown> | undefined) {
   mocks.context = {
-    extensionSettings: { baibai_image: nai === undefined ? {} : { nai } },
+    extensionSettings: { moying_image: nai === undefined ? {} : { nai } },
     saveSettingsDebounced: vi.fn(),
   };
   const { hydrateSettings, settings } = await import('@/state/settings');
@@ -165,7 +165,7 @@ describe('NAI 画师串库', () => {
   it('activeNaiArtist 取当前项;未选 / 悬空时返回 null', async () => {
     mocks.context = {
       extensionSettings: {
-        baibai_image: {
+        moying_image: {
           nai: {
             artistPresets: [
               { id: 'art_a', name: 'A', prompt: 'artist:a' },

@@ -20,6 +20,7 @@ import {
 import type { JailbreakTierId } from '@/autoTag/jailbreak';
 import type { NsfwLevel } from '@/data/loreTypes';
 import { getContext } from '@/st/context';
+import { migrateLegacyLocalKeys } from '@/state/legacyKeys';
 import { reactive, watch } from 'vue';
 
 /**
@@ -1229,7 +1230,7 @@ export interface ImageSettings {
 }
 
 // extension_settings 里的命名空间键。
-const SETTINGS_KEY = 'baibai_image';
+const SETTINGS_KEY = 'moying_image';
 
 /** 内置默认条目名规则:共享存储创建时播种(与柏宝书 DEFAULT_WI_PATTERNS 同值)。 */
 const DEFAULT_WI_PATTERNS = ['\\[mvu[\\s\\S]*?\\]'];
@@ -2379,12 +2380,31 @@ function persist(): void {
  * ST 就绪后调用:从 extension_settings 载入真实设置并放行 watch 回写。
  * 可安全重复调用(只在首次真正 hydrate)。
  */
+
+/**
+ * 从旧键名把整份设置搬过来(旧版叫 baibai_image)。
+ *
+ * 只搬这一个键:其他 baibai_* 是跨插件共享协议(渠道、排除名单),
+ * 改了会跟别的「柏宝」插件断开,不能碰。
+ */
+function adoptLegacySettingsKey(ctx: ReturnType<typeof getContext>): unknown {
+  const LEGACY_KEY = 'baibai_image';
+  const bag = ctx?.extensionSettings;
+  if (!bag || typeof bag !== 'object') return undefined;
+  const legacy = (bag as Record<string, unknown>)[LEGACY_KEY];
+  if (!legacy || typeof legacy !== 'object') return undefined;
+  (bag as Record<string, unknown>)[SETTINGS_KEY] = JSON.parse(JSON.stringify(legacy));
+  delete (bag as Record<string, unknown>)[LEGACY_KEY];
+  return (bag as Record<string, unknown>)[SETTINGS_KEY];
+}
 export async function hydrateSettings(): Promise<void> {
   if (ready) return;
+  // 旧版键名先搬一遍,免得用户的角色 tag / 自定义素材在改名后读不到
+  migrateLegacyLocalKeys();
   const ctx = getContext();
   if (!ctx?.extensionSettings) return; // ST 未就绪,稍后重试
 
-  const stored = ctx.extensionSettings[SETTINGS_KEY];
+  const stored = ctx.extensionSettings[SETTINGS_KEY] ?? adoptLegacySettingsKey(ctx);
   if (stored && typeof stored === 'object') {
     const migration = await migrateLegacyVibesInPlace(stored);
     if (migration.error) {

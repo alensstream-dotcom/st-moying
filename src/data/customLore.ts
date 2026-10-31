@@ -14,7 +14,7 @@ import { WARDROBE_CATEGORIES } from '@/data/wardrobe';
 import type { NsfwLevel, PoseCategoryId, PoseEntry, WardrobeItem, WardrobeSlot } from '@/data/loreTypes';
 import { POSE_CATEGORIES } from '@/data/poseBank';
 
-const STORAGE_KEY = 'baibai_image_custom_lore';
+const STORAGE_KEY = 'moying_image_custom_lore';
 
 /** 上限:再多就不是"挑几套自己喜欢"的量级了,而且召回要遍历全部条目。 */
 const MAX_WARDROBE = 600;

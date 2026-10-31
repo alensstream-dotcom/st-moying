@@ -18,7 +18,7 @@ vi.mock('@/st/context', () => ({
 
 async function hydrateWithModel(model: unknown) {
   mocks.context = {
-    extensionSettings: { baibai_image: { nai: { model } } },
+    extensionSettings: { moying_image: { nai: { model } } },
     saveSettingsDebounced: vi.fn(),
   };
   const { hydrateSettings, settings } = await import('@/state/settings');

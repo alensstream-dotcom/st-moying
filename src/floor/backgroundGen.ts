@@ -50,7 +50,7 @@ export interface BackgroundJob {
   size: Orientation;
 }
 
-const PENDING_KEY = 'baibai_image_bg_pending';
+const PENDING_KEY = 'moying_image_bg_pending';
 /** 同一槽位最多续跑几次。后台断网常常一次就好,配置错则一次都不该反复打后端。 */
 const MAX_RESUME = 3;
 /** 队列上限:手机内存紧张,没必要为一个楼存几十个待办。 */
