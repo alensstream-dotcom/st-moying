@@ -3,6 +3,7 @@ import type { TargetSegment } from '@/autoTag/clean';
 import { FORBIDDEN_SUBTAG, serializeImageTag } from '@/st/imageTagRegex';
 import {
   CHAR_TAG_FIELDS,
+  normalizeCharAge,
   type CharTagField,
   type CharTagHistoryField,
 } from '@/state/charTags';
@@ -61,6 +62,7 @@ export interface CharChange {
 const HISTORY_FIELDS: ReadonlySet<string> = new Set([
   'fandom',
   'sex',
+  'age',
   'hair',
   'eyes',
   'skin',
@@ -263,7 +265,12 @@ function firstPosition(positions: Map<string, number>): { position: string; sour
   return { position: '', sourceLine: 0 };
 }
 
-/** 建档字段:hair 与 eyes 是二次元身份锚点,缺任一条则该条建档不可用(调用方丢弃)。 */
+/**
+ * 建档字段:hair 与 eyes 是二次元身份锚点,缺任一条则该条建档不可用(调用方丢弃)。
+ *
+ * age 在此归一成规范词(`teenager`、`mature female`);模型常直接抄正文里的
+ * 「刚毕业的大学生」,不归一会让每张图各猜一个年龄。
+ */
 function parseNewFields(raw: Record<string, unknown>): string | null {
   const fields: Partial<Record<CharTagField, string>> = {};
   for (const field of CHAR_TAG_FIELDS) {
@@ -271,6 +278,7 @@ function parseNewFields(raw: Record<string, unknown>): string | null {
     const text = typeof value === 'string' ? value.trim().replace(/[\r\n]+/g, ' ') : '';
     if (text) fields[field] = text;
   }
+  if (fields.age) fields.age = normalizeCharAge(fields.age);
   if (!fields.hair || !fields.eyes) return null;
   return JSON.stringify(fields);
 }

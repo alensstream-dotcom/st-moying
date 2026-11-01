@@ -64,8 +64,28 @@ describe('auto tag position protocol', () => {
     expect(parseImagePlan(raw, segments, 1).changes[0].nl).toBe('A Chinese fixed-appearance description.');
   });
 
-  it('accepts the legacy prompt key as an alias of tag', () => {
-    expect(parseImagePlan('{"images":[{"position":"P1","prompt":"scene"}]}', segments, 1)).toEqual({
+  it('把建档里的中文年龄归一成五档规范词,岁数保留', () => {
+    const raw = JSON.stringify({
+      images: [],
+      changes: [{
+        name: 'A', field: 'new', position: 'P1',
+        fields: { hair: 'long black hair', eyes: 'blue eyes', age: '刚毕业的大学生，22岁' },
+      }],
+    });
+    expect(JSON.parse(parseImagePlan(raw, segments, 1).changes[0].value).age).toBe('young adult, 22岁');
+  });
+
+  it('age 走 set 在计划阶段归一(协议层原样透传,runner 才是归一点)', () => {
+    const raw = JSON.stringify({
+      images: [],
+      changes: [{ name: 'A', field: 'age', value: '熟女', position: 'P1' }],
+    });
+    // 协议层只做形状校验,不做归一;归一在 runner 的 planChangeOps 里,两条路都覆盖,
+    // 所以这里断言原样透传——写成归一过反而会把「谁负责归一」钉错地方。
+    expect(parseImagePlan(raw, segments, 1).changes[0].value).toBe('熟女');
+  });
+
+  it('accepts the legacy prompt key as an alias of tag', () => {    expect(parseImagePlan('{"images":[{"position":"P1","prompt":"scene"}]}', segments, 1)).toEqual({
       images: [{ position: 'P1', sourceLine: 0, charOffset: 0, tag: 'scene', nl: '', negative: '', characters: [], size: 'portrait' }],
       changes: [],
     });

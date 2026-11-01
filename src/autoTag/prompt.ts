@@ -173,6 +173,12 @@ export async function buildAutoTagMessages(
   taskNote?: string,
   /** 协议形态;runner 开跑时快照一份传进来,验收与收尾用同一份(缺省即时现算)。 */
   profile: AutoTagProfile = autoTagProfile(),
+  /**
+   * 素材候选的同分摇号种子。由 runner 按「聊天 + 楼层 + swipe」算好传进来:
+   * 同一楼重试/重跑结果一致(不抖),换楼就换一批同分候选——
+   * 否则同一句「她穿着职业装」每次都召回同一批条目,模型也就每次都挑第一件。
+   */
+  loreSeed = 0,
 ): Promise<ChatMsg[]> {
   const target = context.chat[targetFloor];
   const preparedTarget =
@@ -289,15 +295,18 @@ export async function buildAutoTagMessages(
   const newCharacterNlRule = !naiCharPromptsOn
     ? ''
     : nlOn
-      ? '\n   - NAI V5 profile requirement: every field:"new" change must include a non-empty nl containing a concise English natural-language description of the character fixed appearance. The name must be the character exact name from the card/lorebook/story — a Chinese name stays Chinese (小雪), never pinyin or translation. Fandom characters must also include their identity tag in fields.fandom, e.g. {"name":"冬海","field":"new","fields":{"sex":"1girl","hair":"long black hair","eyes":"blue eyes","fandom":"kasumi (blue archive)"},"nl":"A girl with long black hair and blue eyes.","position":"P2","reason":"first appearance"}; original characters omit fandom. If an existing library entry lacks fandom but the character is fandom, report a changes item with field:"fandom". Describe only fixed appearance: no current outfit, pose, or location — temporary states never enter the profile.'
-      : '\n   - NAI profile requirement: the name must be the character exact name from the card/lorebook/story — a Chinese name stays Chinese (小雪), never pinyin or translation. Fandom characters must also include their identity tag in fields.fandom, e.g. {"name":"冬海","field":"new","fields":{"sex":"1girl","hair":"long black hair","eyes":"blue eyes","fandom":"kasumi (blue archive)"},"position":"P2","reason":"first appearance"}; original characters omit fandom. If an existing library entry lacks fandom but the character is fandom, report a changes item with field:"fandom".';
+      ? '\n   - NAI V5 profile requirement: every field:"new" change must include a non-empty nl containing a concise English natural-language description of the character fixed appearance. The name must be the character exact name from the card/lorebook/story — a Chinese name stays Chinese (小雪), never pinyin or translation. Fandom characters must also include their identity tag in fields.fandom, e.g. {"name":"冬海","field":"new","fields":{"sex":"1girl","age":"teenager","hair":"long black hair","eyes":"blue eyes","fandom":"kasumi (blue archive)"},"nl":"A slender girl with long black hair and blue eyes.","position":"P2","reason":"first appearance"}; original characters omit fandom. If an existing library entry lacks fandom but the character is fandom, report a changes item with field:"fandom". Describe only fixed appearance: no current outfit, pose, or location — temporary states never enter the profile. The nl carries the age band and its companion build words too (e.g. "a mature woman with a voluptuous figure"), so the age survives into every later image.'
+      : '\n   - NAI profile requirement: the name must be the character exact name from the card/lorebook/story — a Chinese name stays Chinese (小雪), never pinyin or translation. Fandom characters must also include their identity tag in fields.fandom, e.g. {"name":"冬海","field":"new","fields":{"sex":"1girl","age":"teenager","hair":"long black hair","eyes":"blue eyes","fandom":"kasumi (blue archive)"},"position":"P2","reason":"first appearance"}; original characters omit fandom. If an existing library entry lacks fandom but the character is fandom, report a changes item with field:"fandom".';
   const newCharacterRule = `
    - **建档先于画图**：先通读目标正文，找出每个有名有姓、且【角色固定外貌库】里还没有的**女性**正式角色——只要角色卡、世界书、柏宝书或持续剧情为她给出了设定，或她是持续参与剧情的角色，首次出场就必须建档，不论她是否入选本次图片。判断依据是发给你的全部设定内容，由你自己通读判断。一次性无名路人不建。
   - **男性角色一律不建档**：玩家角色（男主）、男配、男性反派、男性路人，不论戏份多少、设定多完整，都不得在 changes 里输出 field:"new"，也不得为他输出 hair/eyes/skin/body/extra/outfit 中任何一项。档案会被之后每一张图照抄，把男人锁进库就等于让他在后续画面里反复出现、抢女性主角的位置；他需要入画时，外貌直接从本楼正文与上下文里临时取用，不入库。
    - **建档资格与入画资格是两回事**：不建档只表示他不进角色库，不表示他不能入画；已建档也不表示他必须入画。先按本图的主体和核心互动取景，再为镜头内的人写外貌，不按档案状态决定取舍。无名角色若是核心互动的参与者，照常入画，不得仅因缺档案放弃画面、改选瞬间或裁掉他；仅仅在场不构成入画理由，无关在场者可以留在镜头外。
    - “已建档”只能按【角色固定外貌库】区块中的同名条目判断：只有名字实际列在该区块中才算已建档；世界书、角色卡、柏宝书或正文里的详细设定只是建档依据，绝不等于已经在库。每个在场的**女性**正式角色必须二选一：指出库中的同名条目，或在 changes 中输出 field:"new"；男性角色不参与这条二选一，他只需要按正文写进画面，不建档也不写 changes。一次性无名角色同样不在这条二选一之内：他既不建档也不写 changes，不需要指出任何库条目，缺档案是正常状态而非遗漏。
-   - 建档写法：{"name":"角色名","field":"new","fields":{"sex":"1girl","hair":"long black hair","eyes":"blue eyes"},"position":"P2","reason":"首次出场建档"}；position 填他首次出现的位置，仅作记录——建档在本楼全程有效，本楼任意位置的图片都可以立即使用这套外貌。
-   - 建档字段只放**长期不变的身体特征**：sex/hair/eyes/skin/body/extra 填性别、发色发型、瞳色、肤色、体型、标志特征；outfit 只填该角色**固定不换的招牌着装**；判定为同人角色的，fields 里必须写 fandom（模型可识别的英文 Danbooru 身份 tag，格式 character name (copyright name)），原创角色不写 fandom。动作、姿势、所在场景、临时状态（lying on carpet、standing、sitting、unzipped、湿身、伤势等）一律不得写进任何字段——档案会在他之后每一张图里被照抄，把姿势写进去会让他在所有画面里都保持那个姿势。
+   - 建档写法：{"name":"角色名","field":"new","fields":{"sex":"1girl","age":"young adult","hair":"long black hair","eyes":"blue eyes"},"position":"P2","reason":"首次出场建档"}；position 填他首次出现的位置，仅作记录——建档在本楼全程有效，本楼任意位置的图片都可以立即使用这套外貌。
+   - 建档字段只放**长期不变的身体特征**：sex/age/hair/eyes/skin/body/extra 填性别、年龄段、发色发型、瞳色、肤色、体型、标志特征；outfit 只填该角色**固定不换的招牌着装**；判定为同人角色的，fields 里必须写 fandom（模型可识别的英文 Danbooru 身份 tag，格式 character name (copyright name)），原创角色不写 fandom。动作、姿势、所在场景、临时状态（lying on carpet、standing、sitting、unzipped、湿身、伤势等）一律不得写进任何字段——档案会在他之后每一张图里被照抄，把姿势写进去会让他在所有画面里都保持那个姿势。
+   - **age 必填，取值只有五档，必须原词照抄**：child / teenager / young adult / mature female / old。按正文与设定里的身份和年龄线索判：小女孩、小学生、幼女 → child；高中生、中学生、JK → teenager；大学生、刚毕业、刚工作、二十出头 → young adult；熟女、人妻、太太、三十多四十岁 → mature female；老婆婆、老妇 → old。正文给了具体岁数就并在后面（young adult, 22 years old），没给就按身份定一档，不许留空、不许写中文、不许写成「大约二十几岁」。
+   - **age 必须配骨架伴生词，只写一个年龄词压不住画风**：child 配 short stature, small frame, flat chest；teenager 配 youthful, slim figure, medium breasts；young adult 配 slim figure, medium breasts；mature female 配 mature face, voluptuous, wide hips；old 配 old woman, wrinkles。这些词写进该角色的 body 或 extra。同一个聊天里年龄不同的角色必须因此拉开：成年角色不要写 loli、child，幼女角色不要写 voluptuous；两个角色的年龄档不同，体型词也不许写成同一套。
+   - **age 与身材一档一档分开**：年龄管骨架与身高，body 只管胸腰臀的粗细，两者不许互相污染。判成 mature female 而把 body 写成 petite，或判成 child 而写 large breasts，都是错的。
    - 建档取值优先级：目标正文明确的当前外貌 > 柏宝书当前角色状态 > 角色卡/世界书明确人设 > 合理补全。人设明确写了颜色时必须原样转换，不得擅改；hair 与 eyes 必填，hair 至少包含发色和长度/发型，eyes 必须包含瞳色，缺任一项该条建档会被丢弃。
    - 如果设定没写发色、发型或瞳色，根据世界观、种族、身份、性格和其余角色设定补出简洁、协调、可长期复用的颜色与发型；这是一次性建档决定，后续不得重新随机。
    - 建完档就直接用：同一次输出里，先在 changes 里确立该角色的固定外貌，再在图片 ${naiCharPromptsOn ? 'characters[].tag' : 'tag'} 中照抄这套外貌，并围绕它补充服装、动作、场景等其余 tag；同一张图里这套外貌只写一遍。${newCharacterNlRule}`;
@@ -308,7 +317,7 @@ export async function buildAutoTagMessages(
    ${libraryReferenceRule}
    - 按正文 P 位置为每个角色维护临时服装状态：正文未明确初始穿着时可以合理决定一次；没有穿上、脱下、换装、衣物损坏或场景/时间跳跃时沿用上一状态，发生明确变化后从对应 P 位置起更新。首次确定一套临时服装时，必须冻结足以复现款式的“服装视觉指纹”：服装类别之外，再固定版型/剪裁、主色和关键部件，涉及裤袜时固定颜色与透明度；例如不能只写 school uniform, pantyhose，而应具体到 navy school blazer, white collared shirt, red ribbon, dark pleated skirt, opaque white pantyhose。只补少量关键特征，不堆无关装饰。相同状态复用同一视觉指纹；镜头外不可见的部件可以省略，但省略不等于脱掉，后续重新可见且中间没有变化时必须恢复。每张图的 ${nlOn ? 'tag 与 nl 都' : 'tag 都'}要写出当前镜头可见的关键服装特征。临时穿着不得写进固定 outfit，除非设定明确它是长期不换的招牌着装。同一次输出内同一角色的临时服装必须**逐字复用同一串**：先在第一张图把整套视觉指纹定死，后续图的服装部分直接复制这串，只允许在末尾追加衣物状态词（slipped down / unzipped / wet / clinging / pulled aside / torn），不许更换单品、改颜色或改长度；正文没有写出换衣、脱下、衣物被毁或场景时间跳跃时，换了就是错误。镜头外不可见的部件省略后，重新出现在画面里时必须恢复原样。
    ${multiCharacterBindingRule}
-   - 库中已有角色发生**永久外貌变化**（染发、剪发、留疤、长大、永久变身、固定造型改变等）时，必须通过 changes 报告：{"name":"角色名","field":"hair","value":"short red hair","position":"P4","reason":"在此处染发并剪短"}；field 只能是 sex/hair/eyes/skin/body/extra/outfit/fandom。
+   - 库中已有角色发生**永久外貌变化**（染发、剪发、留疤、长大一档、永久变身、固定造型改变等）时，必须通过 changes 报告：{"name":"角色名","field":"hair","value":"short red hair","position":"P4","reason":"在此处染发并剪短"}；field 只能是 sex/age/hair/eyes/skin/body/extra/outfit/fandom。年龄变化（如过了几年、长大了）报 age，且必须同时把 body 的骨架词改成新档位——只改 age 不改骨架，画出来还是原来那个人。
    - 已建档角色被判定为同人、但档案里没有 fandom 的，必须补一条 changes：{"name":"角色名","field":"fandom","value":"character name (copyright name)","reason":"判定为同人，补身份 tag"}；档案已有 fandom 的直接照抄，不重复报告。
    - 库中带 [locked] 标记的角色是全局锁定档案：无论剧情如何发展，其固定外貌永不变化，**不得为其报告任何 changes**（报了也会被丢弃），画面中始终照抄锁定字段值。
    - 永久变化的 position 是新状态开始生效的位置：该位置之前的图片使用旧档案，该位置及之后使用新档案；多次变化按正文先后分别报告。
@@ -352,7 +361,8 @@ ${characterRule}
  - 下方【服装候选库】【姿势与机位候选库】命中正文时，必须使用库里的 tag 串：原样照抄，只允许删掉正文明确否定的部件；不许换成更泛的词（不许把 lace-trimmed sheer black pantyhose 简化成 pantyhose，不许把 mating press 简化成 sex）。
  - 库未命中时才自行编写，且同样要写到“版型/面料/结构”或“体位/肢体关系/机位”这一级粒度。
  - 一张图里只写必要的接触点；人数超过两人或需要复杂交叠时，优先采用候选库里标出的机位，不要自创极端透视。
- - **服装一致性高于多样性**：本楼内同一角色只有一套衣服。候选项多只是供货，不是让你每张换一套；挑定后逐字复用，差异只出现在姿势/机位/景别/衣物状态词上。如果你发现自己给同一角色写了第二套服装，先回正文找换衣动作，找不到就改回第一套。
+ - **同一角色的一致性高于多样性**：本楼内同一角色只有一套衣服。候选项多只是供货，不是让你每张换一套；挑定后逐字复用，差异只出现在姿势/机位/景别/衣物状态词上。如果你发现自己给同一角色写了第二套服装，先回正文找换衣动作，找不到就改回第一套。
+ - **不同角色之间必须不一样**：两个角色职业相同（都是事业女、都是学生、都是护士）时，身份词会把同一批候选递给所有人，此时**不许让她们穿同一套**。同框或前后楼出现的同职业角色，各自从候选里挑**不同廓形**的那条（一个裤装一个裙装、一个长外搭一个短上衣、一个硬挺一个垂坠）；候选里剩下的条目如果与已在场的同职业角色廓形相同，就换成不同款。同职业撞衫比同角色换装更难看，也更没有「素材库」的意义。
 11. 视角（决定一张图好不好看的一半）——先回答“谁的眼睛在看”，再写 tag。两条铁律：**不许为了「看得清」把背对镜头的身体硬拧成正面**（脖子会断、腰会扭，模型只能画成畸形），要换机位；**施动方不许搞反**（女主伸手，就是 her hand 伸出去，不是 his hand）。
   - 面对面互动（面对面说话、牵手、面对面亲密结合、正面拥抱）→ **坚定用第一视角**（pov、first-person view、pov hands）：女主面对男主就等于面对镜头，脸天然成立，不需要扭头。此时不要再把第二个人的完整站姿写进画面。
   - 后背位 / 从背后进入 / 背后环抱 → **保留第一视角的低头俯视**（pov、from above、looking down、pov hands），让玩家看见她塌腰、回眸、肩背与臀部。改成第三人称正面等于身后空无一人，别做。
@@ -362,19 +372,32 @@ ${characterRule}
   - 机位词优先取候选库里的 camera 字段；库未命中再用标准词，一次只用一种，不要叠两个互斥机位。
   - 人物扭曲优先用取景解决：宁可 upper body 或 cowboy shot，也不要为了“全身”把两个人在极端透视里叠起来。
 12. 构图四件套——每张图的 tag 里必须写清这四件事。缺一件，构图就交给模型随机决定，而它的默认答案通常是中景平视正面，画面最平：
-  - 景别（必给一个）：close-up、upper body、cowboy shot、full body、wide shot、portrait、lower body。依据是这一格的情绪离身体多近：表情与对视用 close-up 或 upper body；手、腰胯、裙摆的动作用 cowboy shot；两人的位置关系或环境用 full body 或 wide shot。
+  - 景别（必给一个）：close-up、upper body、cowboy shot、full body、wide shot、portrait、lower body。选法见下面「景别远近」。
   - 机位（必给一个）：from above、from below、from side、from behind、over shoulder、pov、first-person view、dutch angle。依据是谁占上风、谁在看：俯视压人，仰视抬人，越肩是「有人在背后看着」，pov 是「我在看」。
   - 朝向与视线：主体朝向（facing viewer、facing away、in profile）与视线落点（looking at viewer、looking at another、looking away、closed eyes、eyes visible through hair）。
   - 光与氛围（能写就写一个）：rim lighting、backlighting、soft lighting、dim lighting、window light、silhouette、cinematic lighting。写「什么光照在什么上」，不要写空洞的 beautiful lighting。
   - 景深与层次（能写就写）：foreground blur、depth of field、blurry foreground、foreground object、silhouette in foreground。一张好构图有前中后三层：前景挡一点（手臂、布料、门框、雨丝、发梢）、中景是主体、后景交代空间或光源。全空背景的大头照最平。
   - 光要有方向：写「什么光照在什么上」（window light from the left、rim light along her shoulder、shadow across her collarbone），并与机位配合——高位光压情绪、低位光显危险、侧逆光勾轮廓。
   - 四件写完回看一遍：这张图的重心在哪、视线从哪走到哪、有没有一块地方是多余的。答不出来就是还没写完。
+12b. 景别远近——先看正文这一句把看点写到了哪个部位，再决定收多近。这是**双向**的：既要容得下，也要收得住。
+  - 下限（容得下）：核心接触点在躯干以下（膝盖压住、脚踩、坐在腿上、床上下肢接触）时，不许用 close-up / upper body，会把接触点裁出画面。
+  - 上限（收得住）：正文点名了具体部位或细节时，远景是废片——放大也看不清写的东西。按此定景别：
+    · 下体、穴口、插入与交合处、精液 —— lower body 或 close-up（配 from below）
+    · 乳头、乳首、吸吮、舔弄 —— upper body，看点在乳首本身时 close-up（配 from above）
+    · 乳房、胸脯、乳沟、锁骨、衣领 —— upper body
+    · 眼神、瞳孔、唇、吻、耳垂、脸红、泪、手指与抚摸 —— close-up
+    · 腰胯、大腿、裙摆、跪、跨坐 —— cowboy shot
+    · 只有整体姿态、两人位置关系、环境规模才用 full body / wide shot
+  - 一句里同时写胸又写腰，取更近的那一档；正文只写动作没写部位时，按动作落在哪来决定。
+  - 只有远景才看得见的东西才配远景：人要走进场景、被环境淹没、或看点就是「两个人隔多远」。整楼全是 full body 就是错的，一张图里既看不到脸的变化也看不到身体细节，等于没画。
+  - 收了景别就把身体 tag 跟着收：用了 upper body / close-up 就别再写鞋袜、裙长、腿部。
+  - 局部特写尽量保住女主的眼睛或脸：埋胸、亲锁骨、摸腿这类，用 from above + looking up + upper body，或 cowboy shot 加俯视，让关键部位和她的脸同框；同框不下才退一档，绝不许把头切掉只画两条腿。
 14. 双人接触必须闭环——写清「谁伸手、碰到谁、对方身体怎么反应」，三件事缺一个，模型就画出一个人在抱空气：
   - 露胸 / 含胸必须同时有嘴部接触（kissing breast、mouth on breast、sucking）或明确的手部支撑（hand on breast），不许只画一个孤立露出来的胸部。
   - 双腿环抱必须同时写出对方的受力点（legs wrapped around waist、arms around his neck、hands on her hips），否则腿会抱空气。
   - 手要写清方向与落点（her hand on his cheek，不是 hand）；接触点两侧都要出现（她的腿＋他的腰、她的背＋他的胸、她的手腕＋他的手指）。
   - 施受方向跟着正文走：女主主动时动作词挂在女主身上（她伸手、她拉、她按、她跨坐），男主只写被作用的部位。
-  - 局部特写（埋胸、摸腿、亲锁骨这类）**必须同框女主的完整脸**：不许用只截下半身的取景。改用 from above + looking up + upper body，或 cowboy shot + 俯视，让关键部位和她的脸同时在画面里；同框不下就退一档景别，**绝不许把头切掉只画两条腿**。
+  - 局部特写（埋胸、摸腿、亲锁骨这类）**必须尽量同框女主的眼睛或脸**：改用 from above + looking up + upper body，或 cowboy shot + 俯视，让关键部位和她的脸同时在画面里；同框不下就退一档景别，**绝不许把头切掉只画两条腿**。只有当正文的看点就是那个部位本身（乳首被含住、穴口被拨开、手指进出）时，才允许纯局部 close-up / lower body，此时靠 body tag 交代是哪一层。
   - 视线：男女主互动时，除非正文明确写她撇开视线，女主的眼睛要看着镜头（looking at viewer）；独处时不受此限，按剧情自然表现姿态与身段。
 15. 服装状态是连续的，跨段落、跨楼层都不重置：
   - 已经脱掉或解开的部件不许自己穿回去：前面脱了胸罩或内裤，后面就不能再出现 bra、panties，只能写 topless、bottomless、clothes around waist、hanging on one arm。
@@ -419,6 +442,8 @@ ${characterRule}
           wardrobeLimit: lore.wardrobeLimit,
           poseLimit: lore.poseLimit,
           faces: lore.faces,
+          faceLimit: lore.faceLimit,
+          rollSeed: loreSeed,
         })
       : '';
   // 最近几张图的实拍 tag:跨楼层的服装状态与姿势去重都靠它锚定。

@@ -146,6 +146,11 @@ function normalizeAutoTagNumbers(changed?: 'minImages' | 'maxImages' | Event) {
     12,
     Math.max(0, Math.floor(Number(settings.autoTag.lore.poseLimit) || 0)),
   );
+  // 人物外貌条数:2~10。低于 2 时同人条目和脸型体型没法同时进候选。
+  settings.autoTag.lore.faceLimit = Math.min(
+    10,
+    Math.max(2, Math.floor(Number(settings.autoTag.lore.faceLimit) || 8)),
+  );
 }
 
 /* —— 破限挡位:难度阶梯,文本见 autoTag/jailbreak.ts。
@@ -891,7 +896,23 @@ async function confirmUpdate() {
           <input v-model="settings.autoTag.lore.faces" type="checkbox" class="bbi-checkbox" />
         </label>
         <p class="bbi-field-hint">
-          命中「清冷 / 银发 / 红瞳 / 丰腴」这类外形词时,把整套脸型或体型指纹交给模型整组照抄,治「生出来人物不好看」。同人角色指纹只在该作品的该角色明确出现时才会命中;已建档角色仍以角色固定外貌库为准。
+          默认开(旧配置升级时也会自动开一次)。命中「清冷 / 银发 / 红瞳 / 丰腴」这类外形词、或正文点名了某部作品的某个角色时,把整套脸型/体型/同人骨相指纹交给模型整组照抄,治「生出来人物不好看、一张大众脸」。关掉后新建档只能由模型现场编脸。
+        </p>
+
+        <label class="bbi-num-row">
+          <span class="bbi-field-label">人物外貌候选条数</span>
+          <input
+            v-model.number="settings.autoTag.lore.faceLimit"
+            class="bbi-input bbi-num"
+            type="number"
+            min="2"
+            max="10"
+            step="1"
+            @change="normalizeAutoTagNumbers"
+          />
+        </label>
+        <p class="bbi-field-hint">
+          同人骨相优先占位:正文点名作品或角色时排最前,只用外形词擦边时退居其后,剩下的位置留给脸型和体型。建议 8——低了同人进不来,高了占上下文。同人条目自带 `0.6::角色 (作品)::` 权重,是借骨相,不会把原剧情带进来;发色瞳色与角色的固定外貌冲突时以角色为准。如果是你自己写的「同人向」剧情,把作品名或角色名写进正文,命中率会从「靠外形词擦边」变成「必定排第一」。
         </p>
 
         <div class="bbi-channel-bar">

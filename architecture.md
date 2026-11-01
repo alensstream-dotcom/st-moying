@@ -56,7 +56,16 @@ src/
 │   ├── bookMemory.ts  # 读「柏宝书」全局 API,解析成角色参考块
 │   ├── charAnchors.ts # 角色库:库文本注入 → 兜底替换残留 @占位符(AI 照抄字段值,不用占位符)
 │   ├── rebase.ts      # 插入位置重定位:请求时正文 → 落盘时正文(文本 LCS 骨架 + 顺延)
-│   └── slotPlan.ts    # 单槽重写提示备注(只重写第 N 张 + 当前提示词锚点 + 其余画面清单)
+│   ├── slotPlan.ts    # 单槽重写提示备注(只重写第 N 张 + 当前提示词锚点 + 其余画面清单)
+│   └── shotGuide.ts   # 景别判据:正文点名部位 → 该离多近(推荐档/诊断过远/重试话术)
+├── data/              # 素材库(内置条目 + 召回打分;条目形状见 loreTypes.ts)
+│   ├── loreTypes.ts   # 条目契约:服装/姿势/脸型/体型/同人/自定义
+│   ├── loreIndex.ts   # 招式正文匹配 → 打分 → 分类限流 → 渲染成候选块(rollSeed 同分摇号)
+│   ├── loreMatch.ts   # 别名命中打分(命中词越长分越高 + quality)
+│   ├── wardrobe*.ts   # 服装库(基础/补充/职场;条目带廓形差异,避免同职业撞衫)
+│   ├── pose*.ts       # 姿势库
+│   ├── faceBank.ts / faceExtra.ts # 脸型 / 体型骨相指纹
+│   └── fandomBank.ts / fandomExtra.ts # 同人骨相(character name (copyright name) 权重串)
 ├── backends/          # 出图后端(链路 B 的生成端)+ 共享尺寸工具
 │   ├── comfyui.ts     # ComfyUI:工作流模板 %占位符% 渲染、浏览器直连/ST 转发自动回退
 │   ├── comfyTemplates.ts # 简易模式:模板族(checkpoint/flux/anima) + 参数组装 API JSON(无占位符)
@@ -611,6 +620,18 @@ genState 同构(chatId|messageId|swipeId|seq),重建后按 key 认领。手动�
 
 ## 7. 状态与持久化
 
+- **素材库注入(lore)**:`settings.autoTag.lore`。服装/姿势/人物外貌三类候选按正文命中注入,
+  条数由 `wardrobeLimit` / `poseLimit` / `faceLimit` 控制,`faces` 总开关。
+  - 召回是**纯本地渲染**:loreMatch 按别名命中打分(命中词越长分越高 + quality),
+    loreIndex 再按分类配额截断,同分用 `rollSeed` 摇号(`tieBreaker` 的 FNV 哈希;
+    种子 = 身份文本 hash,故同一楼稳定、换楼换一批)——不摇号的话同一句「事业女」永远
+    召回同一批条目,读者看到的就是「所有事业女穿同一件」。
+  - 人物外貌块**同人优先**:正文点名作品/角色(非泛词)时该条 +100 分排最前并给到 4 条,
+    只用发色瞳色擦边时只给弱分 3/词、只给 2 条;剩余配额给脸型体型。`GENERIC_ALIASES`
+    (长发/精灵/人妻…)不算点名。
+  - `faces` 的默认值与存量迁移:新版默认开;判据是「配置里没有 `faceLimit`」——缺它即升级前
+    配置,normalize 强制开一次。用户之后手动关会同时写下 `faceLimit`,不再被顶回。
+    (`settings.loreFacesMigration.test.ts` 锁住)
 - **settings(全局,跨设备)**:`state/settings.ts`。import 阶段以默认值建 reactive;
   ST 就绪后 `hydrateSettings()` 从 `extension_settings['baibai_image']` 载入
   (**normalize 逐字段容错 + 存量迁移**,如 resolution→横竖两格、webui 隐藏迁移);
@@ -784,9 +805,13 @@ genState 同构(chatId|messageId|swipeId|seq),重建后按 key 认领。手动�
   - 手动编辑/删除 = 用户接管:detachFromExistingFloors 清掉该角色在旧楼层里的同名操作
     (压进手动基线),之后新楼层仍可继续被 AI 变更。
   - 建档与后续维护都归主请求(changes 的 field="new"/字段更新),与选图同属一次推理;
-    外貌按字段(fandom/sex/hair/eyes/skin/body/extra/outfit)记录,拼接顺序即最终 tag,
+    外貌按字段(fandom/sex/age/hair/eyes/skin/body/extra/outfit)记录,拼接顺序即最终 tag,
     fandom(同人身份 tag,character name (copyright name))拼在首位;旧整串以 raw 兼容。
     建档必须带 hair 与 eyes(二次元身份锚点),缺任一项该条丢弃。
+    age 是五档规范词(child/teenager/young adult/mature female/old,normalizeCharAge 归一),
+    必须配骨架伴生词(charAgeBuild,写进 body/extra)——只写一个年龄词压不住画风,
+    四个年龄段会画成同一个年纪;age 与 body 分工是「骨架/身高」对「胸腰臀粗细」,互不污染。
+    年龄永久变化报 changes 的 field:"age" 并同时改 body 骨架词。
     同人身份 tag 必须写进档案:判定为同人的角色,field:"new" 建档时写 fields.fandom;
     已建档但缺 fandom 的用 field:"fandom" 的 changes 补档;画图时从档案照抄放首位。
     原创角色不写 fandom。ComfyUI 侧不照抄 fandom(括号转义规则不同,身份 tag 仍按
@@ -922,6 +947,9 @@ API 对象 `Object.freeze`,一个插件改不动下一个插件拿到的东西�
 | LLM 输出协议(JSON 形状/位置 ID/tag 格式) | src/autoTag/protocol.ts |
 | 世界书/角色卡/persona 装配 | src/autoTag/context.ts |
 | 柏宝书状态读取 | src/autoTag/bookMemory.ts |
+| 素材库(服装/姿势/脸型/体型/同人)召回打分与配额 | src/data/loreIndex.ts + loreMatch.ts + loreTypes.ts(条目本体在同目录 wardrobe*/pose*/face*/fandom*;**新增条目先看 loreTypes 的 tags/aliases 约定**,泛词别当 aliases) |
+| 素材条目同分摇号(同楼稳定/换楼换一批) | src/data/loreIndex.ts 的 `tieBreaker` / `rollSeed`,种子由 runner.ts 按身份文本 hash 传入 |
+| 景别远近判据(部位 → 该多近 / 过远诊断 / 重试话术) | src/autoTag/shotGuide.ts(POINT_RULES),诊断接在 runner.ts validate,文案在 prompt.ts 规则 12/12b |
 | 角色库 v3(基线+楼层增量/changes ops/@占位符兜底/历史回滚) | src/autoTag/charAnchors.ts + src/state/charTags.ts + src/autoTag/runner.ts |
 | Vibe 分组 / 搜索 / 启用集合判定 | src/backends/vibeGroups.ts(纯逻辑)+ NaiPanel.vue(交互) |
 | 副 API 请求(代理/SSE/超时/测试) | src/api/client.ts |

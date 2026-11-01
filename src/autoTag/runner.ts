@@ -11,6 +11,7 @@ import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
 import { diagnoseShot, shotRetryNote } from '@/autoTag/shotCheck';
+import { diagnoseDistance, distanceRetryNote } from '@/autoTag/shotGuide';
 import { diagnoseTruncation, TRUNCATION_RETRY_NOTE } from '@/autoTag/truncation';
 import {
   BBI_CHAR_EXTRA_KEY,
@@ -21,6 +22,7 @@ import {
   emptyCharFields,
   lockedCharTagNames,
   makeCharTagFloorDelta,
+  normalizeCharAge,
   readCharTagFloorDelta,
   recomputeCharTags,
   type CharTagAutoOp,
@@ -135,7 +137,13 @@ function describeRebase(report: RebaseReport): string {
 }
 
 /** 把 AI 报告的 changes 转成当前楼层操作;真正写回在正文 CAS 成功时一次完成。 */
-/** fandom 角色不接受 AI changes 回填的字段:长相只由同人 tag 决定。 */
+/**
+ * fandom 角色不接受 AI changes 回填的字段:长相只由同人 tag 决定。
+ *
+ * age 刻意不在这里:年龄档不是同人 tag 的一部分(同人 tag 只给骨相和身份),
+ * 剧情里「过了几年」「长大了」时它该跟着变;hair/eyes 则相反,变了就等于换人,
+ * 宁可让模型照抄同人 tag,也不让它按自己记忆改。
+ */
 const FANDOM_GUARD_FIELDS: ReadonlySet<string> = new Set(['hair', 'eyes', 'skin', 'body', 'raw']);
 /**
  * sex 字段里的男性标记。
@@ -168,6 +176,9 @@ function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
         }
       }
       if (!fields && change.value) value = change.value;
+      // age 一律归一到规范词:模型会把正文的「刚毕业的大学生」原样抄进来,
+      // 不归一的后果是这个角色每张图年龄都不一样。
+      if (fields?.age) fields.age = normalizeCharAge(fields.age);
       op = createCharTagNewOp(
         {
           name: change.name,
@@ -182,7 +193,8 @@ function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
     } else if (change.field === 'nl') {
       op = createCharTagSetOp(change.name, 'nl', change.value || change.nl || '', change.reason);
     } else {
-      op = createCharTagSetOp(change.name, change.field, change.value, change.reason);
+      const next = change.field === 'age' ? normalizeCharAge(change.value) : change.value;
+      op = createCharTagSetOp(change.name, change.field, next, change.reason);
     }
     if (op) ops.push({ op, sourceLine: change.sourceLine });
   }
@@ -325,6 +337,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       : settings.autoTag;
     // 协议形态开跑时快照一次:写协议、验收与收尾同一份,用户中途拨开关也不会前后不一
     const profile = autoTagProfile();
+    // 素材候选的同分摇号种子:取自 identity(聊天+楼层+swipe+正文哈希)。
+    // 同一楼重试/重跑结果一致,换楼或换 swipe 就换一批同分服装/姿势候选——
+    // 否则同一句「她穿着职业装」每楼都召回同一批,模型当然每楼都挑第一件,看着就是永远一套衣服。
+    const loreSeed = Math.max(1, Number.parseInt(textHash(identity), 36) || 1);
     const messages = await buildAutoTagMessages(
       context,
       floor,
@@ -334,6 +350,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       anchors.text,
       slot ? buildSlotTaskNote(rawSource, slot.seq) : '',
       profile,
+      loreSeed,
     );
     const channel = getTagGenChannel();
     // 失败重试:请求异常与「返回无法解析/校验不通过」都视为可重试的异常(后者常见于模型没遵守协议);
@@ -380,6 +397,29 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             candidate.changes.some(change => change.field === 'new' && !change.nl?.trim())
           ) {
             throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
+          }
+          // 景别过远:正文点名了具体部位,画面却拍成远景。这条排在缺项检查之前——
+          // 缺景别词只是「画面会平」,景别过远是「这张图白拍」,前者由后者一并带上。
+          // 同样只在还有重试次数时纠,没次数就放行。
+          if (attempt < retries) {
+            const segmentText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
+            const seenGap = new Set<string>();
+            const farGaps = candidate.images
+              .map(image => {
+                const gap = diagnoseDistance(segmentText.get(image.position) ?? '', image.tag);
+                if (!gap) return null;
+                const key = `${image.position}\u0000${gap.suggest}`;
+                if (seenGap.has(key)) return null;
+                seenGap.add(key);
+                return { position: image.position, ...gap };
+              })
+              .filter((gap): gap is NonNullable<typeof gap> => !!gap);
+            if (farGaps.length) {
+              retryNote = distanceRetryNote(farGaps);
+              throw new Error(
+                `景别过远(${farGaps.map(gap => `${gap.position} 应 ${gap.suggest}`).join('、')})`,
+              );
+            }
           }
           // 构图缺项:只在还有重试次数时纠一次。没次数了就放行——
           // 交一张景别平庸的图,好过因为「没写机位」整楼不生。

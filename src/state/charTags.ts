@@ -13,11 +13,21 @@ import { reactive } from 'vue';
  * charTagLib 只是响应式派生缓存:合并基线(本聊天优先,全局补同名空缺) + 按楼层物理顺序重放自动变化。
  */
 
-export type CharTagField = 'fandom' | 'sex' | 'hair' | 'eyes' | 'skin' | 'body' | 'extra' | 'outfit';
+export type CharTagField =
+  | 'fandom'
+  | 'sex'
+  | 'age'
+  | 'hair'
+  | 'eyes'
+  | 'skin'
+  | 'body'
+  | 'extra'
+  | 'outfit';
 
 export const CHAR_TAG_FIELDS: readonly CharTagField[] = [
   'fandom',
   'sex',
+  'age',
   'hair',
   'eyes',
   'skin',
@@ -29,6 +39,7 @@ export const CHAR_TAG_FIELDS: readonly CharTagField[] = [
 export const CHAR_TAG_FIELD_LABELS: Record<CharTagField, string> = {
   fandom: '同人身份 tag',
   sex: '性别',
+  age: '年龄段',
   hair: '头发',
   eyes: '眼睛',
   skin: '肤色',
@@ -36,6 +47,78 @@ export const CHAR_TAG_FIELD_LABELS: Record<CharTagField, string> = {
   extra: '标志特征',
   outfit: '固定着装',
 };
+
+/**
+ * 年龄段规范词。
+ *
+ * 为什么单独一档 age 而不是揉进 body:没有 age 时,「刚工作的大学生 / 熟女 / 高中生 / 小女孩」
+ * 四个角色在档案里的唯一身体差异只剩 body 一句,模型每张图重新猜一次,于是四个年龄段
+ * 会画成同一个年龄——这正是用户的原始抱怨。age 入库后跟着档案逐张照抄,年龄才锚得住。
+ *
+ * 词表只用 danbooru 真有的词,并各配一组「画面可分辨」的伴生骨架词:
+ * 单写一个年龄词不足以改画风,必须同时把身高/骨架/胸部体量一起推到该年龄段。
+ */
+export interface CharAgeBand {
+  tag: string;
+  /** 中文说法,供归一化与 UI 提示。 */
+  labels: string[];
+  /** 与该年龄段配套的骨架词(建档时补进 body/extra,避免只改一个字)。 */
+  build: string;
+}
+
+export const CHAR_AGE_BANDS: readonly CharAgeBand[] = [
+  {
+    tag: 'child',
+    labels: ['child', '小女孩', '儿童', '幼女', '萝莉', '小学生', 'loli'],
+    build: 'child, loli, short stature, small frame, flat chest',
+  },
+  {
+    tag: 'teenager',
+    labels: ['teenager', '高中生', '中学生', '少女', '女高中生', 'jk', 'teen'],
+    build: 'teenager, youthful, slim figure, medium breasts',
+  },
+  {
+    tag: 'young adult',
+    labels: ['young adult', '大学生', '刚工作', '年轻女性', '二十多岁', 'young woman', 'adult'],
+    build: 'young adult, slim figure, medium breasts',
+  },
+  {
+    tag: 'mature female',
+    labels: ['mature female', '熟女', '人妻', '三十多岁', '四十岁', 'mature', 'milf', '少妇'],
+    build: 'mature female, mature face, voluptuous, wide hips',
+  },
+  {
+    tag: 'old',
+    labels: ['old', '老年', '老妇', '奶奶', '老婆婆', 'elderly', 'old woman'],
+    build: 'old, old woman, wrinkles',
+  },
+];
+
+/** 反查:一个年龄段词对应的骨架伴生词(不在词表里返回空串)。 */
+export function charAgeBuild(tag: string): string {
+  const needle = tag.trim().toLowerCase();
+  if (!needle) return '';
+  return CHAR_AGE_BANDS.find(band => needle.includes(band.tag))?.build ?? '';
+}
+
+const AGE_NOISE = /[，,、;；/]+/g;
+
+/**
+ * 把模型/用户写的年龄段归一成规范词。
+ *
+ * 保留原文里的岁数(`, 22 years old`)——它比任何骨架词都更能定住年龄,
+ * 但规范词必须排在最前面,否则模型会挑后半句去理解。
+ */
+export function normalizeCharAge(raw: string): string {
+  const text = raw.trim();
+  if (!text) return '';
+  const lower = text.toLowerCase();
+  const band = CHAR_AGE_BANDS.find(item => item.labels.some(label => lower.includes(label)));
+  // 「岁」不是 \w,后面不能挂 \b(否则永远匹配不上);用前瞻限定数字后不再接数字即可。
+  const years = text.match(/\d{1,3}\s*(?:岁|years?\s*old|yo)(?!\d)/i)?.[0]?.replace(/\s+/g, ' ').trim();
+  if (!band) return text.replace(AGE_NOISE, ', ').replace(/\s*,\s*/g, ', ').trim();
+  return [band.tag, years].filter(Boolean).join(', ');
+}
 
 export type CharTagSource = 'book' | 'manual' | 'ai';
 export type CharTagHistoryField = CharTagField | 'new' | 'raw' | 'nl';
@@ -151,7 +234,7 @@ export function lockedCharTagNames(): ReadonlySet<string> {
 }
 
 export function emptyCharFields(): Record<CharTagField, string> {
-  return { fandom: '', sex: '', hair: '', eyes: '', skin: '', body: '', extra: '', outfit: '' };
+  return { fandom: '', sex: '', age: '', hair: '', eyes: '', skin: '', body: '', extra: '', outfit: '' };
 }
 
 export function charFieldsEmpty(fields: Record<CharTagField, string>): boolean {

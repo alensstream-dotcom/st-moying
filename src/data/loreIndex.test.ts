@@ -174,3 +174,109 @@ describe('数据文件的书写口径(导入别人整理的表时最容易踩)',
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+describe('loreIndex 同人骨相召回', () => {
+  const opts = { wardrobeLimit: 0, poseLimit: 0, faces: true, faceLimit: 8 };
+
+  it('正文点名角色或作品时,同人条目排在最前并被标 direct', () => {
+    const { faces } = collectLoreCandidates('卡琳站在走廊尽头,清冷地看着他', opts);
+    expect(faces.length).toBeGreaterThan(0);
+    expect(faces[0].item.id).toBe('fandom-ba-karin');
+    expect(faces[0].direct).toBe(true);
+  });
+
+  it('只写作品名也算点名,不必写到角色名', () => {
+    const { faces } = collectLoreCandidates('这是碧蓝档案的学园', opts);
+    expect(faces.some(hit => hit.direct)).toBe(true);
+    expect(faces.every(hit => !hit.direct || hit.item.kind === 'fandom')).toBe(true);
+  });
+
+  it('正文没点名时同人条目依然进候选,不再被脸型体型挤掉', () => {
+    // 只有泛的外形词,一条 aliases 都命不中;旧实现里这一类整块为空。
+    const { faces } = collectLoreCandidates('她一张清冷的脸,白色长发,紫色眼睛', opts);
+    expect(faces.length).toBeGreaterThan(0);
+    expect(faces.some(hit => hit.item.kind === 'fandom')).toBe(true);
+  });
+
+  it('同人条目与脸型体型分占配额,不再互相挤成 2 条', () => {
+    const { faces } = collectLoreCandidates('卡琳一张清冷的脸,白色长发', opts);
+    const kinds = new Set(faces.map(hit => hit.item.kind));
+    expect(faces.length).toBeLessThanOrEqual(8);
+    // 有同人指名时,脸型/体型仍要各留位置做底。
+    expect(kinds.has('fandom') || kinds.has('face') || kinds.has('body')).toBe(true);
+  });
+
+  it('faceLimit 卡得住条数,设 0 就整块不召回', () => {
+    expect(collectLoreCandidates('卡琳一张清冷的脸', { ...opts, faceLimit: 2 }).faces.length).toBeLessThanOrEqual(2);
+    expect(collectLoreCandidates('卡琳一张清冷的脸', { ...opts, faceLimit: 0 }).faces).toEqual([]);
+  });
+
+  it('渲染时点名与未点名的同人条目给不同用法', () => {
+    const direct = buildLoreBlock('卡琳望着他', opts);
+    expect(direct).toContain('正文点名了作品或角色时,优先用对应的同人条目');
+    // 没点名、但外形词能召回同人时,给的是「借骨相」用法,不是「别用」。
+    const loose = buildLoreBlock('她一张清冷的脸,白色长发,紫色眼睛', opts);
+    expect(loose).toContain('即使正文没有点名作品也可以用');
+    expect(loose).toContain('以角色的固定外貌为准');
+  });
+});
+
+describe('loreIndex 同分摇号', () => {
+  it('不同种子会在同分候选之间换人', () => {
+    const text = '她穿着水手服';
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 12; seed += 1) {
+      const { wardrobe } = collectLoreCandidates(text, { wardrobeLimit: 3, rollSeed: seed });
+      seen.add(wardrobe.map(hit => hit.item.id).join(','));
+    }
+    // 摇号没生效的话这 12 个种子会给出同一个组合。
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it('同一种子结果稳定,单测可复现', () => {
+    const text = '她穿着水手服';
+    const a = collectLoreCandidates(text, { wardrobeLimit: 4, rollSeed: 7 }).wardrobe.map(hit => hit.item.id);
+    const b = collectLoreCandidates(text, { wardrobeLimit: 4, rollSeed: 7 }).wardrobe.map(hit => hit.item.id);
+    expect(a).toEqual(b);
+  });
+
+  it('种子为 0 时保持严格按分数,顺序与 id 字典序', () => {
+    const a = collectLoreCandidates('她穿着黑丝', { wardrobeLimit: 5, rollSeed: 0 }).wardrobe.map(hit => hit.item.id);
+    const b = collectLoreCandidates('她穿着黑丝', { wardrobeLimit: 5 }).wardrobe.map(hit => hit.item.id);
+    expect(a).toEqual(b);
+  });
+
+  it('摇号只在同分之间动,不会把明显高分的挤掉', () => {
+    const text = '她穿着黑丝';
+    const base = collectLoreCandidates(text, { wardrobeLimit: 8 }).wardrobe;
+    const top = base[0].score;
+    for (let seed = 1; seed <= 6; seed += 1) {
+      const { wardrobe } = collectLoreCandidates(text, { wardrobeLimit: 8, rollSeed: seed });
+      // 最高分的那批必须还在,不能因为摇号掉出前 8。
+      expect(wardrobe.some(hit => hit.score === top)).toBe(true);
+    }
+  });
+
+  it('脸型/体型也摇号,不会永远只推同一个新面孔', () => {
+    const opts = { wardrobeLimit: 0, poseLimit: 0, faces: true, faceLimit: 6 };
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 12; seed += 1) {
+      const { faces } = collectLoreCandidates('她一张清冷的脸', { ...opts, rollSeed: seed });
+      const nonFandom = faces.filter(hit => hit.item.kind !== 'fandom').map(hit => hit.item.id);
+      seen.add(nonFandom.join(','));
+    }
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it('脸型摇号同样不越过高分条目', () => {
+    const opts = { wardrobeLimit: 0, poseLimit: 0, faces: true, faceLimit: 8 };
+    const base = collectLoreCandidates('她一张清冷的脸', opts).faces.filter(
+      hit => hit.item.kind !== 'fandom',
+    );
+    const top = base[0].score;
+    for (let seed = 1; seed <= 6; seed += 1) {
+      const { faces } = collectLoreCandidates('她一张清冷的脸', { ...opts, rollSeed: seed });
+      expect(faces.some(hit => hit.score === top)).toBe(true);
+    }
+  });
+});

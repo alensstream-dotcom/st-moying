@@ -67,7 +67,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts({ jailbreak: '被忽略的旧附加词' }),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -116,7 +116,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -135,7 +135,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(
@@ -181,7 +181,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
 
@@ -216,7 +216,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -233,9 +233,9 @@ describe('auto tag prompt', () => {
     for (const slot of ['人物：', '核心动作：', '景别：', '场景：', '环境光：', 'size：']) {
       expect(thinkingMsg?.content).toContain(slot);
     }
-    expect(thinkingMsg?.content).toContain('<角色名>｜表情｜视线｜本镜头可见服装｜临时状态｜个人动作');
+    expect(thinkingMsg?.content).toContain('<角色名>｜年龄档+骨架词｜表情｜视线｜本镜头可见服装｜临时状态｜个人动作');
     expect(thinkingMsg?.content).toContain('确实不适用的槽位写 "-"');
-    expect(thinkingMsg?.content).toContain('核心动作、景别、表情、视线、场景、环境光、size 七项永远不得为 "-"');
+    expect(thinkingMsg?.content).toContain('核心动作、景别、年龄档、表情、视线、场景、环境光、size 八项永远不得为 "-"');
     // 表情/视线此前全库没有槽位,是「木脸」的根因;两个后端规范也要各带一份。
     expect(thinkingMsg?.content).toContain('两项都不得留空，面无表情也要主动填 expressionless');
     expect(thinkingMsg?.content).toContain('表情与视线填后端规范给出的标准 danbooru 词');
@@ -321,7 +321,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts({ comfyThinking: '自定义清单' }),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -343,7 +343,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts({
         comfyThinking: 'COMFY-CHECKLIST',
         naiThinking: 'NAI-CHECKLIST',
@@ -395,7 +395,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -469,7 +469,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -533,7 +533,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -604,7 +604,7 @@ describe('auto tag prompt', () => {
         retryCount: 1,
         autoGenerate: true,
         jailbreakTier: 'strong',
-        lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+        lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
         prompts: prompts(),
       };
       const oldBackend = settings.defaultBackend;
@@ -657,7 +657,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -699,7 +699,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -742,7 +742,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const library = '【角色固定外貌库(系统维护)】\n小雪: 1girl, long silver hair';
@@ -768,7 +768,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -787,7 +787,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(
@@ -814,7 +814,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -851,7 +851,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -888,7 +888,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -928,7 +928,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -964,7 +964,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -1008,7 +1008,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -1073,7 +1073,7 @@ describe('NAI「生成自然语言」开关与渠道画幅锁', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: false, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(overrides),
     };
   }
@@ -1267,5 +1267,65 @@ describe('NAI「生成自然语言」开关与渠道画幅锁', () => {
     } finally {
       state.restore();
     }
+  });
+});
+
+// 素材候选的轮转摇号:同一句身份词不能每楼都召回同一批,否则模型每楼都挑第一条,
+// 用户看到的就是「不管几个事业女,衣服永远同一套」。
+describe('素材候选摇号与同职业区分', () => {
+  function loreOptions(): AutoTagSettings {
+    return {
+      enabled: true,
+      contextMessages: 2,
+      minImages: 0,
+      maxImages: 2,
+      retryCount: 1,
+      autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: {
+        enabled: true,
+        maxNsfw: 3,
+        wardrobeLimit: 8,
+        poseLimit: 6,
+        faces: true,
+        faceLimit: 8,
+        thumbModel: '',
+        thumbIntervalMs: 10000,
+      },
+      prompts: prompts(),
+    };
+  }
+
+  /** 目标正文里带身份词,才会命中服装库;默认 fixture 两行都没有命中。 */
+  function officeContext(): STContext {
+    const base = context();
+    base.chat[1].mes = '她是公司里最年轻的事业女，推开办公室的门';
+    return base;
+  }
+
+  it('不同种子换出不同候选;同一种子可复现', async () => {
+    const seen = new Set<string>();
+    for (const seed of [3, 11, 27, 40]) {
+      const user = (await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, seed))
+        .at(-1)!.content;
+      const lines = user.split('\n').filter(line => line.includes('（命中：'));
+      seen.add(lines.join('\n'));
+    }
+    expect(seen.size).toBeGreaterThan(1);
+
+    const a = (await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5)).at(-1)!
+      .content;
+    const b = (await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5)).at(-1)!
+      .content;
+    expect(a).toBe(b);
+  });
+
+  it('契约里写清同职业不许撞衫,并点名「同一角色只有一套」', async () => {
+    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
+    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
+    expect(contract).toContain('同一角色的一致性高于多样性');
+    expect(contract).toContain('不同角色之间必须不一样');
+    expect(contract).toContain('不许让她们穿同一套');
+    expect(contract).toContain('同职业撞衫');
   });
 });

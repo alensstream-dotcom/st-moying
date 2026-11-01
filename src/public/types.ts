@@ -38,7 +38,7 @@ export interface PublicCharacter {
   name: string;
   /**
    * 可直接用于生图的完整 tag 串。
-   * 由 fields 按固定顺序(同人身份→性别→头发→眼睛→肤色→体型→标志特征→着装)拼成;
+   * 由 fields 按固定顺序(同人身份→性别→年龄段→头发→眼睛→肤色→体型→标志特征→着装)拼成;
    * 老条目只有整串 raw 时即为 raw 本身。**推荐直接用这个**,别自己拼 fields。
    */
   tag: string;
