@@ -618,8 +618,10 @@ describe('auto tag prompt', () => {
         const spec = messages.find(m => m.content.startsWith('[NovelAI'))!.content;
         const selection = thinking.split('E. 选段\n')[1].split('第二层｜')[0];
 
-        expect(contract).toContain('优先表现正文中玩家主角和主要角色的表情、状态、行动及关系');
-        expect(contract).toContain('主要角色单独出镜同样成立');
+        expect(contract).toContain('画面主体永远是女性主角');
+        expect(contract).toContain('不得单独出镜');
+        expect(contract).toContain('纯环境空镜一律不要');
+        expect(contract).toContain('不建立固定外貌档案');
         expect(contract).toContain('不得把不在场者加入画面');
         expect(contract).toContain('主要角色依据设定与剧情判断，不等同于所有已建档角色');
         expect(contract).toContain('仅仅在场不构成入画理由');

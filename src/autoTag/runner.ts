@@ -135,6 +135,9 @@ function describeRebase(report: RebaseReport): string {
 }
 
 /** 把 AI 报告的 changes 转成当前楼层操作;真正写回在正文 CAS 成功时一次完成。 */
+/** fandom 角色不接受 AI changes 回填的字段:长相只由同人 tag 决定。 */
+const FANDOM_GUARD_FIELDS: ReadonlySet<string> = new Set(['hair', 'eyes', 'skin', 'body', 'raw']);
+
 function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
   const ops: PositionedCharOp[] = [];
   for (const change of plan.changes) {
@@ -444,7 +447,29 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const effectiveOps = lockedNames.size
       ? planOps.filter(item => !lockedNames.has(item.op.name))
       : planOps;
-    const floorOps = effectiveOps.map(item => item.op);
+    // 同人角色保护:角色库只填了 fandom、hair/eyes/skin/body 全空时,长相由同人 tag 决定。
+    // 用户把那几个字段清空是刻意为之,AI 从正文抄回的发色瞳色写进去会和同人 tag 打架。
+    const fandomGuarded = new Set(
+      anchors.entries
+        .filter(
+          entry =>
+            entry.fields.fandom.trim() &&
+            !entry.fields.hair.trim() &&
+            !entry.fields.eyes.trim() &&
+            !entry.fields.skin.trim() &&
+            !entry.fields.body.trim(),
+        )
+        .map(entry => entry.name),
+    );
+    const guardedOps = fandomGuarded.size
+      ? effectiveOps.filter(item => {
+          const op = item.op;
+          if (op.kind !== 'set') return true;
+          if (FANDOM_GUARD_FIELDS.has(op.field)) return !fandomGuarded.has(op.name);
+          return true;
+        })
+      : effectiveOps;
+    const floorOps = guardedOps.map(item => item.op);
     const previousDelta = readCharTagFloorDelta(message);
 
     // @占位符按正文位置替换：变化前图片用旧档，变化位置及之后用新档。
@@ -461,7 +486,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       const tagRes = applyPositionedCharRefs(
         image.tag,
         anchors.entries,
-        effectiveOps,
+        guardedOps,
         image.sourceLine,
         'tag',
         lockedNames,
@@ -471,7 +496,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         const nlRes = applyPositionedCharRefs(
           image.nl,
           anchors.entries,
-          effectiveOps,
+          guardedOps,
           image.sourceLine,
           'nl',
           lockedNames,
@@ -483,7 +508,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         const charTag = applyPositionedCharRefs(
           character.tag,
           anchors.entries,
-          effectiveOps,
+          guardedOps,
           image.sourceLine,
           'tag',
           lockedNames,
@@ -494,7 +519,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           const charNl = applyPositionedCharRefs(
             character.nl,
             anchors.entries,
-            effectiveOps,
+            guardedOps,
             image.sourceLine,
             'nl',
             lockedNames,
