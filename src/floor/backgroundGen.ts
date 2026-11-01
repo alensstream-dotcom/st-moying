@@ -221,20 +221,26 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
 export async function runBackgroundGenerations(jobs: BackgroundJob[]): Promise<void> {
   if (!jobs.length) return;
   bindResumeListener();
+  // 先摘掉这批槽位的自动生成标记:从此由后台负责到底。
+  //
+  // 旧做法是「抢标记,抢不到就让位给前台卡片」,结果第一张图经常卡住 ——
+  // 前台卡片在重渲染时先一步消费了标记,但它自己的相位判定(shouldAutoGenerate)
+  // 只放行 pending/stale;只要该槽位还留着上一次的结果或被判成 error,标记就被
+  // 吃掉而没人跑,谁也等不到下一次自动触发,用户只能手动点一下。
+  // 现在改成:标记一律先摘,前台别再来抢;后台跑完用 hydrateMessage 把卡片推到 ready,
+  // 失败则进续跑队列并让卡片显示错误 —— 两条路都有结果,不再有「没人生成也没人报错」。
+  for (const job of jobs) {
+    consumeAutoGenerate(job.chatId, job.messageId, job.swipeId, job.seq);
+  }
   if (running) {
     // 已有后台批次在跑:把新任务并进队列,由可见性钩子接力,避免两条链同时压 NAI
-    for (const job of jobs) {
-      if (consumeAutoGenerate(job.chatId, job.messageId, job.swipeId, job.seq)) {
-        enqueue(job, '等待后台批次让位');
-      }
-    }
+    for (const job of jobs) enqueue(job, '等待后台批次让位');
     return;
   }
   running = true;
   try {
     for (const job of jobs) {
-      // 抢标记:前台卡片已消费则说明它在跑,这里让位
-      if (!consumeAutoGenerate(job.chatId, job.messageId, job.swipeId, job.seq)) continue;
+      // runOne 内部会用 getGenRecord 判断前台是否正在这个槽位上跑,是则让位不双跑
       await runOne(job);
     }
   } finally {

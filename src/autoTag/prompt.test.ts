@@ -300,7 +300,7 @@ describe('auto tag prompt', () => {
     expect(messages.some(m => m.content.includes('navy school blazer, white collared shirt, red ribbon'))).toBe(true);
     expect(thinkingMsg?.content).toContain('镜头外不可见的部件可以省略，但省略不等于脱掉');
     expect(thinkingMsg?.content).toContain('没有散落的无主特征');
-    expect(messages.some(m => m.content.includes('每个在场正式角色必须二选一'))).toBe(true);
+    expect(messages.some(m => m.content.includes('女性**正式角色必须二选一'))).toBe(true);
     expect(messages.some(m => m.content.includes('禁止把两人的外貌特征散放成无法归属的一串公共 tag'))).toBe(true);
     expect(thinkingMsg?.content).toContain('定一套具体、自洽的时代/文明/视觉体系并全楼沿用');
     expect(messages.some(m => m.content.includes('必须先判断，并主动具体化'))).toBe(true);

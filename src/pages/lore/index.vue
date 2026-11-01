@@ -355,13 +355,61 @@ function stripFraming(tags: string): string {
     .replace(/^[\s,]+|[\s,]+$/g, '');
 }
 
+/**
+ * 需要对方在场的姿势类别。
+ *
+ * 预览图写死 solo 的话,后入/骑乘/口交这类姿势画出来的就是「一个人对着空气摆姿势」——
+ * 用户看到的就是这个:预览里只有一个女的,看不出姿势说的是什么。
+ */
+const POSE_DUO_CATEGORIES = new Set<string>([
+  'foreplay',
+  'oral',
+  'vaginal',
+  'rear',
+  'ride',
+  'side',
+  'standing',
+  'hand',
+  'breast',
+  'restraint',
+  'climax',
+  'afterglow',
+]);
+
+function poseCategoryOf(id: string): string {
+  return allPoseItems().find(item => item.id === id)?.category ?? '';
+}
+
 /** 预览提示词：一条素材要能被单独看懂，所以固定主体与背景，只换它自己的 tag。 */
 function thumbPrompt(card: LoreCard): string {
-  const pose = tab.value === 'pose';
-  const framing = pose ? 'cowboy shot' : 'full body, standing';
-  const base = `masterpiece, best quality, very aesthetic, absurdres, 1girl, solo, ${framing}, simple background, grey background`;
-  const nude = pose ? 'completely nude' : '';
-  return [base, nude, stripFraming(card.tags)].filter(Boolean).join(', ');
+  const quality =
+    'masterpiece, best quality, very aesthetic, absurdres, simple background, grey background';
+  // 面相:脸必须完整且占满画幅。写 full body 时脸只剩几个像素,模型顺手就裁成半张。
+  if (tab.value === 'face') {
+    return [
+      quality,
+      '1girl, solo, portrait, face focus, upper body, looking at viewer',
+      stripFraming(card.tags),
+    ]
+      .filter(Boolean)
+      .join(', ');
+  }
+  if (tab.value === 'pose') {
+    // 双人姿势:对方只给躯干不露脸,既看得出体位关系又不抢主体
+    const duo = POSE_DUO_CATEGORIES.has(poseCategoryOf(card.id));
+    return [
+      quality,
+      duo
+        ? '1girl, 1boy, faceless male, completely nude, full body'
+        : '1girl, solo, completely nude, full body',
+      stripFraming(card.tags),
+    ]
+      .filter(Boolean)
+      .join(', ');
+  }
+  return [quality, '1girl, solo, full body, standing', stripFraming(card.tags)]
+    .filter(Boolean)
+    .join(', ');
 }
 
 /**
@@ -607,9 +655,23 @@ function openRoll() {
 }
 
 function rollPrompt(result: RollResult, pose: boolean): string {
-  const framing = pose ? 'cowboy shot' : 'full body, standing';
-  const base = `masterpiece, best quality, very aesthetic, absurdres, 1girl, solo, ${framing}, simple background, grey background`;
-  return [base, pose ? 'completely nude' : '', stripFraming(result.tags)].filter(Boolean).join(', ');
+  const quality =
+    'masterpiece, best quality, very aesthetic, absurdres, simple background, grey background';
+  if (!pose) {
+    return [quality, '1girl, solo, full body, standing', stripFraming(result.tags)]
+      .filter(Boolean)
+      .join(', ');
+  }
+  const duo = POSE_DUO_CATEGORIES.has(result.category);
+  return [
+    quality,
+    duo
+      ? '1girl, 1boy, faceless male, completely nude, full body'
+      : '1girl, solo, completely nude, full body',
+    stripFraming(result.tags),
+  ]
+    .filter(Boolean)
+    .join(', ');
 }
 
 /** 素材预览太小看不清，点开走全屏灯箱（与楼层卡片同一个灯箱）。 */

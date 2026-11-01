@@ -137,6 +137,14 @@ function describeRebase(report: RebaseReport): string {
 /** 把 AI 报告的 changes 转成当前楼层操作;真正写回在正文 CAS 成功时一次完成。 */
 /** fandom 角色不接受 AI changes 回填的字段:长相只由同人 tag 决定。 */
 const FANDOM_GUARD_FIELDS: ReadonlySet<string> = new Set(['hair', 'eyes', 'skin', 'body', 'raw']);
+/**
+ * sex 字段里的男性标记。
+ *
+ * 建档是永久副作用:一旦入库,之后每一张图都会照抄他的长相,于是「出现过的男的」
+ * 全都留在角色库里。规则已经写明男性不建档,模型仍会顺手建一条,所以在落盘前按
+ * sex 再拦一次 —— 宁可丢掉一条建不准的档,也不要让库越用越脏。
+ */
+const MALE_SEX_RE = /^(?:1boy|boy|male|man|men|masculine|♂)/i;
 
 function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
   const ops: PositionedCharOp[] = [];
@@ -469,7 +477,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           return true;
         })
       : effectiveOps;
-    const floorOps = guardedOps.map(item => item.op);
+    // 男性不建档:同上,规则之外再兜一次,把 sex 明确是男性的 new 直接丢掉。
+    const maleGuarded = guardedOps.filter(item => {
+      const op = item.op;
+      if (op.kind !== 'new') return true;
+      return !MALE_SEX_RE.test(op.fields.sex.trim());
+    });
+    const floorOps = maleGuarded.map(item => item.op);
     const previousDelta = readCharTagFloorDelta(message);
 
     // @占位符按正文位置替换：变化前图片用旧档，变化位置及之后用新档。
@@ -486,7 +500,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       const tagRes = applyPositionedCharRefs(
         image.tag,
         anchors.entries,
-        guardedOps,
+        maleGuarded,
         image.sourceLine,
         'tag',
         lockedNames,
@@ -496,7 +510,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         const nlRes = applyPositionedCharRefs(
           image.nl,
           anchors.entries,
-          guardedOps,
+          maleGuarded,
           image.sourceLine,
           'nl',
           lockedNames,
@@ -508,7 +522,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         const charTag = applyPositionedCharRefs(
           character.tag,
           anchors.entries,
-          guardedOps,
+          maleGuarded,
           image.sourceLine,
           'tag',
           lockedNames,
@@ -519,7 +533,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           const charNl = applyPositionedCharRefs(
             character.nl,
             anchors.entries,
-            guardedOps,
+            maleGuarded,
             image.sourceLine,
             'nl',
             lockedNames,
