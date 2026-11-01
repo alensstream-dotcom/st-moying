@@ -745,8 +745,9 @@ B. 角色清点与建档（具体建档字段与写法见任务协议，这里�
    - 通读目标正文，逐个列出实际在场且有名有姓的角色。不能只看最终入选图片里的人，也不能漏掉世界书、角色卡或柏宝书为其给出了设定的角色。
    - 每人写一行结论：命中的同名库条目，或本次 field:"new"。只有名字实际列在【角色固定外貌库】区块中的才算已建档——世界书、角色卡、柏宝书或正文里的详细设定只是建档来源，不代表已经在库，不得凭印象宣称已在库。库里没有、但属于正式角色（有设定或持续参与剧情）的，首次出场就建档，不论他是否入选本次图片；一次性无名路人不建。
    - 同一行里顺带判定原创还是同人：只有角色卡、世界书、正文或通行角色名能可靠指向某个已有作品时才判为同人，证据不足按原创处理，不猜作品。判定为同人时同一行定出最终身份 tag 词：模型可识别的英文 Danbooru 角色名与作品名，实际形态为 character name \\(copyright name\\)；最终 JSON 里要写成 "character name \\\\(copyright name\\\\)"，双反斜杠经 JSON 解析才保留单个反斜杠。
-   - 每个【本次建档】的角色同一行还要定死年龄档，五档原词：child / teenager / young adult / mature female / old。按身份与年龄线索判，不许留空：小女孩、小学生、幼女 → child；高中生、中学生、JK → teenager；大学生、刚毕业、刚工作 → young adult；熟女、人妻、太太 → mature female；老婆婆、老妇 → old。正文给了岁数就并在后面（young adult, 22 years old）。同一楼里年龄不同的角色，必须因此在这一行就拉开骨架伴生词：child 用 short stature, small frame, flat chest；teenager 用 youthful, slim figure, medium breasts；young adult 用 slim figure, medium breasts；mature female 用 mature face, voluptuous, wide hips；old 用 old woman, wrinkles。查一下同楼其它角色：已经有人用过某一档的骨架词，就换一档，至少换掉身高与胸围那两项。年龄档写进 fields.age，骨架词写进 fields.body 或 fields.extra，两者都不许空着不判。
+   - 每个【本次建档】的角色同一行还要定死年龄档，四档原词：child / teenager / young adult / mature female。按身份与年龄线索判，不许留空：小女孩、小学生、幼女 → child；高中生、中学生、JK → teenager；大学生、刚毕业、刚工作 → young adult；熟女、人妻、太太、老婆婆、老妇、奶奶 → mature female（没有 old 这一档，写到老也归这一档）。正文给了岁数就并在后面（young adult, 22 years old）。同一楼里年龄不同的角色，必须因此在这一行就拉开骨架伴生词：child 用 short stature, small frame, flat chest；teenager 用 youthful, slim figure, medium breasts；young adult 用 slim figure, medium breasts；mature female 用 mature face, voluptuous, wide hips（不要再叠 wrinkles、aged，否则画成老太太）。查一下同楼其它角色：已经有人用过某一档的骨架词，就换一档，至少换掉身高与胸围那两项。年龄档写进 fields.age，骨架词写进 fields.body 或 fields.extra，两者都不许空着不判。
    - 缺发色、发型或瞳色时一次性补全：hair 必须同时带发色和长度/发型（long black hair 行，只写 black hair 这种裸颜色不行），eyes 必须带瞳色；建档在本楼全程有效，不要对同一角色给出两套外貌。
+   - 能复用就复用,不要重新编脸：【本段正文已对上的建档角色】里有她、【人物外貌候选库】里有标「外形重合」的条目,两处任一命中就照抄那一套,别再凭空想象,也不许把定死的发色瞳色换个说法(银白→灰白、紫瞳→蓝瞳);正文写了不同改动才走 set。
    - 对照角色库检查永久变化：染发、剪发、永久变身等写入 changes 并标出生效 P编号；假发、美瞳、湿发、光照变色等临时状态不写。即使 images 为空也不能跳过这一步。
 
 C. 服装时间线（每个在场角色一行：从 P 几起穿的是什么）
@@ -796,7 +797,7 @@ E. 选段
    - 这一层只核对、不改决定：发现问题就在落 tag 时直接改对，不要在思考里写出「超限，需精简」「让位」「改为」这类修订过程。张数在 E 段就已经定死，这里不该再变。
    - 每个同人角色的 tag 串里都有 B 段定下的 character name \\(copyright name\\) 身份 tag（人数/构图之后、普通外貌之前，括号已转义），原创角色没有被误加作品名。
    - 若本图协议含 negative 键：negative 已逐词对照本图的 tag 与 nl，凡是能在其中找到对应内容的词都已删掉，没有抵消正文已成立的事实；拿不准的已留空。协议不含 negative 键时本项直接跳过。
-   - 每个在场正式角色都能二选一：指出【角色固定外貌库】中的同名条目，或在 changes 中有 field:"new"；世界书里有详细设定不能代替建档。每条 field:"new" 建档的 hair 都同时带发色和长度/发型、eyes 都带瞳色，age 都填了五档规范词。永久变化的 P编号合法，临时状态没被误写进 changes。
+   - 每个在场正式角色都能二选一：指出【角色固定外貌库】中的同名条目，或在 changes 中有 field:"new"；世界书里有详细设定不能代替建档。每条 field:"new" 建档的 hair 都同时带发色和长度/发型、eyes 都带瞳色，age 都填了四档规范词。永久变化的 P编号合法，临时状态没被误写进 changes。
    - 张数在设定范围内；仅当下限为 0 且确实无可画时 images 才为空，且无论如何都保留应有的建档与 changes。`;
 
 /**
@@ -825,8 +826,9 @@ B. 角色清点与建档（具体建档字段与写法见任务协议，这里�
    - 通读目标正文，逐个列出实际在场且有名有姓的角色。不能只看最终入选图片里的人，也不能漏掉世界书、角色卡或柏宝书为其给出了设定的角色。
    - 每人写一行结论：命中的同名库条目，或本次 field:"new"。只有名字实际列在【角色固定外貌库】区块中的才算已建档——世界书、角色卡、柏宝书或正文里的详细设定只是建档来源，不代表已经在库，不得凭印象宣称已在库。库里没有、但属于正式角色（有设定或持续参与剧情）的，首次出场就建档，不论他是否入选本次图片；一次性无名路人不建。
    - 同一行里顺带判定原创还是同人：只有角色卡、世界书、正文或通行角色名能可靠指向某个已有作品时才判为同人，证据不足按原创处理，不猜作品。判定为同人时同一行定出最终身份 tag 词：模型可识别的英文 Danbooru 角色名与作品名，格式 character name (copyright name)，不转义圆括号，写在人数/构图之后、普通外貌之前。
-   - 每个【本次建档】的角色同一行还要定死年龄档，五档原词：child / teenager / young adult / mature female / old。按身份与年龄线索判，不许留空：小女孩、小学生、幼女 → child；高中生、中学生、JK → teenager；大学生、刚毕业、刚工作 → young adult；熟女、人妻、太太 → mature female；老婆婆、老妇 → old。正文给了岁数就并在后面（young adult, 22 years old）。同一楼里年龄不同的角色，必须因此在这一行就拉开骨架伴生词：child 用 short stature, small frame, flat chest；teenager 用 youthful, slim figure, medium breasts；young adult 用 slim figure, medium breasts；mature female 用 mature face, voluptuous, wide hips；old 用 old woman, wrinkles。查一下同楼其它角色：已经有人用过某一档的骨架词，就换一档，至少换掉身高与胸围那两项。年龄档写进 fields.age，骨架词写进 fields.body 或 fields.extra，两者都不许空着不判。
+   - 每个【本次建档】的角色同一行还要定死年龄档，四档原词：child / teenager / young adult / mature female。按身份与年龄线索判，不许留空：小女孩、小学生、幼女 → child；高中生、中学生、JK → teenager；大学生、刚毕业、刚工作 → young adult；熟女、人妻、太太、老婆婆、老妇、奶奶 → mature female（没有 old 这一档，写到老也归这一档）。正文给了岁数就并在后面（young adult, 22 years old）。同一楼里年龄不同的角色，必须因此在这一行就拉开骨架伴生词：child 用 short stature, small frame, flat chest；teenager 用 youthful, slim figure, medium breasts；young adult 用 slim figure, medium breasts；mature female 用 mature face, voluptuous, wide hips（不要再叠 wrinkles、aged，否则画成老太太）。查一下同楼其它角色：已经有人用过某一档的骨架词，就换一档，至少换掉身高与胸围那两项。年龄档写进 fields.age，骨架词写进 fields.body 或 fields.extra，两者都不许空着不判。
    - 缺发色、发型或瞳色时一次性补全：hair 必须同时带发色和长度/发型（long black hair 行，只写 black hair 这种裸颜色不行），eyes 必须带瞳色；建档在本楼全程有效，不要对同一角色给出两套外貌。
+   - 能复用就复用,不要重新编脸：【本段正文已对上的建档角色】里有她、【人物外貌候选库】里有标「外形重合」的条目,两处任一命中就照抄那一套,别再凭空想象,也不许把定死的发色瞳色换个说法(银白→灰白、紫瞳→蓝瞳);正文写了不同改动才走 set。
    - 对照角色库检查永久变化：染发、剪发、永久变身等写入 changes 并标出生效 P编号；假发、美瞳、湿发、光照变色等临时状态不写。即使 images 为空也不能跳过这一步。
 
 C. 服装时间线（每个在场角色一行：从 P 几起穿的是什么）
@@ -876,7 +878,7 @@ E. 选段
    - 这一层只核对、不改决定：发现问题就在落 tag 时直接改对，不要在思考里写出「超限，需精简」「让位」「改为」这类修订过程。张数在 E 段就已经定死，这里不该再变。
    - 每个同人角色的 tag 串里都有 B 段定下的 character name (copyright name) 身份 tag（人数/构图之后、普通外貌之前，不转义括号），原创角色没有被误加作品名。
    - 若本图是显式 NSFW 场景：实际可见的性器官、身体部位和接触关系都已用准确 tag 写明，没有只用 nsfw、nude、sex 这类泛化词一笔带过；非显式场景本项直接跳过。
-   - 每个在场正式角色都能二选一：指出【角色固定外貌库】中的同名条目，或在 changes 中有 field:"new"；世界书里有详细设定不能代替建档。每条 field:"new" 建档的 hair 都同时带发色和长度/发型、eyes 都带瞳色，age 都填了五档规范词。永久变化的 P编号合法，临时状态没被误写进 changes。
+   - 每个在场正式角色都能二选一：指出【角色固定外貌库】中的同名条目，或在 changes 中有 field:"new"；世界书里有详细设定不能代替建档。每条 field:"new" 建档的 hair 都同时带发色和长度/发型、eyes 都带瞳色，age 都填了四档规范词。永久变化的 P编号合法，临时状态没被误写进 changes。
    - 张数在设定范围内；仅当下限为 0 且确实无可画时 images 才为空，且无论如何都保留应有的建档与 changes。`;
 
 /**
@@ -916,8 +918,9 @@ B. 角色清点与建档（具体建档字段与写法见任务协议，这里�
    - 清点名单不是入画名单：这里列全是为了核对在场事实与建档，谁入镜由 E 段按主体和核心互动决定，【一次性】不因缺档被排除，任何角色也不因在场或已建档就必须入画。正文把一群人当作整体的（人群、士兵们、围观的学生），列成一行「人群」即可；选入镜头后才留在 Base，不占角色块，拿不准是个体还是一团时按一团处理。
    - 名字一律用原文（【已建档】【本次建档】两类）：field:"new" 建档的 name 必须与角色卡/世界书/柏宝书/正文中该角色的名字逐字相同，中文名写中文（小雪，不写 Xiaoxue 也不意译）；引用已建档角色时，characters[].name 与 tag{{#nl}}/nl{{/nl}} 里出现的名字同样照抄档案里的原名字，不得音译、翻译或变体——插件按名字逐字匹配，名字对不上档案或正文，锚定就会断开。【一次性】角色不参与任何匹配，用正文的指称原词作 name 即可，这条不适用于他。
    - 同一行里顺带判定原创还是同人（仅对【已建档】【本次建档】两类做）：只有角色卡、世界书、正文或通行角色名能可靠指向某个已有作品时才判为同人，证据不足按原创处理，不猜作品。判定为同人时同一行定出最终身份 tag 词：模型可识别的英文 Danbooru 角色名与作品名，格式 character name (copyright name)，不转义圆括号。身份 tag 必须写进档案：本次 field:"new" 建档的写进 fields.fandom；已建档但档案缺 fandom 的补一条 field:"fandom" 的 changes；档案已有 fandom 的直接照抄。画图时逐字放在该角色 characters[].tag 的首位，不得放进 Base。原创角色档案不写 fandom。【一次性】角色不判同人、不写 fandom。
-   - 每个【本次建档】的角色同一行还要定死年龄档，五档原词：child / teenager / young adult / mature female / old。按身份与年龄线索判，不许留空：小女孩、小学生、幼女 → child；高中生、中学生、JK → teenager；大学生、刚毕业、刚工作 → young adult；熟女、人妻、太太 → mature female；老婆婆、老妇 → old。正文给了岁数就并在后面（young adult, 22 years old）。同一楼里年龄不同的角色，必须因此在这一行就拉开骨架伴生词：child 用 short stature, small frame, flat chest；teenager 用 youthful, slim figure, medium breasts；young adult 用 slim figure, medium breasts；mature female 用 mature face, voluptuous, wide hips；old 用 old woman, wrinkles。查一下同楼其它角色：已经有人用过某一档的骨架词，就换一档，至少换掉身高与胸围那两项。年龄档写进 fields.age，骨架词写进 fields.body 或 fields.extra，两者都不许空着不判。
+   - 每个【本次建档】的角色同一行还要定死年龄档，四档原词：child / teenager / young adult / mature female。按身份与年龄线索判，不许留空：小女孩、小学生、幼女 → child；高中生、中学生、JK → teenager；大学生、刚毕业、刚工作 → young adult；熟女、人妻、太太、老婆婆、老妇、奶奶 → mature female（没有 old 这一档，写到老也归这一档）。正文给了岁数就并在后面（young adult, 22 years old）。同一楼里年龄不同的角色，必须因此在这一行就拉开骨架伴生词：child 用 short stature, small frame, flat chest；teenager 用 youthful, slim figure, medium breasts；young adult 用 slim figure, medium breasts；mature female 用 mature face, voluptuous, wide hips（不要再叠 wrinkles、aged，否则画成老太太）。查一下同楼其它角色：已经有人用过某一档的骨架词，就换一档，至少换掉身高与胸围那两项。年龄档写进 fields.age，骨架词写进 fields.body 或 fields.extra，两者都不许空着不判。
    - 缺发色、发型或瞳色时一次性补全：hair 必须同时带发色和长度/发型（long black hair 行，只写 black hair 这种裸颜色不行），eyes 必须带瞳色；建档在本楼全程有效，不要对同一角色给出两套外貌。【一次性】角色入画时同样要有发色与瞳色，只是补在他的角色块里、不进档案；未入画不补外貌，同一楼里他若出现在两张图，两张用同一套外貌。
+   - 能复用就复用,不要重新编脸：【本段正文已对上的建档角色】里有她、【人物外貌候选库】里有标「外形重合」的条目,两处任一命中就照抄那一套,别再凭空想象,也不许把定死的发色瞳色换个说法(银白→灰白、紫瞳→蓝瞳);正文写了不同改动才走 set。
    - 对照角色库检查永久变化：染发、剪发、永久变身等写入 changes 并标出生效 P编号；假发、美瞳、湿发、光照变色等临时状态不写。即使 images 为空也不能跳过这一步。
 
 C. 服装时间线（B 段列出的【已建档】【本次建档】角色各一行：从 P 几起穿的是什么）
@@ -979,7 +982,7 @@ V5 的一张图 = 一个 Base 块 + 每个本图可见的个体角色各一块�
    - 这一层只核对、不改决定：发现问题就在落 tag 时直接改对，不要在思考里写出「超限，需精简」「让位」「改为」这类修订过程。张数在 E 段就已经定死，这里不该再变。
    - 每个同人角色的身份 tag 都逐字照抄自档案 fandom 字段、在其 characters[].tag 的首位，没有放进 Base；同人角色的档案都带 fandom（本次建档或 field:"fandom" 补档），原创角色档案没有 fandom、没有被误加作品名。
    - 若本图是显式 NSFW 场景：可见解剖部位都在所属角色的 tag 里、多人共担的性行为与整体接触在 Base，没有只写泛化 NSFW 词；非显式场景本项直接跳过。
-   - 每个在场角色都能三选一：指出【角色固定外貌库】中的同名条目、在 changes 中有 field:"new"、或标为【一次性】（不建档不写 changes，入画时才在他自己的角色块里补外貌）；世界书里有详细设定不能代替建档。每条 field:"new" 建档的 hair 都同时带发色和长度/发型、eyes 都带瞳色、age 都填了五档规范词。【一次性】角色没有被写进 changes——写进去就是错的。永久变化的 P编号合法，临时状态没被误写进 changes。
+   - 每个在场角色都能三选一：指出【角色固定外貌库】中的同名条目、在 changes 中有 field:"new"、或标为【一次性】（不建档不写 changes，入画时才在他自己的角色块里补外貌）；世界书里有详细设定不能代替建档。每条 field:"new" 建档的 hair 都同时带发色和长度/发型、eyes 都带瞳色、age 都填了四档规范词。【一次性】角色没有被写进 changes——写进去就是错的。永久变化的 P编号合法，临时状态没被误写进 changes。
    - 同楼内年龄拉得开：两人年龄档不同时，骨架词不是同一套（成年人不写 petite/flat chest，幼女不写 voluptuous/large breasts）；同档角色之间若全是「娇小纤细」也要换掉其中一套的高矮与胸围两项。画面里的体型词是**本图实际景别下该做的**：全身景不写 frame 类词也照样成立，上半身景不写腿与鞋。
    - 画面保持 E 段选定的主体和核心互动，没有为了减人数破坏核心互动，也没有把无关在场者补进画面；缺档未成为放弃画面或裁掉必要参与者的理由。取景框内每个可见的个体都有自己的角色块，入画的人群留在 Base；镜头外的人不写入 tag{{#nl}}/nl{{/nl}}/characters，Base 人数只计取景框内可见的人。
    - 张数在设定范围内；仅当下限为 0 且确实无可画时 images 才为空，且无论如何都保留应有的建档与 changes。`;

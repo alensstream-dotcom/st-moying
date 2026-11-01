@@ -22,7 +22,15 @@ import { WARDROBE_CATEGORIES, WARDROBE_ITEMS } from '@/data/wardrobe';
 import { POSE_CATEGORIES, POSE_ITEMS } from '@/data/poseBank';
 import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
 import { BODY_EXTRA, FACE_EXTRA, FANDOM_EXTRA } from '@/data/faceExtra';
+import { FANDOM_EXTRA_2 } from '@/data/fandomExtra2';
 import { scoreLore } from '@/data/loreMatch';
+import {
+  LOOK_DIMENSION_LABEL,
+  compareLook,
+  isLookPin,
+  lookTextOf,
+  scanLook,
+} from '@/data/lookMatch';
 import { customPoses, customWardrobe } from '@/data/customLore';
 import type {
   BodyPreset,
@@ -66,6 +74,13 @@ export interface LoreHit<T extends LoreItemBase> {
    * 同人骨相靠它区分「正文提到了这个人」与「只是泛词撞上」,两类在渲染时措辞不同。
    */
   direct?: boolean;
+  /**
+   * 正文的外形描写与这条条目**高度重合**(发色/瞳色/种族等多维对上且无冲突)。
+   * 渲染时改写成「照抄这条,不要自己编」,并压到候选第一位。
+   */
+  pinned?: boolean;
+  /** pinned 时命中/冲突的维度中文名,写进候选行。 */
+  lookNote?: string;
 }
 
 export interface LoreCandidates {
@@ -87,7 +102,7 @@ export type FaceCard = (FacePreset | BodyPreset | FandomPreset) & { kind: FaceCa
 export const FACE_CARDS: FaceCard[] = [
   ...[...FACE_PRESETS, ...FACE_EXTRA].map(preset => ({ ...preset, kind: 'face' as const })),
   ...[...BODY_PRESETS, ...BODY_EXTRA].map(preset => ({ ...preset, kind: 'body' as const })),
-  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA].map(preset => ({ ...preset, kind: 'fandom' as const })),
+  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2].map(preset => ({ ...preset, kind: 'fandom' as const })),
 ];
 
 const WARDROBE_CATEGORY_LABEL = new Map<string, string>(WARDROBE_CATEGORIES.map(c => [c.id, c.label]));
@@ -190,9 +205,14 @@ function collectFaceCandidates(
   const tie = (a: string, b: string): number =>
     rollSeed ? tieOrder(a) - tieOrder(b) : a.localeCompare(b);
 
-  // 同人:点名 > 气质 > 外形词。名字/作品名命中过的排最前,并标 direct。
+  // 同人:外形重合 > 点名 > 气质 > 外形词。
+  //
+  // 外形重合排在最前是刻意的:正文把角色写成「银白长发、紫瞳、尖耳精灵」时,库里有条一模一样的
+  // 骨相,那就不该让模型再凭空编一张脸——命中维度够多且无冲突时打 pinned,顶到第一位。
+  // 点名其次:只写了名字没写外形时,同人条目照样是这张脸的底子。
   const fandom: LoreHit<FaceCard>[] = [];
   const hay = body.toLowerCase();
+  const bodyLook = scanLook(body);
   for (const card of FACE_CARDS) {
     if (card.kind !== 'fandom' || card.nsfw > maxNsfw) continue;
     const preset = card as FandomPreset;
@@ -206,12 +226,25 @@ function collectFaceCandidates(
     // 「白色长发」这种写法在正文里很常见,而 aliases 里只有人名和作品名,永远撞不上。
     // 这一类只给弱分(3/词),保证它排在任何真人名命中之后,但足以让同人条目进候选。
     const looks = looksLike(card, hay);
+    // 外形多维重合:与「对上一两个色词」是两件事,单独算一份并压过一切。
+    const look = compareLook(bodyLook, scanLook(lookTextOf(card)));
+    const pinned = isLookPin(look);
     // 注意用 looks.length:空数组是 truthy,写 !looks 会让零线索的条目混进来(分数还是 0)。
-    if (!score && !looks.length) continue;
+    if (!score && !looks.length && !pinned) continue;
     // 点名命中直接抬到最高档:正文写了「碧蓝档案」就该优先给它的人,而不是同分的路人骨相。
     // 只对上报色瞳色的给弱分(每词 3 分),够进候选但排在点名之后。
-    const finalScore = direct ? score + 100 : score || looks.length * 3;
-    fandom.push({ item: card, score: finalScore, hits: looks ? [...hits, ...looks] : hits, category: 'fandom', direct });
+    // pinned 再压一层(命中维度越多越高),外形写得越具体越该照抄库里的,而不是自己编。
+    const base = direct ? score + 100 : score || looks.length * 3;
+    const finalScore = pinned ? base + 200 + look.matched * 10 : base;
+    fandom.push({
+      item: card,
+      score: finalScore,
+      hits: looks ? [...hits, ...looks] : hits,
+      category: 'fandom',
+      direct,
+      pinned,
+      lookNote: pinned ? look.dimensions.map(dimension => LOOK_DIMENSION_LABEL[dimension]).join('、') : undefined,
+    });
   }
   fandom.sort(
     (a, b) =>
@@ -233,9 +266,9 @@ function collectFaceCandidates(
     return scored;
   };
 
-  // 同人先占位:有 direct 命中时给 4 条(多个同人同框的场合够用),
+  // 同人先占位:有 pinned / direct 命中时给 4 条(多个同人同框的场合够用),
   // 只有气质/外形擦边时给 2 条,把位置让给脸型体型。
-  const directHit = fandom.some(hit => hit.direct);
+  const directHit = fandom.some(hit => hit.direct || hit.pinned);
   const fandomLimit = directHit ? Math.min(4, limit) : Math.min(2, limit);
   picked.push(...fandom.slice(0, fandomLimit));
 
@@ -245,6 +278,21 @@ function collectFaceCandidates(
     const perKind = directHit ? Math.max(1, Math.floor(rest / 2)) : Math.ceil(rest / 2);
     picked.push(...byKind('face').slice(0, perKind));
     picked.push(...byKind('body').slice(0, limit - picked.length));
+  }
+
+  // 兜底:一条都没召回时不能给空块。
+  //
+  // 正文只写「蓝发黄瞳」这种纯色描述时,气质词一个都没有,而同人表里又恰好没有
+  // 蓝发黄瞳的组合,上面两步就全军覆没——模型拿到的是空候选,只能自己编。
+  // 此时按摇号顺序塞几条脸型/体型当底子,总比空块强;它们没命中词,渲染时也不会
+  // 被说成「正文点名」,只是「挑一条最近的」。
+  if (!picked.length) {
+    const anyKind = (kind: FaceCardKind): LoreHit<FaceCard>[] =>
+      FACE_CARDS.filter(card => card.kind === kind && card.nsfw <= maxNsfw)
+        .sort((a, b) => tie(a.id, b.id))
+        .map(card => ({ item: card, score: 0, hits: [], category: kind }));
+    picked.push(...anyKind('face').slice(0, Math.max(1, Math.ceil(limit / 2))));
+    picked.push(...anyKind('body').slice(0, limit - picked.length));
   }
   return picked.slice(0, limit);
 }
@@ -429,22 +477,36 @@ export function buildLoreBlock(text: string, options: LoreOptions = {}): string 
           : hit.item.kind === 'body'
             ? ((hit.item as BodyPreset).archetype ?? '')
             : '';
-      const tail = hit.direct && hit.item.kind === 'fandom' ? '正文点名' : extra;
+      const tail = hit.pinned
+        ? `外形重合：${hit.lookNote ?? ''}｜照抄`
+        : hit.direct && hit.item.kind === 'fandom'
+          ? '正文点名'
+          : extra;
       return renderLine(hit, FACE_KIND_LABEL[hit.item.kind], tail);
     });
     const hasFandom = faces.some(hit => hit.item.kind === 'fandom');
     const hasDirect = faces.some(hit => hit.direct);
+    const hasPinned = faces.some(hit => hit.pinned);
+    // 全是兜底条目(正文里连一个可比对的词都没有):说清它们不是「命中」,
+    // 否则模型会以为正文点名了,把它们当成铁定要照抄的答案。
+    const allLoose = faces.every(hit => !hit.hits.length && !hit.direct && !hit.pinned);
     parts.push(
       [
         '【人物外貌候选库】[candidate-only; copy one tag set verbatim, fandom entries carry their own weight syntax]',
         '正文的外形与身份线索已经命中下列指纹。用法:',
         '- 每条是一整套「脸型 + 眼型 + 睫毛 + 唇形 + 关键痣/颊色」,或一整套「胸腰臀腿比 + 肉感反馈」。整组照抄,不要只抽一两个词,单抽必然退回大众脸。',
+        hasPinned
+          ? '- **标了「外形重合」的条目就是正文写的这个人**:正文的发色、瞳色、种族、体形已经逐维对上,不要再自己编脸。把这一条的 tags 整组照抄进该角色的外貌(发色瞳色完全一致,只按正文补它没写的部位),也不要再拿别的同人条目替换它。'
+          : '',
         hasFandom
           ? hasDirect
             ? '- `同人角色` 条目的 tags 自带 `0.6::角色 (作品)::` 权重语法,原样照抄即可。**正文点名了作品或角色时,优先用对应的同人条目当骨相**,它是这张脸的底子,比 `脸型` / `体型` 条更能定住长相;再按需配一条脸型或体型条补气质。'
             : '- `同人角色` 条目即使正文没有点名作品也可以用:它的 tags 自带 `0.6::角色 (作品)::` 权重语法,原样照抄就只是「借这张脸的骨相」,不会把原作剧情一起带进来。角色的发色瞳色与条目的 hair/eyes 冲突时,以角色的固定外貌为准,把冲突的发色瞳色词删掉。'
           : '',
         '- 同人条目的权重已经写死在 tags 里,照抄,不要再自己加括号权重。',
+        allLoose
+          ? '- 这一批没有命中正文的任何外形词(正文没写发色/瞳色/气质),只是按摇号给的底子:挑最接近正文身份的那一条当起点,再按正文补发色、发型与瞳色。'
+          : '',
         '- 已建档角色仍以【角色固定外貌库】为准;候选只用于新建档、或补该角色库里缺的字段。同一角色只挑一条同人条目,不要叠两条。',
         '',
         ...lines,

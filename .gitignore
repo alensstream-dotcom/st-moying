@@ -12,3 +12,4 @@ AGENTS.md
 .pi/
 /data/
 .tmp-build/
+.tmp/

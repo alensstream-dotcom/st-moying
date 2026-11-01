@@ -57,6 +57,9 @@ export const CHAR_TAG_FIELD_LABELS: Record<CharTagField, string> = {
  *
  * 词表只用 danbooru 真有的词,并各配一组「画面可分辨」的伴生骨架词:
  * 单写一个年龄词不足以改画风,必须同时把身高/骨架/胸部体量一起推到该年龄段。
+ *
+ * 只有四档:老的写法(old/老婆婆/奶奶)一律并进 mature female——成图里 40 岁与 60 岁
+ * 本来就分不清,多开一档反而让模型在「熟女」与「old」之间摇摆,画出忽老忽少。
  */
 export interface CharAgeBand {
   tag: string;
@@ -84,13 +87,25 @@ export const CHAR_AGE_BANDS: readonly CharAgeBand[] = [
   },
   {
     tag: 'mature female',
-    labels: ['mature female', '熟女', '人妻', '三十多岁', '四十岁', 'mature', 'milf', '少妇'],
+    // old / 老婆婆 这些写法也并进这一档:用户不想看到老女人,四档之外不另开档。
+    labels: [
+      'mature female',
+      '熟女',
+      '人妻',
+      '三十多岁',
+      '四十岁',
+      'mature',
+      'milf',
+      '少妇',
+      'old',
+      '老年',
+      '老妇',
+      '奶奶',
+      '老婆婆',
+      'elderly',
+      'old woman',
+    ],
     build: 'mature female, mature face, voluptuous, wide hips',
-  },
-  {
-    tag: 'old',
-    labels: ['old', '老年', '老妇', '奶奶', '老婆婆', 'elderly', 'old woman'],
-    build: 'old, old woman, wrinkles',
   },
 ];
 

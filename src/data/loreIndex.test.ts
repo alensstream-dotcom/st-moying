@@ -4,6 +4,7 @@ import { POSE_CATEGORIES, POSE_ITEMS } from '@/data/poseBank';
 import { buildLoreBlock, collectLoreCandidates, pickDiverse, wardrobeByCategory } from '@/data/loreIndex';
 import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
 import { BODY_EXTRA, FACE_EXTRA, FANDOM_EXTRA } from '@/data/faceExtra';
+import { FANDOM_EXTRA_2 } from '@/data/fandomExtra2';
 
 describe('loreIndex 服装召回', () => {
   it('把「黑丝」拆成多条差异明显的候选,而不是每次都同一款', () => {
@@ -170,8 +171,44 @@ describe('数据文件的书写口径(导入别人整理的表时最容易踩)',
       ...BODY_EXTRA,
       ...FANDOM_PRESETS,
       ...FANDOM_EXTRA,
+      ...FANDOM_EXTRA_2,
     ].map(item => item.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('同人扩容表的身份 tag 一律写成 character name (copyright name)', () => {
+    for (const item of FANDOM_EXTRA_2) {
+      // 只认带括号版权名的写法:裸名字在 danbooru 上会撞同名角色(白子、爱丽丝都有好几个)。
+      const trigger = item.tags.split('::')[1] ?? '';
+      expect(trigger.endsWith(')')).toBe(true);
+      expect(trigger).toContain('(');
+      expect(item.tags).not.toContain('_');
+      expect(item.tags).not.toMatch(/^0\.\d+::[^:]*::.*(1girl|solo)/);
+      // 权重压在 0.5–0.65:再高会盖掉用户自己写的人设。
+      const weight = Number(item.tags.match(/^(0\.\d+)::/)?.[1]);
+      expect(weight).toBeGreaterThanOrEqual(0.5);
+      expect(weight).toBeLessThanOrEqual(0.65);
+    }
+  });
+
+  it('同人扩容表的身份 tag 结尾就是 franchise,不许缩写或截断', () => {
+    // 抓取时最容易出的错:pgr / npc 这类缩写,以及版权名里带撇号被截成
+    // "omniscient reader"。断在这里,实际召回会命中不到作品。
+    // project moon 是 danbooru 的父版权,边狱公司的角色挂在它下面,算已知例外;
+    // ao no hako 的版权名本身带括号(wsj),所以按整串后缀比,不拆括号。
+    const PARENT_COPYRIGHT: Record<string, string> = { 'limbus company': 'project moon' };
+    for (const item of FANDOM_EXTRA_2) {
+      const trigger = item.tags.split('::')[1] ?? '';
+      const copyright = PARENT_COPYRIGHT[item.franchise] ?? item.franchise;
+      expect(trigger.toLowerCase().endsWith(`(${copyright.toLowerCase()})`)).toBe(true);
+    }
+  });
+
+  it('同人扩容表不与既有同人条目重名', () => {
+    const existing = [...FANDOM_PRESETS, ...FANDOM_EXTRA].map(item => item.tags);
+    for (const item of FANDOM_EXTRA_2) {
+      expect(existing).not.toContain(item.tags);
+    }
   });
 });
 
@@ -211,13 +248,67 @@ describe('loreIndex 同人骨相召回', () => {
     expect(collectLoreCandidates('卡琳一张清冷的脸', { ...opts, faceLimit: 0 }).faces).toEqual([]);
   });
 
-  it('渲染时点名与未点名的同人条目给不同用法', () => {
-    const direct = buildLoreBlock('卡琳望着他', opts);
+  it('渲染时点名与未点名的同人条目给不同用法', () => {    const direct = buildLoreBlock('卡琳望着他', opts);
     expect(direct).toContain('正文点名了作品或角色时,优先用对应的同人条目');
     // 没点名、但外形词能召回同人时,给的是「借骨相」用法,不是「别用」。
     const loose = buildLoreBlock('她一张清冷的脸,白色长发,紫色眼睛', opts);
     expect(loose).toContain('即使正文没有点名作品也可以用');
     expect(loose).toContain('以角色的固定外貌为准');
+  });
+
+  it('扩容后的新条目一样能被点名召回', () => {
+    // 第二轮扩容表(fandomExtra2)里的角色:验证它真的接进了 FACE_CARDS,
+    // 而不是只躺在文件里没被 import。
+    const { faces } = collectLoreCandidates('芙宁娜站在剧院的台阶上', opts);
+    expect(faces[0].item.id).toBe('fx2-genshin-furina');
+    expect(faces[0].direct).toBe(true);
+  });
+
+  it('扩容条目与旧条目同场竞争时不互相压死', () => {
+    const { faces } = collectLoreCandidates('原神的剧院里,芙宁娜与娜维娅都在', opts);
+    const ids = faces.map(hit => hit.item.id);
+    expect(ids).toContain('fx2-genshin-furina');
+    expect(ids).toContain('fx2-genshin-navia');
+    // 同名作品的两条都要进得来,不能被「一人只留一条」的截断吃掉。
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('loreIndex 外形重合直接复用', () => {
+  const opts = { wardrobeLimit: 0, poseLimit: 0, faces: true, faceLimit: 8 };
+
+  it('正文外形与某条骨相多维重合时标 pinned 并排到第一', () => {
+    // 白发 + 长发 + 紫瞳 + 精灵四条都对得上某条同人骨相 → 不该再让模型自己编脸。
+    const { faces } = collectLoreCandidates('银白色长发、紫瞳的精灵,站在月光里', opts);
+    const pinned = faces.find(hit => hit.pinned);
+    expect(pinned).toBeDefined();
+    expect(faces[0].pinned).toBe(true);
+    expect(pinned?.lookNote).toBeTruthy();
+  });
+
+  it('pinned 条目压过同分但只撞一两个字的其它条目', () => {
+    const { faces } = collectLoreCandidates('银白色长发、紫瞳的精灵,站在月光里', opts);
+    const firstPinnedIndex = faces.findIndex(hit => hit.pinned);
+    const firstPlain = faces.findIndex(hit => !hit.pinned);
+    expect(firstPinnedIndex).toBe(0);
+    if (firstPlain >= 0) expect(firstPinnedIndex).toBeLessThan(firstPlain);
+  });
+
+  it('只对上两维不标 pinned,仍旧走普通候选', () => {
+    const { faces } = collectLoreCandidates('白色长发', opts);
+    expect(faces.length).toBeGreaterThan(0);
+    expect(faces.every(hit => !hit.pinned)).toBe(true);
+  });
+
+  it('渲染时写明「外形重合就是这个人」,并给照抄指令', () => {
+    const block = buildLoreBlock('银白色长发、紫瞳的精灵,站在月光里', opts);
+    expect(block).toContain('的条目就是正文写的这个人');
+    expect(block).toContain('不要再自己编脸');
+  });
+
+  it('没有 pinned 时不出现那一段,不占上下文', () => {
+    const block = buildLoreBlock('白色长发', opts);
+    expect(block).not.toContain('的条目就是正文写的这个人');
   });
 });
 

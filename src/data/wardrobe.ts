@@ -29,6 +29,36 @@ import { WARDROBE_KARAMA } from '@/data/wardrobeKarama';
  */
 export const WARDROBE_CATEGORIES: WardrobeCategory[] = [
   {
+    id: 'casual',
+    label: '日常私服',
+    hint: '日常装靠「廓形松紧 + 一件定调」:工装裤垮、棒球夹克短、针织直筒垂;别写成制服或睡衣。',
+    nsfw: 0,
+  },
+  {
+    id: 'dress',
+    label: '礼服晚装',
+    hint: '礼服只写一个主廓形与一处露肤:鱼尾、开衩、露背、层叠下摆,任选其一写死,别四个都塞。',
+    nsfw: 1,
+  },
+  {
+    id: 'homewear',
+    label: '家居服',
+    hint: '家居款靠「松与短」:短卫衣、露肩大T、浴巾、棉短裤;露腰比露腿更像在家而不是在睡。',
+    nsfw: 1,
+  },
+  {
+    id: 'underwear',
+    label: '内衣内裤',
+    hint: '内衣按「罩杯型 + 腰带高度 + 有无肩带」三件套选;塑形与运动系模板感完全两路。',
+    nsfw: 2,
+  },
+  {
+    id: 'uniform',
+    label: '职业制服',
+    hint: '制服看「上衣结构 + 下装长度 + 身份配件」:夹克/围裙/白大褂配帽徽证件,别只剩一件衬衫。',
+    nsfw: 0,
+  },
+  {
     id: 'campus',
     label: '校园JK',
     hint: '按「领型 + 裙长 + 袜口」三件套选,别只写 school uniform;水手服和西装校服是两个世界。',
@@ -1824,3 +1854,4 @@ const WARDROBE_CORE: WardrobeItem[] = [
  * 合并后的规模与分类分布见 src/data/loreIndex.ts 的注释。
  */
 export const WARDROBE_ITEMS: WardrobeItem[] = [...WARDROBE_CORE, ...WARDROBE_EXTRA, ...WARDROBE_KARAMA];
+

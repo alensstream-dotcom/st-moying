@@ -6,6 +6,7 @@ import {
   type PositionedCharOp,
 } from '@/autoTag/charAnchors';
 import { prepareTargetText } from '@/autoTag/clean';
+import { buildCharReuseBlock, findCharReuse } from '@/autoTag/charReuse';
 import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
 import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
@@ -341,6 +342,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 同一楼重试/重跑结果一致,换楼或换 swipe 就换一批同分服装/姿势候选——
     // 否则同一句「她穿着职业装」每楼都召回同一批,模型当然每楼都挑第一件,看着就是永远一套衣服。
     const loreSeed = Math.max(1, Number.parseInt(textHash(identity), 36) || 1);
+    // 正文外形与库中已建档角色逐项对上的:直接点名「这段就是她」,别让模型再编一张脸。
+    // 只在上送给主请求前的快照上判,单槽重写同样适用(它也要照抄档案)。
+    const charReuse = buildCharReuseBlock(findCharReuse(entriesBefore, preparedTarget.promptText));
     const messages = await buildAutoTagMessages(
       context,
       floor,
@@ -351,6 +355,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       slot ? buildSlotTaskNote(rawSource, slot.seq) : '',
       profile,
       loreSeed,
+      charReuse,
     );
     const channel = getTagGenChannel();
     // 失败重试:请求异常与「返回无法解析/校验不通过」都视为可重试的异常(后者常见于模型没遵守协议);

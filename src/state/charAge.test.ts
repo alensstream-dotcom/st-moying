@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { CHAR_AGE_BANDS, charAgeBuild, normalizeCharAge } from '@/state/charTags';
 
 describe('charTags 年龄段', () => {
-  it('五档齐全且互不重复', () => {
+  it('四档齐全且互不重复,老的写法并进 mature female', () => {
     const tags = CHAR_AGE_BANDS.map(band => band.tag);
-    expect(tags).toEqual(['child', 'teenager', 'young adult', 'mature female', 'old']);
+    expect(tags).toEqual(['child', 'teenager', 'young adult', 'mature female']);
     expect(new Set(tags).size).toBe(tags.length);
+    // 用户不想看到老女人:old / 老婆婆 都得归到同一档,不能单开一档。
+    for (const raw of ['old', 'old woman', 'elderly', '老婆婆', '奶奶']) {
+      expect(normalizeCharAge(raw)).toBe('mature female');
+    }
   });
 
   it('每一档都带骨架伴生词,光一个年龄词压不住画风', () => {
@@ -25,7 +29,7 @@ describe('charTags 年龄段', () => {
     expect(normalizeCharAge('刚毕业的大学生')).toBe('young adult');
     expect(normalizeCharAge('熟女')).toBe('mature female');
     expect(normalizeCharAge('小女孩')).toBe('child');
-    expect(normalizeCharAge('老婆婆')).toBe('old');
+    expect(normalizeCharAge('老婆婆')).toBe('mature female');
   });
 
   it('已规范的词原样保留,不做二次改写', () => {

@@ -70,7 +70,7 @@ const CONVERT_SPEC = `你是外貌 tag 转换器。把给出的角色中文外�
 
 字段与示例:
 - sex(性别):1girl / 1boy / androgynous 等
-- age(年龄段):child / teenager / young adult / mature female / old,可带岁数(如「young adult, 22 years old」);原文只给了身份时按身份推一档(大学生=young adult,高中生=teenager,小女孩=child,熟女=mature female)
+- age(年龄段):child / teenager / young adult / mature female,可带岁数(如「young adult, 22 years old」);原文只给了身份时按身份推一档(大学生=young adult,高中生=teenager,小女孩=child,熟女/老婆婆=mature female)
 - hair(头发):long black hair / short silver hair 等
 - eyes(眼睛):red eyes / blue eyes 等
 - skin(肤色):tan / dark skin 等(没提就留空;白皙是默认肤色,不需要记录)

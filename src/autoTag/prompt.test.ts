@@ -1328,4 +1328,40 @@ describe('素材候选摇号与同职业区分', () => {
     expect(contract).toContain('不许让她们穿同一套');
     expect(contract).toContain('同职业撞衫');
   });
+
+
+  it('把「已对上的建档角色」块放在外貌库之后、候选之前', async () => {
+    const messages = await buildAutoTagMessages(
+      officeContext(),
+      1,
+      loreOptions(),
+      null,
+      undefined,
+      null,
+      '',
+      undefined,
+      5,
+      '【本段正文已对上的建档角色】[不要重新编脸]' + '\n' + '- 小雪（发色/瞳色等逐项对上：发色、瞳色、种族）',
+    );
+    const user = messages.at(-1)!.content;
+    expect(user).toContain('【本段正文已对上的建档角色】');
+    expect(user).toContain('小雪（发色/瞳色等逐项对上');
+    // 顺序:外貌库 → 复用块 → 候选块。模型得先知道「这段就是她」再读候选。
+    expect(user.indexOf('【角色固定外貌库】')).toBeLessThan(user.indexOf('【本段正文已对上的建档角色】'));
+    expect(user.indexOf('【本段正文已对上的建档角色】')).toBeLessThan(user.indexOf('【服装候选库】'));
+  });
+
+  it('复用块为空串时不多占位置', async () => {
+    const withEmpty = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5, '');
+    const without = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5);
+    expect(withEmpty.at(-1)!.content).toBe(without.at(-1)!.content);
+  });
+
+  it('契约要求「能复用就复用」并解释不许换说法', async () => {
+    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
+    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
+    expect(contract).toContain('能复用就复用');
+    expect(contract).toContain('外形重合');
+    expect(contract).toContain('银白→灰白');
+  });
 });

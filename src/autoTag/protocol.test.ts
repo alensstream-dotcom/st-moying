@@ -64,7 +64,7 @@ describe('auto tag position protocol', () => {
     expect(parseImagePlan(raw, segments, 1).changes[0].nl).toBe('A Chinese fixed-appearance description.');
   });
 
-  it('把建档里的中文年龄归一成五档规范词,岁数保留', () => {
+  it('把建档里的中文年龄归一成规范词,岁数保留', () => {
     const raw = JSON.stringify({
       images: [],
       changes: [{

@@ -179,6 +179,11 @@ export async function buildAutoTagMessages(
    * 否则同一句「她穿着职业装」每次都召回同一批条目,模型也就每次都挑第一件。
    */
   loreSeed = 0,
+  /**
+   * 正文外形与库中已建档角色逐项对上的名单块(charReuse.ts 产出)。
+   * 放在外貌库之后、候选之前:模型先知道「这段就是她」,再读候选就不会另挑一条脸。
+   */
+  charReuseBlock?: string,
 ): Promise<ChatMsg[]> {
   const target = context.chat[targetFloor];
   const preparedTarget =
@@ -304,10 +309,12 @@ export async function buildAutoTagMessages(
    - “已建档”只能按【角色固定外貌库】区块中的同名条目判断：只有名字实际列在该区块中才算已建档；世界书、角色卡、柏宝书或正文里的详细设定只是建档依据，绝不等于已经在库。每个在场的**女性**正式角色必须二选一：指出库中的同名条目，或在 changes 中输出 field:"new"；男性角色不参与这条二选一，他只需要按正文写进画面，不建档也不写 changes。一次性无名角色同样不在这条二选一之内：他既不建档也不写 changes，不需要指出任何库条目，缺档案是正常状态而非遗漏。
    - 建档写法：{"name":"角色名","field":"new","fields":{"sex":"1girl","age":"young adult","hair":"long black hair","eyes":"blue eyes"},"position":"P2","reason":"首次出场建档"}；position 填他首次出现的位置，仅作记录——建档在本楼全程有效，本楼任意位置的图片都可以立即使用这套外貌。
    - 建档字段只放**长期不变的身体特征**：sex/age/hair/eyes/skin/body/extra 填性别、年龄段、发色发型、瞳色、肤色、体型、标志特征；outfit 只填该角色**固定不换的招牌着装**；判定为同人角色的，fields 里必须写 fandom（模型可识别的英文 Danbooru 身份 tag，格式 character name (copyright name)），原创角色不写 fandom。动作、姿势、所在场景、临时状态（lying on carpet、standing、sitting、unzipped、湿身、伤势等）一律不得写进任何字段——档案会在他之后每一张图里被照抄，把姿势写进去会让他在所有画面里都保持那个姿势。
-   - **age 必填，取值只有五档，必须原词照抄**：child / teenager / young adult / mature female / old。按正文与设定里的身份和年龄线索判：小女孩、小学生、幼女 → child；高中生、中学生、JK → teenager；大学生、刚毕业、刚工作、二十出头 → young adult；熟女、人妻、太太、三十多四十岁 → mature female；老婆婆、老妇 → old。正文给了具体岁数就并在后面（young adult, 22 years old），没给就按身份定一档，不许留空、不许写中文、不许写成「大约二十几岁」。
-   - **age 必须配骨架伴生词，只写一个年龄词压不住画风**：child 配 short stature, small frame, flat chest；teenager 配 youthful, slim figure, medium breasts；young adult 配 slim figure, medium breasts；mature female 配 mature face, voluptuous, wide hips；old 配 old woman, wrinkles。这些词写进该角色的 body 或 extra。同一个聊天里年龄不同的角色必须因此拉开：成年角色不要写 loli、child，幼女角色不要写 voluptuous；两个角色的年龄档不同，体型词也不许写成同一套。
+   - **age 必填，取值只有四档，必须原词照抄**：child / teenager / young adult / mature female。按正文与设定里的身份和年龄线索判：小女孩、小学生、幼女 → child；高中生、中学生、JK → teenager；大学生、刚毕业、刚工作、二十出头 → young adult；熟女、人妻、太太、三十多四十岁，以及老婆婆、老妇、奶奶 → mature female。正文给了具体岁数就并在后面（young adult, 22 years old），没给就按身份定一档，不许留空、不许写中文、不许写成「大约二十几岁」。**没有 old 这一档**：写到老妇、老婆婆也一样归 mature female，不要另造一档。
+   - **age 必须配骨架伴生词，只写一个年龄词压不住画风**：child 配 short stature, small frame, flat chest；teenager 配 youthful, slim figure, medium breasts；young adult 配 slim figure, medium breasts；mature female 配 mature face, voluptuous, wide hips。这些词写进该角色的 body 或 extra。同一个聊天里年龄不同的角色必须因此拉开：成年角色不要写 loli、child，幼女角色不要写 voluptuous；两个角色的年龄档不同，体型词也不许写成同一套。四档之外没有「老」档，mature female 的骨架词里也别再叠 wrinkles、aged，否则会画成老太太。
    - **age 与身材一档一档分开**：年龄管骨架与身高，body 只管胸腰臀的粗细，两者不许互相污染。判成 mature female 而把 body 写成 petite，或判成 child 而写 large breasts，都是错的。
    - 建档取值优先级：目标正文明确的当前外貌 > 柏宝书当前角色状态 > 角色卡/世界书明确人设 > 合理补全。人设明确写了颜色时必须原样转换，不得擅改；hair 与 eyes 必填，hair 至少包含发色和长度/发型，eyes 必须包含瞳色，缺任一项该条建档会被丢弃。
+   - **能复用就复用,不要重新编脸**：正文把这个人写成什么样,先看两处——【本段正文已对上的建档角色】里有没有她,【人物外貌候选库】里有没有标「外形重合」的条目。两处任一命中,就照抄那一套当外貌,不要再凭空想象一套新的;尤其不许把已经定死的发色瞳色换个说法(银白→灰白、紫瞳→蓝瞳),那是换了一个人。只有当正文写明与已有形象不同的改动(换了发色发型、年龄进了一档、添了疤)时,才走 field:"set" 改那一项。
+   - **外形重合的同人条目要整组吃下**：候选里标了「外形重合：发色、瞳色…」的那条,是插件按正文逐维对出来的,它比你自己脑中「像不像」更准。整组 tags 照抄,并按正文补它没写到的部位;不要用别的同人条目替换它,也不要只抄一半后自己改颜色。
    - 如果设定没写发色、发型或瞳色，根据世界观、种族、身份、性格和其余角色设定补出简洁、协调、可长期复用的颜色与发型；这是一次性建档决定，后续不得重新随机。
    - 建完档就直接用：同一次输出里，先在 changes 里确立该角色的固定外貌，再在图片 ${naiCharPromptsOn ? 'characters[].tag' : 'tag'} 中照抄这套外貌，并围绕它补充服装、动作、场景等其余 tag；同一张图里这套外貌只写一遍。${newCharacterNlRule}`;
   const multiCharacterBindingRule = naiCharPromptsOn
@@ -457,7 +464,8 @@ ${characterRule}
     : '';
 
   const taskBlock = taskNote?.trim() ? `${taskNote.trim()}\n\n` : '';
-  const userContent = `${memoryText}\n\n${libraryBlock}\n\n${lastShotBlock}${loreBlock ? `${loreBlock}\n\n` : ''}${taskBlock}${previous ? `${previous}\n\n` : ''}--- 目标正文｜${roleLabel(context, targetFloor)} ---\n${preparedTarget.promptText}`;
+  const reuseBlock = charReuseBlock?.trim() ? `${charReuseBlock.trim()}\n\n` : '';
+  const userContent = `${memoryText}\n\n${libraryBlock}\n\n${reuseBlock}${lastShotBlock}${loreBlock ? `${loreBlock}\n\n` : ''}${taskBlock}${previous ? `${previous}\n\n` : ''}--- 目标正文｜${roleLabel(context, targetFloor)} ---\n${preparedTarget.promptText}`;
   messages.push({ role: 'user', content: userContent });
   return messages;
 }
