@@ -14,7 +14,7 @@ import type { FandomPreset } from '@/data/loreTypes';
  *   下划线写法(`wuthering_waves` → `wuthering waves`),与本库其它文件保持一致。
  * - 权重 0.55–0.62:再高会盖掉用户自己写的人设;quality 5 的才给 0.62。
  * - nsfw 一律 0(骨相本身不露点),companion 写清哪些伴生词(兽耳/光环/机械关节)该弱化。
- * - 共 96 条,覆盖 19 部作品。
+ * - 共 96 条,覆盖 25 部作品。
  */
 export const FANDOM_EXTRA_2: FandomPreset[] = [
   {
