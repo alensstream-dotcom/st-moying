@@ -230,12 +230,12 @@ describe('auto tag prompt', () => {
     expect(thinkingMsg?.content).toContain('第二层｜逐张图槽位块');
     expect(thinkingMsg?.content).toContain('不得合并、不得跨图共用一份');
     expect(thinkingMsg?.content).toContain('第三层｜落笔前自查');
-    for (const slot of ['人物：', '核心动作：', '景别：', '场景：', '环境光：', 'size：']) {
+    for (const slot of ['概括：', '人物：', '核心动作：', '景别：', '场景：', '环境光：', 'size：']) {
       expect(thinkingMsg?.content).toContain(slot);
     }
-    expect(thinkingMsg?.content).toContain('<角色名>｜年龄档+骨架词｜表情｜视线｜本镜头可见服装｜临时状态｜个人动作');
+    expect(thinkingMsg?.content).toContain('<角色名>｜年龄档+骨架词｜表情｜视线｜本镜头可见服装｜服装状态（穿着/半脱到哪一步/已脱落）｜临时状态｜个人动作');
     expect(thinkingMsg?.content).toContain('确实不适用的槽位写 "-"');
-    expect(thinkingMsg?.content).toContain('核心动作、景别、年龄档、表情、视线、场景、环境光、size 八项永远不得为 "-"');
+    expect(thinkingMsg?.content).toContain('概括、核心动作、景别、年龄档、表情、视线、场景、环境光、size 九项永远不得为 "-"');
     // 表情/视线此前全库没有槽位,是「木脸」的根因;两个后端规范也要各带一份。
     expect(thinkingMsg?.content).toContain('两项都不得留空，面无表情也要主动填 expressionless');
     expect(thinkingMsg?.content).toContain('表情与视线填后端规范给出的标准 danbooru 词');
@@ -1363,5 +1363,64 @@ describe('素材候选摇号与同职业区分', () => {
     expect(contract).toContain('能复用就复用');
     expect(contract).toContain('外形重合');
     expect(contract).toContain('银白→灰白');
+  });
+
+  it('把服装现状块放在复用块之后、候选之前', async () => {
+    const messages = await buildAutoTagMessages(
+      officeContext(),
+      1,
+      loreOptions(),
+      null,
+      undefined,
+      null,
+      '',
+      undefined,
+      5,
+      '【本段正文已对上的建档角色】\n- 小雪',
+      '【服装现状】[已经发生的事实,不是候选]\n- 小雪:穿着,white dress',
+    );
+    const user = messages.at(-1)!.content;
+    expect(user).toContain('【服装现状】');
+    expect(user).toContain('小雪:穿着,white dress');
+    // 结论先于证据:复用块 → 现状块 → 候选库。模型得先知道她穿着什么,再去读候选。
+    expect(user.indexOf('【本段正文已对上的建档角色】')).toBeLessThan(user.indexOf('【服装现状】'));
+    expect(user.indexOf('【服装现状】')).toBeLessThan(user.indexOf('【服装候选库】'));
+  });
+
+  it('服装现状块为空串时不多占位置', async () => {
+    const withEmpty = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5, '', '');
+    const without = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5);
+    expect(withEmpty.at(-1)!.content).toBe(without.at(-1)!.content);
+  });
+
+  it('契约里有取景取舍与概括两道关', async () => {
+    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
+    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
+    // 漏人比多一个人难看:施受双方与接触点必须进画面,道具要带落点。
+    expect(contract).toContain('取景取舍');
+    expect(contract).toContain('施受双方');
+    expect(contract).toContain('道具与它的落点');
+    expect(contract).toContain('毛笔要落在阴部上');
+    // 先概括成人话再落 tag,并且不许塞满形容词。
+    expect(contract).toContain('说成人话');
+    expect(contract).toContain('25～40');
+    expect(contract).toContain('brush on pussy');
+  });
+
+  it('契约把半脱写成独立状态,不许直接 nude', async () => {
+    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
+    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
+    expect(contract).toContain('半脱是独立状态');
+    expect(contract).toContain('off shoulder');
+    expect(contract).toContain('露肩、露背、露臀的姿势不是裸体');
+    expect(contract).toContain('不许自己穿回去');
+  });
+
+  it('契约写明人数按身体数、省脸不省人', async () => {
+    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
+    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
+    expect(contract).toContain('在场的活人一个都不许省');
+    expect(contract).toContain('一个人两根肉棒');
+    expect(contract).toContain('不按有没有露脸');
   });
 });

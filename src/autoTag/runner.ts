@@ -5,8 +5,19 @@ import {
   resolveCharAnchors,
   type PositionedCharOp,
 } from '@/autoTag/charAnchors';
+import { diagnoseCast, diagnosePropTarget, castRetryNote, type CastGap } from '@/autoTag/castCheck';
 import { prepareTargetText } from '@/autoTag/clean';
 import { buildCharReuseBlock, findCharReuse } from '@/autoTag/charReuse';
+import {
+  BBI_OUTFIT_EXTRA_KEY,
+  buildOutfitStateBlock,
+  buildOutfitStatePayload,
+  diagnoseOutfit,
+  latestOutfitStates,
+  nextOutfitState,
+  outfitRetryNote,
+  type OutfitGap,
+} from '@/autoTag/outfitState';
 import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
 import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
@@ -345,6 +356,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 正文外形与库中已建档角色逐项对上的:直接点名「这段就是她」,别让模型再编一张脸。
     // 只在上送给主请求前的快照上判,单槽重写同样适用(它也要照抄档案)。
     const charReuse = buildCharReuseBlock(findCharReuse(entriesBefore, preparedTarget.promptText));
+    // 服装现状:从前面楼层把每个人身上的衣服与穿脱程度读回来。
+    // 当前楼常常一句衣着都没写,模型每层都在从零决定穿什么,衣服自然乱飘;
+    // 有了这份账本它才有一个「已经发生的事实」可以继承。单槽重写也要用同一份。
+    const outfitStates = latestOutfitStates(context.chat, floor);
+    const outfitBlock = buildOutfitStateBlock(outfitStates);
     const messages = await buildAutoTagMessages(
       context,
       floor,
@@ -356,6 +372,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       profile,
       loreSeed,
       charReuse,
+      outfitBlock,
     );
     const channel = getTagGenChannel();
     // 失败重试:请求异常与「返回无法解析/校验不通过」都视为可重试的异常(后者常见于模型没遵守协议);
@@ -424,6 +441,53 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               throw new Error(
                 `景别过远(${farGaps.map(gap => `${gap.position} 应 ${gap.suggest}`).join('、')})`,
               );
+            }
+          }
+          // 画面事实闭环:人数与道具落点。
+          // 「两个男的一个女的」画成一个人长双头肉棒、「毛笔在阴部写字」只画毛笔不画落点,
+          // 都是可判定的确定错,而且这类错图一眼废。排在构图缺项之前(缺项只是画面平)。
+          // 单槽重写不改画面事实,跳过。
+          if (!slot && attempt < retries) {
+            const segmentText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
+            const castGaps: CastGap[] = [];
+            const seenCast = new Set<string>();
+            for (const image of candidate.images) {
+              const text = segmentText.get(image.position) ?? '';
+              const present = [...entriesBefore]
+                .map(entry => entry.name)
+                .filter(name => text.includes(name));
+              const found = [
+                ...diagnoseCast(
+                  text,
+                  image.tag,
+                  image.characters ?? [],
+                  present,
+                  profile.naiCharPrompts,
+                ),
+                ...diagnosePropTarget(text, image.tag),
+              ];
+              for (const gap of found) {
+                const key = `${image.position}\u0000${gap.detail}`;
+                if (seenCast.has(key)) continue;
+                seenCast.add(key);
+                castGaps.push(gap);
+              }
+            }
+            if (castGaps.length) {
+              retryNote = castRetryNote(castGaps);
+              throw new Error(`画面事实不符(${castGaps.map(gap => gap.kind).join('、')})`);
+            }
+          }
+          // 服装账本:衣服明明没变,穿脱程度却跳了(半脱→全裸、已脱→又穿回)。
+          // 这条最伤连续性,而且模型自己看不出来——它没有上一层的画面。
+          if (!slot && attempt < retries && outfitStates.size) {
+            const outfitGaps: OutfitGap[] = [];
+            for (const image of candidate.images) {
+              outfitGaps.push(...diagnoseOutfit(image, outfitStates));
+            }
+            if (outfitGaps.length) {
+              retryNote = outfitRetryNote(outfitGaps);
+              throw new Error(`服装状态跳变(${outfitGaps.map(gap => gap.name).join('、')})`);
             }
           }
           // 构图缺项:只在还有重试次数时纠一次。没次数了就放行——
@@ -660,12 +724,20 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       swipeId,
       message,
       // 单槽不写法:本楼角色增量与其它槽位图片都不归它管,不传 extraUpdate 即保持原样。
+      // 全量写入同时落两笔:角色增量与本楼的服装账本。账本按「本楼实际写出的画面」冻结,
+      // 下一楼读它当既成事实——没有这一笔,下一楼就又得从零猜她穿了什么、脱到哪一步。
       slot
         ? undefined
-        : {
-            key: BBI_CHAR_EXTRA_KEY,
-            value: makeCharTagFloorDelta(floorOps, swipeId ?? 0),
-          },
+        : [
+            {
+              key: BBI_CHAR_EXTRA_KEY,
+              value: makeCharTagFloorDelta(floorOps, swipeId ?? 0),
+            },
+            {
+              key: BBI_OUTFIT_EXTRA_KEY,
+              value: buildOutfitStatePayload(nextOutfitState(outfitStates, writtenImages), swipeId ?? 0),
+            },
+          ],
     );
     if (result === 'saved') {
       // 后台直跑:写盘成功就把这批槽位交给 floor/backgroundGen.ts。

@@ -76,12 +76,15 @@ function isSameMessage(message: STMessage, expected: STMessage): boolean {
 }
 
 /**
- * 以 compare-and-swap 方式修改消息正文和一个 extra 键。
+ * 以 compare-and-swap 方式修改消息正文和若干 extra 键。
  *
  * 身份检查(聊天 / 消息 / swipe)一致才落盘;正文内容本身**不**参与比对——正文由
  * buildNext 基于「落盘那一刻的真实正文」现算,别的插件在分析期间做的修改因此得以保留，
  * 而不是被请求开始时的旧快照覆盖。buildNext 返回 null 表示它认为这次不该写。
- * 保存失败时同时回滚正文与 extra，避免留下半写状态。
+ * 保存失败时同时回滚正文与全部 extra，避免留下半写状态。
+ *
+ * extraUpdate 收数组:一次写入常常要同时落「角色增量」与「服装账本」两笔,
+ * 分两次 saveChat 会在中途失败时留下只写了一半的楼层。
  */
 export async function applyMessageText(
   floor: number,
@@ -89,7 +92,7 @@ export async function applyMessageText(
   expectedChatId: string,
   expectedSwipeId: number | null,
   expectedMessage?: STMessage,
-  extraUpdate?: MessageExtraUpdate,
+  extraUpdate?: MessageExtraUpdate | MessageExtraUpdate[],
 ): Promise<ApplyMessageResult> {
   const context = getContext();
   if (!context?.saveChat) return 'unavailable';
@@ -111,8 +114,10 @@ export async function applyMessageText(
   setMessageText(message, nextText);
   if (extraUpdate) {
     const nextExtra = { ...(message.extra ?? {}) };
-    if (extraUpdate.value === undefined) delete nextExtra[extraUpdate.key];
-    else nextExtra[extraUpdate.key] = extraUpdate.value;
+    for (const update of Array.isArray(extraUpdate) ? extraUpdate : [extraUpdate]) {
+      if (update.value === undefined) delete nextExtra[update.key];
+      else nextExtra[update.key] = update.value;
+    }
     message.extra = nextExtra;
   }
 

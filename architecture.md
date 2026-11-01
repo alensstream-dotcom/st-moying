@@ -58,6 +58,8 @@ src/
 │   ├── rebase.ts      # 插入位置重定位:请求时正文 → 落盘时正文(文本 LCS 骨架 + 顺延)
 │   ├── slotPlan.ts    # 单槽重写提示备注(只重写第 N 张 + 当前提示词锚点 + 其余画面清单)
 │   ├── shotGuide.ts   # 景别判据:正文点名部位 → 该离多近(推荐档/诊断过远/重试话术)
+│   ├── outfitState.ts # 服装账本:每人衣着与穿脱程度落 message.extra,跨楼继承 + 跳变诊断
+│   ├── castCheck.ts   # 画面事实闭环:人数对不上正文、道具没有落点(重试不再放行)
 │   └── charReuse.ts   # 正文外形与已建档角色逐维对上 → 点名「这段就是她」,别重复建档
 ├── data/              # 素材库(内置条目 + 召回打分;条目形状见 loreTypes.ts)
 │   ├── loreTypes.ts   # 条目契约:服装/姿势/脸型/体型/同人/自定义
@@ -240,7 +242,19 @@ runForFloor(floor, opts)
      追加状态栏、改写八股句)全部保留,tag 重定位后照常注入。仅当当前正文清洗后一条叙事行
      都不剩、或写回前发现已存在 bbi_image 时才放弃(build-failed)。
      成功才 recomputeCharTags;失败撤销标记;仅 changes 无图片也走写回。
+     **extraUpdate 收数组**:一次落盘同时写角色增量(bbiCharChanges)与服装账本(bbiOutfitState),
+     分两次 saveChat 会在中途失败时留下只写了一半的楼层。单槽重写不改这两笔,不传 extraUpdate。
 ```
+
+**重试链的判据分工(validate 内,顺序即优先级)**:截断 → 协议解析 → 建档 nl → 景别过远 →
+画面事实不符(人数 / 道具落点) → 服装状态跳变 → 构图缺项。前几档是「画错了」,最后一档才是
+「画平了」,所以缺项排在最后、也允许在没重试次数时放行(交一张平庸图好过整楼不生)。
+- 人数与道具落点是**可判定**的确定错,不是审美:正文写了几个人、道具在谁身上动,和 tag 里的
+  人数与接触词对不上就是错。漏人尤其致命——两个男的一个女的只剩一个男的,肉棒就只能长在一个人身上。
+  男性不建档、数不了名字,故只认明确指向第二个男性的词;「两只手」这种弱信号只在已有 1boy 时
+  才提醒确认(女主自己撑床也是两只手,单人会误报)。
+- 服装状态只查两种确定错:账本半脱而画面写成全裸、账本已脱而又穿回整身。挑哪套衣服是规则 10
+  的事,不在这一层判。
 
 消息顺序(prompt.ts 固定):破限 system → 角色卡 system → persona system → 世界书 system →
 后端规范 system(ComfyUI/NAI 内置 spec,`{{nl}}` 宏与 `{{#nl}}`/`{{^nl}}` 条件段按「生成自然语言」开关展开)→ 固定协议
@@ -810,6 +824,14 @@ genState 同构(chatId|messageId|swipeId|seq),重建后按 key 认领。手动�
   - **AI 楼层增量**:自动建档与 changes 写进目标消息 `extra['bbiCharChanges']`
     (CharTagFloorDelta: v/swipe/ops;op 分 new/set 两种),与正文同一 CAS 写回成功才落盘,
     楼层/swipe 删除时自然失效(增量带 swipe 匹配)。
+  - **服装账本(楼层事实,与角色库并列而不是角色库的一部分)**:`extra['bbiOutfitState']`
+    (OutfitFloorState: v/swipe/entries[{name,garment,wear,state}]),由 autoTag/outfitState.ts 读写成对。
+    每楼落盘时按本楼**实际写出的画面**冻结,下一楼开跑前 `latestOutfitStates` 从旧到新合并注入
+    【服装现状】。为什么不在角色库里:角色库的 outfit 是「她的衣橱/常态」,这里是「这场戏此刻穿到哪」,
+    半脱是逐楼变化的临时事实,写进档案会把长期设定污染掉。合并规则是后写覆盖、没提到的人保留——
+    她不会因为这一楼没被提及就自动穿回去。garment 的词取自服装库 tag 词表(纯颜色词黑名单掉),
+    不做自由文本抽取,发色体型表情混不进来。
+    swipe 不匹配或版本号不对的账本直接跳过,保证换 swipe 不会读到上一页的穿脱进度。
   - `charTagLib` 只是响应式派生缓存:合并种子(本聊天优先,全局补同名空缺,
     mergeCharTagSeed)+ 按楼层物理顺序重放增量(deriveCharTags,带锁定名过滤);
     `charTagsBeforeFloor(floor)` 取楼层时刻快照;MESSAGE_DELETED/MESSAGE_SWIPED 后重算。
@@ -963,6 +985,9 @@ API 对象 `Object.freeze`,一个插件改不动下一个插件拿到的东西�
 | 素材条目同分摇号(同楼稳定/换楼换一批) | src/data/loreIndex.ts 的 `tieBreaker` / `rollSeed`,种子由 runner.ts 按身份文本 hash 传入 |
 | 外形重合直接复用(库内骨相 pinned / 已建档角色认人) | src/data/lookMatch.ts(八维词表 + 判据),召回接在 loreIndex.ts,档案侧在 autoTag/charReuse.ts,注入在 prompt.ts 的 charReuseBlock |
 | 景别远近判据(部位 → 该多近 / 过远诊断 / 重试话术) | src/autoTag/shotGuide.ts(POINT_RULES),诊断接在 runner.ts validate,文案在 prompt.ts 规则 12/12b |
+| 画面事实闭环(人数对不上正文 / 道具没有落点 → 重试) | src/autoTag/castCheck.ts(diagnoseCast + diagnosePropTarget),诊断接在 runner.ts validate,文案在 prompt.ts 规则 6b/6c/17 |
+| 服装跨楼账本(衣着 + 穿脱程度继承,跳变即重试) | src/autoTag/outfitState.ts,写回走 messageEdit.applyMessageText 的 extraUpdate 数组(runner 每次落盘同时写角色增量与账本),注入在 prompt.ts 的 outfitStateBlock |
+| 多人入画取舍(施受双方/接触点/道具落点必须进画面,可省项) | src/autoTag/prompt.ts 规则 6b + 6c,人数口径在规则 17 |
 | 角色库 v3(基线+楼层增量/changes ops/@占位符兜底/历史回滚) | src/autoTag/charAnchors.ts + src/state/charTags.ts + src/autoTag/runner.ts |
 | Vibe 分组 / 搜索 / 启用集合判定 | src/backends/vibeGroups.ts(纯逻辑)+ NaiPanel.vue(交互) |
 | 副 API 请求(代理/SSE/超时/测试) | src/api/client.ts |
