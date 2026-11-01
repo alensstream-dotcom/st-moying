@@ -29,7 +29,7 @@ import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import type { Orientation } from '@/backends/size';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { consumeAutoGenerate } from '@/floor/autoGenerate';
-import { beginGen, clearGen, failGen, getGenRecord, setGenPhase, slotKey } from '@/floor/genState';
+import { beginGen, clearGen, failGen, getGenRecord, hasActiveGen, setGenPhase, slotKey } from '@/floor/genState';
 import { hydrateMessage } from '@/floor/hydrate';
 import { saveImageResult } from '@/floor/storage';
 import { activeComfyPreset, settings } from '@/state/settings';
@@ -157,8 +157,20 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
   const key = slotKey(job.chatId, job.messageId, job.swipeId, job.seq);
   // 前台卡片正在这个槽位上跑时不接管:beginGen 会 abort 同 key 的 controller,
   // 抢过来等于把用户眼前那次生成掐掉。前台跑了,这张就交给前台。
+  //
+  // 判定必须看「有没有活的 controller」而不是「有没有 record」:水合或旧相位会留下
+  // phase=queued、controller 早已没了的僵尸记录。按 record 判会让这个槽位被永久
+  // 挡在门外,表现就是每次都有固定一张图必须手动点一下。
   const running = getGenRecord(key);
-  if (running && running.phase !== 'error') return 'skipped';
+  if (running && running.phase !== 'error' && hasActiveGen(key)) {
+    console.debug(`[墨影] 后台出图让位：第 ${job.messageId} 楼第 ${job.seq + 1} 张前台正在生成`);
+    return 'skipped';
+  }
+  if (running && running.phase !== 'error') {
+    console.debug(
+      `[墨影] 后台出图接管僵尸槽位：第 ${job.messageId} 楼第 ${job.seq + 1} 张（phase=${running.phase}，无在途任务）`,
+    );
+  }
   const handle = beginGen(key, job.prompt, 'queued');
 
   const seed = decideSeed(settings.defaultBackend);
@@ -221,7 +233,12 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
 export async function runBackgroundGenerations(jobs: BackgroundJob[]): Promise<void> {
   if (!jobs.length) return;
   bindResumeListener();
-  // 先摘掉这批槽位的自动生成标记:从此由后台负责到底。
+  // 让出一小段:先让前台卡片挂载、先决定它跑不跑。两边都用 hasActiveGen 判重,
+  // 谁先开跑谁是主人;这段延迟只保证「前台还有机会接手」,不会造成双跑。
+  await new Promise<void>(resolve => {
+    setTimeout(resolve, 300);
+  });
+  // 再摘掉这批槽位的自动生成标记:从此由后台负责到底。
   //
   // 旧做法是「抢标记,抢不到就让位给前台卡片」,结果第一张图经常卡住 ——
   // 前台卡片在重渲染时先一步消费了标记,但它自己的相位判定(shouldAutoGenerate)
@@ -240,8 +257,13 @@ export async function runBackgroundGenerations(jobs: BackgroundJob[]): Promise<v
   running = true;
   try {
     for (const job of jobs) {
-      // runOne 内部会用 getGenRecord 判断前台是否正在这个槽位上跑,是则让位不双跑
-      await runOne(job);
+      // runOne 内部会判断前台是否正在这个槽位上跑,是则让位不双跑
+      const outcome = await runOne(job);
+      if (outcome !== 'ok') {
+        console.info(
+          `[墨影] 后台出图:第 ${job.messageId} 楼第 ${job.seq + 1} 张 → ${outcome}`,
+        );
+      }
     }
   } finally {
     running = false;
