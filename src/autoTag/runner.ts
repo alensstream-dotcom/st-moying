@@ -10,6 +10,7 @@ import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/g
 import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
+import { diagnoseShot, shotRetryNote } from '@/autoTag/shotCheck';
 import { diagnoseTruncation, TRUNCATION_RETRY_NOTE } from '@/autoTag/truncation';
 import {
   BBI_CHAR_EXTRA_KEY,
@@ -368,6 +369,27 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             candidate.changes.some(change => change.field === 'new' && !change.nl?.trim())
           ) {
             throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
+          }
+          // 构图缺项:只在还有重试次数时纠一次。没次数了就放行——
+          // 交一张景别平庸的图,好过因为「没写机位」整楼不生。
+          if (attempt < retries) {
+            const gaps = [
+              ...new Set(
+                candidate.images
+                  .map(image =>
+                    diagnoseShot(
+                      image.tag,
+                      (image.characters ?? []).map(character => character.tag),
+                    ),
+                  )
+                  .filter(diag => !diag.softOnly)
+                  .flatMap(diag => diag.missing),
+              ),
+            ];
+            if (gaps.length) {
+              retryNote = shotRetryNote(gaps);
+              throw new Error(`构图缺项(${gaps.join('、')})`);
+            }
           }
           parsed.plan = candidate;
         };
