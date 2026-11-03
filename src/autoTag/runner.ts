@@ -13,7 +13,13 @@ import {
   type CastGap,
 } from '@/autoTag/castCheck';
 import { prepareTargetText } from '@/autoTag/clean';
-import { buildCharReuseBlock, findCharReuse } from '@/autoTag/charReuse';
+import {
+  buildCharReuseBlock,
+  findCharAliases,
+  findCharReuse,
+  normalizePlanCharacters,
+  resolveCanonicalCharName,
+} from '@/autoTag/charReuse';
 import {
   BBI_OUTFIT_EXTRA_KEY,
   buildOutfitStateBlock,
@@ -362,9 +368,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 同一楼重试/重跑结果一致,换楼或换 swipe 就换一批同分服装/姿势候选——
     // 否则同一句「她穿着职业装」每楼都召回同一批,模型当然每楼都挑第一件,看着就是永远一套衣服。
     const loreSeed = Math.max(1, Number.parseInt(textHash(identity), 36) || 1);
-    // 正文外形与库中已建档角色逐项对上的:直接点名「这段就是她」,别让模型再编一张脸。
+    // 正文外形与库中已建档角色逐项对上的,或正文中用尊称/简称(如「风阿姨」「千华」)指代已建档角色(「风千华」)的:
+    // 直接点名「这段就是她」,别让模型再编一张脸或用别称另写角色块。
     // 只在上送给主请求前的快照上判,单槽重写同样适用(它也要照抄档案)。
-    const charReuse = buildCharReuseBlock(findCharReuse(entriesBefore, preparedTarget.promptText));
+    const charReuse = buildCharReuseBlock(
+      findCharReuse(entriesBefore, preparedTarget.promptText),
+      findCharAliases(entriesBefore, preparedTarget.promptText),
+    );
     // 服装现状:从前面楼层把每个人身上的衣服与穿脱程度读回来。
     // 当前楼常常一句衣着都没写,模型每层都在从零决定穿什么,衣服自然乱飘;
     // 有了这份账本它才有一个「已经发生的事实」可以继承。单槽重写也要用同一份。
@@ -421,6 +431,21 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             promptOptions.minImages,
             promptOptions.maxImages,
           );
+          // 称呼归并与外貌兜底:模型若在 characters[].name 或 changes[].name 里写了已建档角色的
+          // 别称/尊称/简称(如把「风千华」写成「风阿姨」「千华」),先唯一归并回档案主名,
+          // 并在因换称呼漏抄固定外貌时把档案核心外貌字段补进 character.tag。
+          normalizePlanCharacters(candidate.images, entriesBefore);
+          if (entriesBefore.length) {
+            const existingNames = new Set(entriesBefore.map(e => e.name.trim()));
+            candidate.changes = candidate.changes.filter(change => {
+              const canonical = resolveCanonicalCharName(change.name, entriesBefore);
+              if (canonical !== change.name) {
+                if (change.field === 'new' && existingNames.has(canonical)) return false;
+                change.name = canonical;
+              }
+              return true;
+            });
+          }
           // 单槽重写忽略本次 changes,不校验建档 nl —— 校验它会为一份会被丢弃的
           // changes 白白消耗重试次数。NAI 关了自然语言时协议不要 nl,也就不验。
           if (
@@ -480,9 +505,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             const seenCast = new Set<string>();
             for (const image of candidate.images) {
               const text = segmentText.get(image.position) ?? '';
-              const present = [...entriesBefore]
-                .map(entry => entry.name)
-                .filter(name => text.includes(name));
+              const aliasPresent = findCharAliases(entriesBefore, text).map(hit => hit.name);
+              const present = [
+                ...new Set([
+                  ...[...entriesBefore].map(entry => entry.name).filter(name => text.includes(name)),
+                  ...aliasPresent,
+                ]),
+              ];
               const found = [
                 ...diagnoseCast(
                   text,

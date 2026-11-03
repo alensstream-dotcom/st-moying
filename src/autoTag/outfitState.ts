@@ -18,7 +18,9 @@
  * 命中即视为衣着部件;不在词表里的词(发色、体型、表情)不会混进来。
  */
 
+import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 import { allWardrobeItems } from '@/data/loreIndex';
+import type { CharTagEntry } from '@/state/charTags';
 import type { STMessage } from '@/st/context';
 import { parseImageTags, parseImageTagContent } from '@/st/imageTagRegex';
 
@@ -350,10 +352,15 @@ const WEAR_LABEL: Record<WearLevel, string> = {
  */
 export function seedOutfitStates(
   states: Map<string, OutfitStateEntry>,
-  entries: Iterable<{ name: string; fields: { outfit?: string } }>,
+  entries: Iterable<{ name: string; fields: { outfit?: string }; desc?: string }>,
 ): Map<string, OutfitStateEntry> {
-  const seeded = new Map(states);
-  for (const entry of entries) {
+  const entryList = [...entries] as CharTagEntry[];
+  const seeded = new Map<string, OutfitStateEntry>();
+  for (const [rawKey, state] of states) {
+    const canonical = entryList.length ? resolveCanonicalCharName(rawKey, entryList) : rawKey;
+    seeded.set(canonical, { ...state, name: canonical });
+  }
+  for (const entry of entryList) {
     if (!entry?.name || seeded.has(entry.name)) continue;
     const garment = (entry.fields?.outfit ?? '').trim();
     if (!garment) continue;
