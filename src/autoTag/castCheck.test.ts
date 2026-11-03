@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { castRetryNote, countPresentNames, diagnoseCast, diagnosePropTarget, readCounts } from './castCheck';
+import { castRetryNote, countPresentNames, diagnoseCast, diagnoseContact, diagnosePropTarget, readCounts } from './castCheck';
 
 describe('readCounts', () => {
   it('读出女性与男性人数', () => {
@@ -120,6 +120,35 @@ describe('diagnosePropTarget', () => {
   });
 });
 
+describe('diagnoseContact', () => {
+  it('手与胸都在、却没有任何绑定词时报警', () => {
+    const gaps = diagnoseContact('她的手按在她的胸口上', '1girl, hand, breasts, upper body');
+    expect(gaps[0]?.kind).toBe('contact-unbound');
+    expect(gaps[0]?.detail).toContain('按在');
+  });
+
+  it('写成词组就算绑定成立', () => {
+    expect(diagnoseContact('她的手按在她的胸口上', '1girl, hand on breast, upper body')).toEqual([]);
+  });
+
+  it('绑定词写在角色块里也算', () => {
+    expect(
+      diagnoseContact('她的手按在她的胸口上', '1girl, hand, breasts', [
+        'girl, her hand pressing his chest',
+      ]),
+    ).toEqual([]);
+  });
+
+  it('正文没有接触动词时不管', () => {
+    expect(diagnoseContact('她站在窗边看着雨', '1girl, hand, breasts')).toEqual([]);
+  });
+
+  it('画面里缺手或缺身体时不报警——那是别的问题', () => {
+    expect(diagnoseContact('毛笔划过她的锁骨', '1girl, brush, collarbone')).toEqual([]);
+    expect(diagnoseContact('毛笔划过她的锁骨', '1girl, hand, window')).toEqual([]);
+  });
+});
+
 describe('castRetryNote', () => {
   it('把缺口写进话术并要求重开 thinking', () => {
     const note = castRetryNote([{ kind: 'wrong-count', detail: '只有 1 个 boy' }]);
@@ -127,5 +156,17 @@ describe('castRetryNote', () => {
     expect(note).toContain('只有 1 个 boy');
     expect(note).toContain('毛笔' in {} ? '' : '道具');
     expect(note).toContain('直接从 <thinking> 开始');
+  });
+
+  it('接触类缺口额外给绑定词与取景两条改法', () => {
+    const note = castRetryNote([{ kind: 'contact-unbound', detail: '手与胸并排' }]);
+    expect(note).toContain('接触绑定');
+    expect(note).toContain('绑定词');
+    expect(note).toContain('close-up + hand focus');
+  });
+
+  it('没有接触类缺口时不啰嗦绑定词', () => {
+    const note = castRetryNote([{ kind: 'wrong-count', detail: '只有 1 个 boy' }]);
+    expect(note).not.toContain('close-up + hand focus');
   });
 });

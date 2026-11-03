@@ -59,7 +59,7 @@ export function countPresentNames(text: string, names: Iterable<string>): number
 }
 
 export interface CastGap {
-  kind: 'missing-actor' | 'wrong-count' | 'prop-without-target';
+  kind: 'missing-actor' | 'wrong-count' | 'prop-without-target' | 'contact-unbound';
   detail: string;
 }
 
@@ -171,15 +171,72 @@ export function diagnosePropTarget(text: string, tag: string): CastGap[] {
   return gaps;
 }
 
+/**
+ * 绑定词:把道具或另一个人**钉在身体上**的介词与动词。
+ *
+ * 用户原话:「剧情里出现一个物体接触人体,结果图片就是直接把它们两个都画出来」——
+ * 道具在、身体在,但两者之间没有绑定词,模型只会并排画两样东西。
+ */
+const BINDING_RE =
+  /(?:\bon\b|\bonto\b|\bagainst\b|\binto\b|\binside\b|\bbetween\b|\bover\b|\bacross\b|\balong\b|\bdown\b|\bup\b|pressing|pressed|touching|touched|resting|rests|rubbing|pulling|pulled|pushing|pushed|sliding|slides|dripping|dripped|held|holding|wrapped|around|inserted|penetrat|spread|smeared|trailing|traced|lifted|lifting)/i;
+
+/**
+ * 正文里「道具作用在身体上」的动作词。命中才查绑定。
+ *
+ * 不算接触的:拿、握、举、放回桌上——这些本来就只是握着,落点无所谓。
+ */
+const CONTACT_VERB_RE =
+  /(?:划过|划向|滑向|滑过|蹭过|蹭向|贴上|贴住|抵住|抵在|按在|按上|压上|压在|落在|放到|放在|抹在|涂在|写上|写向|点上|刺入|探进|塞进|插入|伸进|搅动|摩擦|磨蹭|扫过|拂过|绕上|缠上|卷上|勾住|勾在|挑开|拨开|推开|分开)/;
+
+/**
+ * 道具或第二个人在正文里接触了身体,tag 却只是把它们并排列出。
+ *
+ * 与 diagnosePropTarget 分工不同:那条查「落点部位有没有出现」,这条查
+ * **两者之间有没有绑定**——`1girl, hand, cup` 与 `1girl, holding cup` 的差别就是它。
+ *
+ * @param text     该图对应那一句正文
+ * @param tag      Base tag
+ * @param charTags 角色块 tag(NAI V5)。绑定词常常写在角色块里,所以要一起看。
+ */
+export function diagnoseContact(text: string, tag: string, charTags: string[] = []): CastGap[] {
+  const hay = text ?? '';
+  const verb = hay.match(CONTACT_VERB_RE);
+  if (!verb) return [];
+  const tagText = tag ?? '';
+  if (!tagText.trim()) return [];
+  // 绑定词可能写在 Base,也可能写在任一角色块里——任一处有就算绑定成立
+  if (BINDING_RE.test(tagText)) return [];
+  if (charTags.some(item => BINDING_RE.test(item ?? ''))) return [];
+
+  // 只有当画面里确实同时有「手/手臂/道具」与「身体」两者时才可能是并列画法;
+  // 少任何一边都不是这条要管的事。
+  const hasActor = /(?:hand|hands|arm|arms|finger|fingers|pov hands|object|prop)/i.test(tagText);
+  const hasBody = TARGET_RE.test(tagText);
+  if (!hasActor || !hasBody) return [];
+
+  return [
+    {
+      kind: 'contact-unbound',
+      detail: `正文写的是「${verb[0]}」这类接触,画面里手/道具与身体都在,却没有一个词把它们钉在一起`,
+    },
+  ];
+}
+
 /** 重试话术。 */
 export function castRetryNote(gaps: CastGap[]): string {
   const lines = gaps.map(gap => `- ${gap.detail}`);
+  const hasContact = gaps.some(gap => gap.kind === 'contact-unbound');
   return `<cast_retry>
-上一版的画面事实对不上正文,主要是人数和道具落点:
+上一版的画面事实对不上正文,主要是人数、道具落点与接触绑定:
 ${lines.join('\n')}
 改法:
 - 人数:正文里有几个在场者就写几个,人数 tag 写成 2girls/1boy+2girls 这样,并给每个可见个体一个角色块;两个人只剩一个人时,画面就会退化成自慰。
-- 道具:写了道具就必须写它落在哪个部位上,再补该部位的接触词(brush on pussy、whip on thigh 这类);只写一件孤立道具,模型会把它画在手里当摆设。
+- 道具:写了道具就必须写它落在哪个部位上,再补该部位的接触词(brush on pussy、whip on thigh 这类);只写一件孤立道具,模型会把它画在手里当摆设。${
+    hasContact
+      ? `
+- 接触:并排列出「手/道具」和「身体部位」不会让它们碰上,必须用一个绑定词把两者钉在一起(hand on cheek、brush on pussy、fingers inside her、hand pressing her back);英文介词 on / against / into / around 或现在分词 pressing / holding / resting 都算绑定。实在绑不住就改取景:close-up + hand focus,让画面里只留下这一段接触。`
+      : ''
+  }
 - 只改这些问题对应的部分,不过改动的地方保持原样。
 直接从 <thinking> 开始,不要解释。
 </cast_retry>`;

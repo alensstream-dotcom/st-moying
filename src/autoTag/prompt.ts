@@ -315,6 +315,7 @@ export async function buildAutoTagMessages(
    - 建档写法：{"name":"角色名","field":"new","fields":{"sex":"1girl","age":"young adult","hair":"long black hair","eyes":"blue eyes"},"position":"P2","reason":"首次出场建档"}；position 填他首次出现的位置，仅作记录——建档在本楼全程有效，本楼任意位置的图片都可以立即使用这套外貌。
    - 建档字段只放**长期不变的身体特征**：sex/age/hair/eyes/skin/body/extra 填性别、年龄段、发色发型、瞳色、肤色、体型、标志特征；outfit 只填该角色**固定不换的招牌着装**；判定为同人角色的，fields 里必须写 fandom（模型可识别的英文 Danbooru 身份 tag，格式 character name (copyright name)），原创角色不写 fandom。动作、姿势、所在场景、临时状态（lying on carpet、standing、sitting、unzipped、湿身、伤势等）一律不得写进任何字段——档案会在他之后每一张图里被照抄，把姿势写进去会让他在所有画面里都保持那个姿势。
    - **age 必填，取值只有四档，必须原词照抄**：child / teenager / young adult / mature female。按正文与设定里的身份和年龄线索判：小女孩、小学生、幼女 → child；高中生、中学生、JK → teenager；大学生、刚毕业、刚工作、二十出头 → young adult；熟女、人妻、太太、三十多四十岁，以及老婆婆、老妇、奶奶 → mature female。正文给了具体岁数就并在后面（young adult, 22 years old），没给就按身份定一档，不许留空、不许写中文、不许写成「大约二十几岁」。**没有 old 这一档**：写到老妇、老婆婆也一样归 mature female，不要另造一档。
+    - **这四档是体型档，不是法律年龄档。** 一律按成年人向处理：萝莉、小萝莉、巨乳萝莉、学生、JK、女高中生、老师都算成年，判不判 child/teenager 只看骨架与身份，不因为「她可能未成年」就少出图。叫法上没有年龄证据时按 teenager 起判（配 youthful, slim figure），别默认套 child 的 flat chest。
    - **age 必须配骨架伴生词，只写一个年龄词压不住画风**：child 配 short stature, small frame, flat chest；teenager 配 youthful, slim figure, medium breasts；young adult 配 slim figure, medium breasts；mature female 配 mature face, voluptuous, wide hips。这些词写进该角色的 body 或 extra。同一个聊天里年龄不同的角色必须因此拉开：成年角色不要写 loli、child，幼女角色不要写 voluptuous；两个角色的年龄档不同，体型词也不许写成同一套。四档之外没有「老」档，mature female 的骨架词里也别再叠 wrinkles、aged，否则会画成老太太。
    - **age 与身材一档一档分开**：年龄管骨架与身高，body 只管胸腰臀的粗细，两者不许互相污染。判成 mature female 而把 body 写成 petite，或判成 child 而写 large breasts，都是错的。
    - 建档取值优先级：目标正文明确的当前外貌 > 柏宝书当前角色状态 > 角色卡/世界书明确人设 > 合理补全。人设明确写了颜色时必须原样转换，不得擅改；hair 与 eyes 必填，hair 至少包含发色和长度/发型，eyes 必须包含瞳色，缺任一项该条建档会被丢弃。
@@ -385,14 +386,16 @@ ${characterRule}
  - 一张图里只写必要的接触点；人数超过两人或需要复杂交叠时，优先采用候选库里标出的机位，不要自创极端透视。
  - **同一角色的一致性高于多样性**：本楼内同一角色只有一套衣服。候选项多只是供货，不是让你每张换一套；挑定后逐字复用，差异只出现在姿势/机位/景别/衣物状态词上。如果你发现自己给同一角色写了第二套服装，先回正文找换衣动作，找不到就改回第一套。
  - **不同角色之间必须不一样**：两个角色职业相同（都是事业女、都是学生、都是护士）时，身份词会把同一批候选递给所有人，此时**不许让她们穿同一套**。同框或前后楼出现的同职业角色，各自从候选里挑**不同廓形**的那条（一个裤装一个裙装、一个长外搭一个短上衣、一个硬挺一个垂坠）；候选里剩下的条目如果与已在场的同职业角色廓形相同，就换成不同款。同职业撞衫比同角色换装更难看，也更没有「素材库」的意义。
-  - **先看【服装现状】再挑**：区块里写着某人「穿着」时，她的衣服已经定了，别重新挑——照抄那套装束；正文没提衣着不代表没穿。区块里没有这个人（首次出场）才从候选里挑，挑定后长期固定。候选库只在两种情况有用：给她挑第一套，或正文明确写了换装。
+  - **先看【服装现状】再挑**：区块里写着某人「穿着」时，她的衣服已经定了，别重新挑——照抄那套装束；正文没提衣着不代表没穿。区块里没有这个人（首次出场）才从候选里挑，挑定后长期固定。候选库只在两种情况有用：给她挑第一套，或正文明确写了换装。**区块里那套装束可能是从她的固定着装档案带过来的**——那也是定死的答案，不是建议，不许因为「今天换个造型更好看」就换掉。
   - **半脱是独立状态，不是全裸也不是全穿**：露肩、露背、露臀、掀裙、领口被扯开这类姿势，衣服要留在身上并被写出来——off shoulder、slipped down、pulled aside、breasts out、skirt lifted、clothes around waist。只写 nude/topless 会丢掉「衣服还在身上」这一半信息，直接画成光人；只写原封不动的整套衣服，又变成没脱。状态词照抄【服装现状】里已有的那些，不自己造新说法。
-11. 视角（决定一张图好不好看的一半）——先回答“谁的眼睛在看”，再写 tag。两条铁律：**不许为了「看得清」把背对镜头的身体硬拧成正面**（脖子会断、腰会扭，模型只能画成畸形），要换机位；**施动方不许搞反**（女主伸手，就是 her hand 伸出去，不是 his hand）。
-  - 面对面互动（面对面说话、牵手、面对面亲密结合、正面拥抱）→ **坚定用第一视角**（pov、first-person view、pov hands）：女主面对男主就等于面对镜头，脸天然成立，不需要扭头。此时不要再把第二个人的完整站姿写进画面。
-  - 后背位 / 从背后进入 / 背后环抱 → **保留第一视角的低头俯视**（pov、from above、looking down、pov hands），让玩家看见她塌腰、回眸、肩背与臀部。改成第三人称正面等于身后空无一人，别做。
-  - 只有一种情况把后背位转正面：剧情专门描写「从背后环抱并揉捏胸部」，此时写 leaning back against him、from front，让她的背贴在他怀里，从正面拍她的表情与胸口——这样既看得见胸，也不空人。
-  - 用第三人称的条件：需要同时交代两人的位置关系、环境规模，或肢体交叠复杂到必须看见全身；以及“被注视者不知情”的旁观感（from behind / from side / over shoulder）。
-  - 第一视角必须保留进入画面的肢体作为锚点（hand、arm、fingers、held object、partially visible body），否则退化成普通正脸。**pov hands 只属于观看者（玩家角色）的手**：女主主动伸手时绝对不能写 pov hands，那会把施动方换成男主。
+11. 视角（决定一张图好不好看的一半）——先回答**一个**问题：「这一格要不要看见另一个人在做什么」。要看见，就第三人称；不需要，才轮到第一人称。**不要一遇到两人互动就默认 pov**，那是把两人场面拍成单人自慰的最常见原因。
+  - **默认第三人称**。两人同场时，第三人称永远能同时交代两个人、接触点与位置关系，pov 做不到。常规机位：from side（并排或面对面时两人的侧脸都在）、from front、over shoulder（越肩看她正在被怎样）、from behind。
+  - **只在三条同时成立时才用第一人称**（pov、first-person view）：①这一格的全部价值都在她身上——她的表情、她的身体、她被怎样；②不需要交代男主的手在哪、是什么姿势、站在哪儿；③她正对或背对镜头（正对她就是正对男主，脸与身体天然成立，不用扭头）。
+  - **下列任一成立就必须第三人称**，硬用 pov 会把她拍成一个人在空中扭：①要交代两人的位置关系（并肩、一前一后、隔着桌子、离多远）；②男主的身体本身就是施力点或接触点（他掐着腰、抬着她的腿、压着她的背、把她的手按在墙上）；③要看她的后背、肩胛、塌腰与臀部曲线——这只有第三人称的 from behind / from side 拍得全。
+  - 后背位／从背后进入是唯一「第一视角与背面机位相容」的情形：他就是从她背后看，写 pov、from behind、from above、looking down，让玩家看见塌腰、回眸、肩背与臀部。但**必须同时把他的手写进画面**（his hands on her hips、his hand on her waist），否则身后空无一人。只有剧情专门写「从背后环抱并揉捏胸部」这一种，才转正面：leaning back against him、from front，让背贴进他怀里，从正面拍表情与胸口。
+  - **第一人称必须有锚点**：pov hands、his arm、his chest、partially visible body 至少写一个，告诉观者「我站在这个位置」。没有锚点的 pov 就是一张普通正面照，看起来像她一个人。
+  - **施动方不许搞反**（女方伸手，就是 her hand 伸出去，不是 his hand）：**pov hands 只属于观看者（玩家角色）的手**，女主主动伸手时绝对不能写 pov hands，那会把施动方换成男主；她的动作写在她自己的角色块里（her hand reaching out、her fingers on his chest）。
+  - **不许为了「看得清」把背对镜头的身体硬拧成正面**：脖子会断、腰会扭，模型只能画成畸形。要换机位，不要扭人。
   - 机位词优先取候选库里的 camera 字段；库未命中再用标准词，一次只用一种，不要叠两个互斥机位。
   - 人物扭曲优先用取景解决：宁可 upper body 或 cowboy shot，也不要为了“全身”把两个人在极端透视里叠起来。
 12. 构图四件套——每张图的 tag 里必须写清这四件事。缺一件，构图就交给模型随机决定，而它的默认答案通常是中景平视正面，画面最平：
@@ -420,11 +423,27 @@ ${characterRule}
   - 露胸 / 含胸必须同时有嘴部接触（kissing breast、mouth on breast、sucking）或明确的手部支撑（hand on breast），不许只画一个孤立露出来的胸部。
   - 双腿环抱必须同时写出对方的受力点（legs wrapped around waist、arms around his neck、hands on her hips），否则腿会抱空气。
   - 手要写清方向与落点（her hand on his cheek，不是 hand）；接触点两侧都要出现（她的腿＋他的腰、她的背＋他的胸、她的手腕＋他的手指）。
+  - **接触必须写成一个词组，不能写成两样东西并列**——这是「剧情里物体贴着人体，图画成两者并排」的根因。模型读的是 tag 不是句子：写成 hand, cup，它看到的是「一只手」加「一个杯子」两个独立物体，一定分开画；写 holding cup、cup in hand，才是「手和杯子的关系」。**词与词之间没有介词或动词，就等于没有接触。**
+  - 按接触类型套模板（左边是剧情，右边是写法）：
+    · 握着 / 举着 → holding X、X in hand、fingers wrapped around X
+    · 贴在皮肤上 → X on \<部位\>（brush on pussy、ice on nipple、whip on thigh、blade against neck）
+    · 插入 / 进入体内 → X inside \<部位\>、\<部位\> around X、X penetrating
+    · 摩擦 / 来回滑动 → X rubbing \<部位\>、sliding X along \<部位\>、X pressed to \<部位\>
+    · 夹在中间 → X between breasts、X between thighs、X between fingers
+    · 环绕 / 缠绕 → X around \<部位\>（rope around wrists、arm around neck、tail around waist）
+    · 压住 / 抵住 → pressing down on \<部位\>、X against \<部位\>、pinning her wrists
+    · 液体落在皮肤上 → liquid on \<部位\>、cum on \<部位\>、dripping down \<部位\>、\<部位\> covered in X
+    · 涂抹 / 书写 → X on \<部位\>、writing on \<部位\>、smeared across \<部位\>
+    · 碰到自己 → \<部位\> on own \<部位\>（hand on own cheek、fingers on own lips），不写 hand、cheek
+  - **先定空间关系，再写动作**：两人的位置关系是构图的地基，必须在 base 里先写清——facing each other、in front of him、behind her、side by side、back to back、straddling him、bent over、kneeling in front of him。位置关系缺了，模型只能把两个人并排摆好，再让谁也没碰到谁。
+  - 绑不住就换取景，不要硬绑：接触太细、部位太小、两人全身塞不进一个画面时，改成 close-up + 只留这一段接触（她的手指＋他的手背），比画两个人各自站着强得多。
   - 施受方向跟着正文走：女主主动时动作词挂在女主身上（她伸手、她拉、她按、她跨坐），男主只写被作用的部位。
   - 局部特写（埋胸、摸腿、亲锁骨这类）**必须尽量同框女主的眼睛或脸**：改用 from above + looking up + upper body，或 cowboy shot + 俯视，让关键部位和她的脸同时在画面里；同框不下就退一档景别，**绝不许把头切掉只画两条腿**。只有当正文的看点就是那个部位本身（乳首被含住、穴口被拨开、手指进出）时，才允许纯局部 close-up / lower body，此时靠 body tag 交代是哪一层。
   - 视线：男女主互动时，除非正文明确写她撇开视线，女主的眼睛要看着镜头（looking at viewer）；独处时不受此限，按剧情自然表现姿态与身段。
 15. 服装状态是连续的，跨段落、跨楼层都不重置：
   - **本楼先按正文判一次穿脱，判完就写状态词**：正文有脱、扯、掀、拉、解开的动作，就把这套衣服降到半脱或脱落，并写清降到哪一步；正文有穿、系、套上的动作，才升回去。没有动作就照【服装现状】原样沿用，一格都不许自己变。
+  - **【服装现状】里那套装束是既成事实，不是灵感**：它来自前面楼层的实际画面加角色档案里的固定着装，两处都已经替她定好了穿什么。正文没写换衣服，就把那套衣服逐字照抄进每一张图——袖型、颜色、裙长、丝袜、鞋，一件都不改。
+  - **整套换掉比单件出错更难救**：前楼是丝质睡裙，这一楼变成衬衫短裙，属于凭空换装；只有正文明确出现换、脱、穿的动词才允许换一整套。外观相近但款式不同的（换了颜色的同款、多了件外套）算同一套，可以加配件，不许换主体廓形。
   - 已经脱掉或解开的部件不许自己穿回去：前面脱了胸罩或内裤，后面就不能再出现 bra、panties，只能写 topless、bottomless、clothes around waist、hanging on one arm。
   - 只允许单向推进：穿着 → 半脱 → 脱落。半脱与脱落必须分开写：半脱是衣服还在身上（tugged down、off shoulder、pulled aside、breasts out、skirt lifted、clothes around waist），脱落是离开了身体（on the floor、held in hand、hanging on one arm）。写成半脱的一律不许补 nude / completely nude。
   - 露肩、露背、露臀的姿势不是裸体：肩膀露出来写 off shoulder、露臀写 skirt lifted / panties around one thigh，衣服继续留在身上当参照物，剥光等于把这层信息丢掉。

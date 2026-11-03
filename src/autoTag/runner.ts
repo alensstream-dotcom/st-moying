@@ -5,17 +5,25 @@ import {
   resolveCharAnchors,
   type PositionedCharOp,
 } from '@/autoTag/charAnchors';
-import { diagnoseCast, diagnosePropTarget, castRetryNote, type CastGap } from '@/autoTag/castCheck';
+import {
+  diagnoseCast,
+  diagnoseContact,
+  diagnosePropTarget,
+  castRetryNote,
+  type CastGap,
+} from '@/autoTag/castCheck';
 import { prepareTargetText } from '@/autoTag/clean';
 import { buildCharReuseBlock, findCharReuse } from '@/autoTag/charReuse';
 import {
   BBI_OUTFIT_EXTRA_KEY,
   buildOutfitStateBlock,
   buildOutfitStatePayload,
+  diagnoseGarment,
   diagnoseOutfit,
   latestOutfitStates,
   nextOutfitState,
   outfitRetryNote,
+  seedOutfitStates,
   type OutfitGap,
 } from '@/autoTag/outfitState';
 import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
@@ -24,7 +32,8 @@ import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
 import { diagnoseShot, shotRetryNote } from '@/autoTag/shotCheck';
 import { diagnoseDistance, distanceRetryNote } from '@/autoTag/shotGuide';
-import { diagnoseTruncation, TRUNCATION_RETRY_NOTE } from '@/autoTag/truncation';
+import { duplicatePositionNote, duplicatePositions } from '@/autoTag/positionCheck';
+import { diagnoseTruncation, EMPTY_PLAN_RETRY_NOTE, TRUNCATION_RETRY_NOTE } from '@/autoTag/truncation';
 import {
   BBI_CHAR_EXTRA_KEY,
   CHAR_TAG_FIELDS,
@@ -359,7 +368,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 服装现状:从前面楼层把每个人身上的衣服与穿脱程度读回来。
     // 当前楼常常一句衣着都没写,模型每层都在从零决定穿什么,衣服自然乱飘;
     // 有了这份账本它才有一个「已经发生的事实」可以继承。单槽重写也要用同一份。
-    const outfitStates = latestOutfitStates(context.chat, floor);
+    // 账本只记变化,所以还要拿档案里的固定着装垫底——角色第一次出图时账本是空的,
+    // 那正是衣服最容易开始乱飘的时候。
+    const outfitStates = seedOutfitStates(latestOutfitStates(context.chat, floor), entriesBefore);
     const outfitBlock = buildOutfitStateBlock(outfitStates);
     const messages = await buildAutoTagMessages(
       context,
@@ -420,6 +431,22 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           ) {
             throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
           }
+          // 空 images:协议上算正常返回,旧版直接放行,于是模型一句「没有值得插图的画面」
+          // 就能让整楼不生、阅读器干等超时。这里在还有重试次数时把它当可纠错误,
+          // 换一套口径逼它落到具体画面上;changes 非空(有建档要落)时不算空。
+          if (!slot && attempt < retries && !candidate.images.length && !candidate.changes.length) {
+            retryNote = EMPTY_PLAN_RETRY_NOTE;
+            throw new Error('返回了空 images');
+          }
+          // 落位重复:两张图挤在同一段,画出来是同一瞬间拍两遍。仅当可选位置
+          // 够分时才纠(席位数少于图数时重叠是必然的)。同样只在还有重试次数时纠。
+          if (attempt < retries) {
+            const dups = duplicatePositions(candidate.images, preparedTarget.segments.length);
+            if (dups.length) {
+              retryNote = duplicatePositionNote(dups);
+              throw new Error(`落位重复(${dups.join('、')})`);
+            }
+          }
           // 景别过远:正文点名了具体部位,画面却拍成远景。这条排在缺项检查之前——
           // 缺景别词只是「画面会平」,景别过远是「这张图白拍」,前者由后者一并带上。
           // 同样只在还有重试次数时纠,没次数就放行。
@@ -465,6 +492,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                   profile.naiCharPrompts,
                 ),
                 ...diagnosePropTarget(text, image.tag),
+                ...diagnoseContact(
+                  text,
+                  image.tag,
+                  (image.characters ?? []).map(character => character.tag),
+                ),
               ];
               for (const gap of found) {
                 const key = `${image.position}\u0000${gap.detail}`;
@@ -478,12 +510,17 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               throw new Error(`画面事实不符(${castGaps.map(gap => gap.kind).join('、')})`);
             }
           }
-          // 服装账本:衣服明明没变,穿脱程度却跳了(半脱→全裸、已脱→又穿回)。
+          // 服装账本:衣服明明没变,穿脱程度却跳了(半脱→全裸、已脱→又穿回),
+          // 或者正文没写换装,整套衣服被换成另一套。
           // 这条最伤连续性,而且模型自己看不出来——它没有上一层的画面。
           if (!slot && attempt < retries && outfitStates.size) {
             const outfitGaps: OutfitGap[] = [];
+            const outfitText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
             for (const image of candidate.images) {
               outfitGaps.push(...diagnoseOutfit(image, outfitStates));
+              outfitGaps.push(
+                ...diagnoseGarment(image, outfitStates, outfitText.get(image.position) ?? ''),
+              );
             }
             if (outfitGaps.length) {
               retryNote = outfitRetryNote(outfitGaps);

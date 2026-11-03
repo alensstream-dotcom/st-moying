@@ -4,6 +4,7 @@ import {
   BBI_OUTFIT_EXTRA_KEY,
   buildOutfitStateBlock,
   buildOutfitStatePayload,
+  diagnoseGarment,
   diagnoseOutfit,
   extractGarment,
   latestOutfitStates,
@@ -11,6 +12,7 @@ import {
   outfitRetryNote,
   readOutfitState,
   readWear,
+  seedOutfitStates,
   type OutfitStateEntry,
 } from './outfitState';
 
@@ -231,6 +233,74 @@ describe('diagnoseOutfit', () => {
   });
 });
 
+describe('seedOutfitStates', () => {
+  it('账本为空时用角色档案的固定着装垫底', () => {
+    const seeded = seedOutfitStates(new Map(), [
+      { name: '林夏', fields: { outfit: 'white dress, thighhighs' } },
+      { name: '苏晚', fields: { outfit: '' } },
+    ]);
+    expect(seeded.get('林夏')).toEqual({
+      name: '林夏',
+      garment: 'white dress, thighhighs',
+      wear: 'worn',
+      state: '',
+    });
+    expect(seeded.has('苏晚')).toBe(false);
+  });
+
+  it('已被账本记过的角色不被固定着装覆盖', () => {
+    const prior = new Map([['林夏', entry('林夏', 'partial', 'black shirt', 'off shoulder')]]);
+    const seeded = seedOutfitStates(prior, [
+      { name: '林夏', fields: { outfit: 'white dress' } },
+    ]);
+    expect(seeded.get('林夏')?.garment).toBe('black shirt');
+    expect(seeded.get('林夏')?.wear).toBe('partial');
+  });
+});
+
+describe('diagnoseGarment', () => {
+  it('正文没有换装动词、衣着完全不重合时报告 garment-drift', () => {
+    const gaps = diagnoseGarment(
+      { characters: [{ name: '林夏', tag: '1girl, bikini, swimsuit' }] },
+      new Map([['林夏', entry('林夏', 'worn', 'white dress, thighhighs')]]),
+      '她走到窗边看向外面',
+    );
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]).toMatchObject({
+      name: '林夏',
+      kind: 'garment-drift',
+      expected: 'white dress, thighhighs',
+    });
+  });
+
+  it('有一件衣服重合时算同一套(如加了围裙或外套)', () => {
+    const gaps = diagnoseGarment(
+      { characters: [{ name: '林夏', tag: '1girl, white dress, apron' }] },
+      new Map([['林夏', entry('林夏', 'worn', 'white dress, thighhighs')]]),
+      '她端着盘子走出来',
+    );
+    expect(gaps).toEqual([]);
+  });
+
+  it('正文明确写了换装动词时不判漂移', () => {
+    const gaps = diagnoseGarment(
+      { characters: [{ name: '林夏', tag: '1girl, bikini' }] },
+      new Map([['林夏', entry('林夏', 'worn', 'white dress')]]),
+      '林夏换上了泳装走出更衣室',
+    );
+    expect(gaps).toEqual([]);
+  });
+
+  it('账本为半脱或已脱时交给 diagnoseOutfit,这里不重复判', () => {
+    const gaps = diagnoseGarment(
+      { characters: [{ name: '林夏', tag: '1girl, bikini' }] },
+      new Map([['林夏', entry('林夏', 'partial', 'white dress', 'off shoulder')]]),
+      '她站在原地',
+    );
+    expect(gaps).toEqual([]);
+  });
+});
+
 describe('outfitRetryNote', () => {
   it('半脱与已脱给不同改法', () => {
     const note = outfitRetryNote([
@@ -239,5 +309,13 @@ describe('outfitRetryNote', () => {
     ]);
     expect(note).toContain('不能直接 nude');
     expect(note).toContain('别再穿回去');
+  });
+
+  it('garment-drift 提示写回账本那一套衣服', () => {
+    const note = outfitRetryNote([
+      { name: '林夏', kind: 'garment-drift', expected: 'white dress', actual: 'bikini' },
+    ]);
+    expect(note).toContain('正文这一格没有写换衣服');
+    expect(note).toContain('把衣着写回账本那一套');
   });
 });

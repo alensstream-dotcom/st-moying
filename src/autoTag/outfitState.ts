@@ -296,6 +296,29 @@ const WEAR_LABEL: Record<WearLevel, string> = {
 };
 
 /**
+ * 用角色档案里的「固定着装」当账本的底。
+ *
+ * 账本只记**变化**,所以一个角色第一次出图时账本是空的,模型每层楼
+ * 都可以重新挑一套衣服——这就是「前文没写换衣服,换一层楼衣服就变了」。
+ * 档案里的固定着装是作者写死的,拿它做底,第一次出图就有东西可以照抄。
+ *
+ * 已经被账本记过的角色不覆盖:账本反映的是当下的实际状态。
+ */
+export function seedOutfitStates(
+  states: Map<string, OutfitStateEntry>,
+  entries: Iterable<{ name: string; fields: { outfit?: string } }>,
+): Map<string, OutfitStateEntry> {
+  const seeded = new Map(states);
+  for (const entry of entries) {
+    if (!entry?.name || seeded.has(entry.name)) continue;
+    const garment = (entry.fields?.outfit ?? '').trim();
+    if (!garment) continue;
+    seeded.set(entry.name, { name: entry.name, garment, wear: 'worn', state: '' });
+  }
+  return seeded;
+}
+
+/**
  * 渲染注入 prompt 的【服装现状】区块。
  *
  * 措辞要说明「这是事实、不是候选」:模型对候选会重新挑,对事实才照抄。
@@ -311,8 +334,9 @@ export function buildOutfitStateBlock(states: Map<string, OutfitStateEntry>): st
   });
   return [
     '【服装现状】[已经发生的事实,不是候选;正文没有写明变化就照抄]',
-    '- 这份账本来自前面的楼层,是本段剧情开场时每个人身上的实际状态。',
+    '- 这份账本来自前面的楼层,也可能来自角色档案里的固定着装;两者都是本段剧情开场时每个人身上的实际状态。',
     '- 写着「穿着」的,把她的衣服原样写进画面;正文没提衣着不是没穿。',
+    '- 整套换掉必须有正文里的换装动作;只是加了件外套、解了扣子还算同一套,不许换成另一种款式。',
     '- 写着「半脱」的,衣服仍在身上,只移位或解开:该露的部位露、该留的布料必须留着,不许升级成全裸。',
     '- 写着「已脱」的,不要再给她穿回去;要穿回必须有正文里的穿衣动作。',
     '- 只有正文明确写了脱、穿、换、撕才会变;没写就延续下面这一行。',
@@ -322,9 +346,68 @@ export function buildOutfitStateBlock(states: Map<string, OutfitStateEntry>): st
 
 export interface OutfitGap {
   name: string;
-  kind: 'half-to-nude' | 'undressed-again';
+  kind: 'half-to-nude' | 'undressed-again' | 'garment-drift';
   expected: string;
   actual: string;
+}
+
+/**
+ * 正文里「换衣服」的动作词。
+ *
+ * 命中就说明衣服本来就该变,这时换装不算漂移。
+ * 只收明确的穿脱动作;「整了整衣领」「拉了拉裙摆」这种不动衣服的不算。
+ */
+const CHANGE_VERB_RE =
+  /(?:换上|换下|换了一|换了|换成|更衣|穿上|穿回|重新穿|套上|披上|裹上|系上|扣上|脱下|脱掉|褪下|解下|扒下|扯下|撕开|撕掉|剥下|除去衣物|宽衣)/;
+
+/** 把 garment 串拆成词集合,用来判断「还是不是同一套」。 */
+function garmentWords(garment: string): Set<string> {
+  return new Set(
+    (garment ?? '')
+      .toLowerCase()
+      .split(',')
+      .map(word => word.trim())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * 账本说穿着一套、画面换成另一套 —— 用户抱怨的「衣服自己变」。
+ *
+ * 与 diagnoseOutfit 分工不同:那条只看穿脱程度,这条看**是不是同一套衣服**。
+ * 只有正文压根没写换装动作时才判,并且要求两边都有衣着词、词完全不重合。
+ * 挑哪套衣服属于选衣规则,这条不管;它只管「已经定了的那套有没有被换掉」。
+ *
+ * @param image 单张图
+ * @param states 进场时的服装账本
+ * @param text 该图对应的那一句正文
+ */
+export function diagnoseGarment(
+  image: { characters?: Array<{ name: string; tag: string }> },
+  states: Map<string, OutfitStateEntry>,
+  text: string,
+): OutfitGap[] {
+  if (CHANGE_VERB_RE.test(text ?? '')) return [];
+  const gaps: OutfitGap[] = [];
+  for (const character of image.characters ?? []) {
+    const prior = states.get(character.name);
+    if (!prior || prior.wear !== 'worn' || !prior.garment) continue;
+    const actual = extractGarment(character.tag);
+    if (!actual) continue;
+    const before = garmentWords(prior.garment);
+    const after = garmentWords(actual);
+    if (!before.size || !after.size) continue;
+    // 有任何一件重合就承认是同一套:加了围裙、脱了外套都还是这套衣服
+    const shared = [...after].some(word => before.has(word));
+    if (shared) continue;
+    gaps.push({
+      name: character.name,
+      kind: 'garment-drift',
+      expected: prior.garment,
+      actual,
+    });
+  }
+  return gaps;
 }
 
 /**
@@ -366,7 +449,9 @@ export function outfitRetryNote(gaps: OutfitGap[]): string {
       `- ${gap.name}:账本里她是「${gap.expected}」,这张写成了「${gap.actual}」` +
       (gap.kind === 'half-to-nude'
         ? '——半脱要把留下的布料写出来(slipped down / pulled aside / unzipped / clothes around waist),不能直接 nude'
-        : '——已经脱掉就别再穿回去,除非正文写了穿衣动作;若只是把衣服披回身上,写 hanging off shoulder 这类状态词'),
+        : gap.kind === 'garment-drift'
+          ? '——正文这一格没有写换衣服,衣服不能自己换掉;把衣着写回账本那一套,只改被换掉的部分'
+          : '——已经脱掉就别再穿回去,除非正文写了穿衣动作;若只是把衣服披回身上,写 hanging off shoulder 这类状态词'),
   );
   return `<outfit_state_retry>
 上一版和【服装现状】对不上:衣服明明没有变化,穿脱程度却跳了。

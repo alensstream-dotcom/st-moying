@@ -238,7 +238,6 @@ export function parseImagePlan(
       `AI 返回了 ${limitedImages.length} 张图片，少于设置的最少图片数 ${normalizedMin}`,
     );
   }
-
   return {
     images: limitedImages,
     changes: parseChanges(parsed.changes, positions),
