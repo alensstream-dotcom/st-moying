@@ -43,6 +43,13 @@ describe('extractGarment', () => {
     expect(garment.split(', ').filter(word => word === 'dress')).toHaveLength(1);
   });
 
+  it('保留颜色与版型修饰词:white dress 不丢掉 white', () => {
+    const garment = extractGarment('1girl, navy school blazer, white collared shirt, dark pleated skirt');
+    expect(garment).toContain('navy school blazer');
+    expect(garment).toContain('white collared shirt');
+    expect(garment).toContain('dark pleated skirt');
+  });
+
   it('没有衣着词时返回空串', () => {
     expect(extractGarment('1girl, black hair, blue eyes')).toBe('');
   });
@@ -123,6 +130,20 @@ describe('latestOutfitStates', () => {
 
   it('楼层越界不报错', () => {
     expect(latestOutfitStates([], 99).size).toBe(0);
+  });
+
+  it('没有 extra 时也能从楼层正文的 <bbi_image> 角色块里读取跨楼层服装', () => {
+    const chat = [
+      {
+        mes: '第一层正文<bbi_image>indoors<characters>[{"name":"林夏","tag":"girl, navy school blazer, white shirt, pleated skirt","nl":""}]</characters><size>portrait</size></bbi_image>',
+        swipe_id: 0,
+        extra: {},
+      } as unknown as STMessage,
+    ];
+    const merged = latestOutfitStates(chat, 1);
+    expect(merged.get('林夏')?.wear).toBe('worn');
+    expect(merged.get('林夏')?.garment).toContain('navy school blazer');
+    expect(merged.get('林夏')?.garment).toContain('white shirt');
   });
 });
 
@@ -271,6 +292,16 @@ describe('diagnoseGarment', () => {
       kind: 'garment-drift',
       expected: 'white dress, thighhighs',
     });
+  });
+
+  it('相同单品但换了颜色(white shirt -> red shirt)同样报告 garment-drift', () => {
+    const gaps = diagnoseGarment(
+      { characters: [{ name: '林夏', tag: '1girl, red shirt, black skirt' }] },
+      new Map([['林夏', entry('林夏', 'worn', 'white shirt, blue skirt')]]),
+      '她坐在椅子上看书',
+    );
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]?.kind).toBe('garment-drift');
   });
 
   it('有一件衣服重合时算同一套(如加了围裙或外套)', () => {

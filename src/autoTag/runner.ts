@@ -730,6 +730,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     let rebaseNote = '';
     // 真正落进正文的那批插入项(重定位后的),供写盘成功后转交后台出图。
     let writtenImages: ImageInsertion[] = [];
+    // 全量写入同时落两笔:角色增量与本楼的服装账本。账本按「本楼实际写出的画面」冻结,
+    // 下一楼读它当既成事实——没有这一笔,下一楼就又得从零猜她穿了什么、脱到哪一步。
+    // 注意:applyMessageText 的实参在进入 buildNext 之前就会求值,因此账本必须用 plan.images 计算!
+    const nextOutfits = nextOutfitState(outfitStates, plan.images);
     const result = await applyMessageText(
       floor,
       currentText => {
@@ -761,8 +765,6 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       swipeId,
       message,
       // 单槽不写法:本楼角色增量与其它槽位图片都不归它管,不传 extraUpdate 即保持原样。
-      // 全量写入同时落两笔:角色增量与本楼的服装账本。账本按「本楼实际写出的画面」冻结,
-      // 下一楼读它当既成事实——没有这一笔,下一楼就又得从零猜她穿了什么、脱到哪一步。
       slot
         ? undefined
         : [
@@ -772,7 +774,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             },
             {
               key: BBI_OUTFIT_EXTRA_KEY,
-              value: buildOutfitStatePayload(nextOutfitState(outfitStates, writtenImages), swipeId ?? 0),
+              value: buildOutfitStatePayload(nextOutfits, swipeId ?? 0),
             },
           ],
     );

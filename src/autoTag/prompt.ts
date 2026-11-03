@@ -20,6 +20,7 @@ import type { BookMemoryContext } from '@/autoTag/bookMemory';
 import { resolveJailbreakText } from '@/autoTag/jailbreak';
 import { buildLoreBlock } from '@/data/loreIndex';
 import { isAiStoryMessage, isStoryMessage, type STContext } from '@/st/context';
+import { parseImageTagContent } from '@/st/imageTagRegex';
 import type { AutoTagSettings } from '@/state/settings';
 import {
   activeComfyPreset,
@@ -125,12 +126,19 @@ function backendThinkingPrompt(options: AutoTagSettings, nlOn: boolean, naiCharP
 
 const SHOT_TAG_RE = /<bbi_image>([\s\S]*?)<\/bbi_image>/g;
 
-/** 取上下文里最近几张图的 tag 串(bbi_image 正文首行),给跨楼服装状态与姿势去重做锚点。 */
+/** 取上下文里最近几张图的 tag 串(含 Base 与各角色块),给跨楼服装状态与姿势去重做锚点。 */
 function recentShotTags(text: string, limit: number): string[] {
   const heads: string[] = [];
   for (const match of text.matchAll(SHOT_TAG_RE)) {
-    const head = (match[1] ?? '').split('<nl>')[0].trim();
-    if (head) heads.push(head);
+    const parsed = parseImageTagContent(match[0]);
+    const charSummary = parsed.characters
+      .map(c => `${c.name}: ${c.tag}`)
+      .filter(Boolean)
+      .join(' | ');
+    const summary = [parsed.tag, charSummary ? `[角色: ${charSummary}]` : '']
+      .filter(Boolean)
+      .join(' ; ');
+    if (summary) heads.push(summary);
   }
   return heads.slice(-limit);
 }

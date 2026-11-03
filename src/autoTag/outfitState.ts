@@ -20,6 +20,7 @@
 
 import { allWardrobeItems } from '@/data/loreIndex';
 import type { STMessage } from '@/st/context';
+import { parseImageTags, parseImageTagContent } from '@/st/imageTagRegex';
 
 /** 穿着程度。三档足够,再多模型就用不准。 */
 export type WearLevel = 'worn' | 'partial' | 'off';
@@ -151,22 +152,54 @@ function vocab(): Set<string> {
   return set;
 }
 
-/** 从一个角色的 tag 串里取出衣着部件(去重、保序、限量)。 */
+/**
+ * 从一个角色的 tag 串里取出衣着部件(去重、保序、限量)。
+ *
+ * 按逗号分段扫描:只要某一段里含有服装词表里的词(或以 blazer/coat/gown/vest 等衣着中心词结尾),
+ * 就把**整段**(含颜色与修饰词,如 `white dress`、`navy school blazer`、`dark pleated skirt`)
+ * 原样保留下来。只存裸词会把颜色和版型全丢掉,下一楼账本只剩 `shirt, skirt`,颜色照样乱飘。
+ */
+const GARMENT_HEAD_RE =
+  /(?:^|\s)(?:dress|shirt|t-shirt|skirt|miniskirt|pants|trousers|slacks|shorts|jeans|jacket|blazer|coat|raincoat|trenchcoat|overcoat|vest|waistcoat|suit|bra|bralette|panties|knickers|briefs|underwear|lingerie|negligee|nightgown|pajamas|pyjamas|thighhighs|kneehighs|pantyhose|stockings|tights|leggings|fishnets|garter(?:\s+belt|\s+straps)?|suspenders|apron|uniform|serafuku|sailor\s+collar|kimono|yukata|haori|hakama|hanfu|cheongsam|qipao|robe|bathrobe|towel|scarf|neckerchief|necktie|bowtie|choker|collar|gloves|mittens|sleeves|wristbands|cuffs|boots|shoes|heels|loafers|sneakers|sandals|slippers|hoodie|sweater|pullover|turtleneck|cardigan|blouse|top|halterneck|tube\s+top|crop\s+top|tank\s+top|camisole|corset|bustier|leotard|bodysuit|jumpsuit|overalls|playsuit|romper|bikini|swimsuit|swimwear|trunks|bloomers|buruma|socks|anklets|tabi|belt|sash|obi|ribbon|cape|capelet|cloak|shawl|veil|headdress|headband|beret|hat|cap)(?:$|\s)/i;
+
+const NON_GARMENT_SEGMENT_RE =
+  /\b(?:hair|eyes|eyelashes|eyebrows|pupils|skin|breasts|nipples|cleavage|ass|butt|hips|thighs|legs|waist|stomach|belly|navel|back|shoulders|neck|collarbone|clavicle|face|lips|mouth|tongue|teeth|ears|hands|fingers|arms|feet|toes|nails|sweat|tears|saliva|blush|smile|smiling|looking|staring|gaze|expression|sitting|standing|kneeling|lying|leaning|bending|squatting|straddling|hugging|holding|grabbing|touching|pressing|rubbing|kissing|licking|sucking|biting|solo|1girl|2girls|1boy|2boys|multiple|pov|close-up|upper\s+body|lower\s+body|cowboy\s+shot|full\s+body|portrait|from\s+(?:above|below|behind|side)|indoors|outdoors|background|lighting|light|shadow|window|bed|couch|sofa|chair|desk|table|wall|floor|door)\b/i;
+
 export function extractGarment(tag: string): string {
   const found: string[] = [];
   const words = vocab();
-  const normalized = (tag ?? '')
-    .toLowerCase()
-    .replace(/[-_]/g, ' ')
-    .replace(/\s+/g, ' ');
-  for (const word of words) {
-    if (!word || found.length >= 12) continue;
-    if (COLOR_ONLY.has(word)) continue;
-    // 词表里也有下划线写法的条目,统一按空格比;整词边界避免 bra 命中 bracelet
-    const needle = word.replace(/[-_]/g, ' ').replace(/\s+/g, ' ');
-    if (!needle) continue;
-    const re = new RegExp(`(?:^|[,\\s])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[,\\s])`);
-    if (re.test(normalized) && !found.includes(word)) found.push(word);
+  const segments = (tag ?? '')
+    .split(',')
+    .map(part =>
+      part
+        .trim()
+        .toLowerCase()
+        .replace(/^[-+\d.]+::/, '')
+        .replace(/::/g, '')
+        .replace(/[-_]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
+    .filter(Boolean);
+
+  for (const seg of segments) {
+    if (found.length >= 12) break;
+    if (COLOR_ONLY.has(seg)) continue;
+    if (NON_GARMENT_SEGMENT_RE.test(seg)) continue;
+    let matched = GARMENT_HEAD_RE.test(seg);
+    if (!matched) {
+      for (const word of words) {
+        if (!word || COLOR_ONLY.has(word)) continue;
+        const needle = word.replace(/[-_]/g, ' ').replace(/\s+/g, ' ');
+        if (!needle) continue;
+        const re = new RegExp(`(?:^|\\s)${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|\\s)`);
+        if (re.test(seg)) {
+          matched = true;
+          break;
+        }
+      }
+    }
+    if (matched && !found.includes(seg)) found.push(seg);
   }
   return found.join(', ');
 }
@@ -226,15 +259,26 @@ function activeSwipe(message: STMessage): number {
  *
  * 合并方向是「后写覆盖先写」:半脱、脱下都能继承;但**只有**后写的楼里出现过该角色
  * 才有记录,没出现的人保留旧状态——她不会因为这一楼没被提及就自动穿回去。
+ *
+ * 双保险:除了读 message.extra.bbiOutfitState,若某楼正文里直接有 `<bbi_image>`,
+ * 也从正文的实拍 tag 里推进服装状态——这样旧存档、单槽重写、手动编辑过的楼层
+ * 以及任何没落 extra 的楼层都能把衣服稳稳传给下一楼。
  */
 export function latestOutfitStates(chat: STMessage[], beforeFloor: number): Map<string, OutfitStateEntry> {
-  const merged = new Map<string, OutfitStateEntry>();
+  let merged = new Map<string, OutfitStateEntry>();
   const end = Math.min(Math.max(0, beforeFloor), chat.length);
   for (let floor = 0; floor < end; floor += 1) {
     const message = chat[floor];
+    if (!message) continue;
     const state = readOutfitState(message);
-    if (!state || state.swipe !== activeSwipe(message)) continue;
-    for (const entry of state.entries) merged.set(entry.name, entry);
+    if (state && state.swipe === activeSwipe(message)) {
+      for (const entry of state.entries) merged.set(entry.name, entry);
+    }
+    const rawTags = typeof message.mes === 'string' ? parseImageTags(message.mes) : [];
+    if (rawTags.length) {
+      const parsedImages = rawTags.map(raw => parseImageTagContent(raw));
+      merged = nextOutfitState(merged, parsedImages);
+    }
   }
   return merged;
 }
