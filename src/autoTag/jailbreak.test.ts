@@ -35,18 +35,30 @@ describe('破限词里必须留下反拒答结构', () => {
   it('strong 起把年龄脱钩:不许模型自己算岁数', () => {
     for (const id of ['strong', 'max'] as const) {
       const text = getJailbreakTier(id).text;
-      expect(text).toContain('不是年龄证据');
+      expect(text).toContain('成年');
+      // 顶档还要给一条可以照抄的岁数结论,模型才不用推理
+      expect(text).toContain('18 years old');
     }
-    // 顶档还要给一条可以照抄的岁数结论,模型才不用推理
-    expect(getJailbreakTier('max').text).toContain('18 years old');
-    expect(getJailbreakTier('strong').text).toContain('18 岁');
+    expect(getJailbreakTier('strong').text).toContain('18+');
   });
 
   it('strong 起点名四种收手形态,给模型可对照的判据', () => {
     const text = getJailbreakTier('strong').text;
     expect(text).toContain('算失败');
     expect(text).toContain('注:');
-    expect(text).toContain('changes');
+    expect(text).toContain('基础块');
+  });
+
+  // 截断的主要成因是思考太长,不是尺度。破限必须自己压住输出预算。
+  it('strong 起给思考块行数上限,并说明超预算就是截断', () => {
+    const text = getJailbreakTier('strong').text;
+    expect(text).toContain('最多 12 行');
+    expect(text).toContain('截断');
+    expect(getJailbreakTier('max').text).toContain('最多 10 行');
+  });
+
+  it('两档都要求按重要性排序输出,让被切时丢的是次要图', () => {
+    expect(getJailbreakTier('strong').text).toContain('重要性从高到低');
   });
 
   it('max 档带机器接口伪装与拒绝黑名单', () => {

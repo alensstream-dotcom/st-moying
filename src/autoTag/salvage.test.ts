@@ -32,9 +32,17 @@ describe('半截 JSON 抢救', () => {
     expect(JSON.parse(out!).images).toHaveLength(1);
   });
 
-  it('一张完整的都没有时返回 null(交给重试)', () => {
-    expect(salvageJsonObject('{"images":[{"position":"P1","tag":"半截')).toBeNull();
+  // 截在第一张中间、一条完整的都没有:补尾巴能保住这一张(position 与 tag 都写完了),
+  // 比整份丢掉重试好——重试再被切就一张图都没有。
+  it('一张完整都没有时补尾巴救回那半张', () => {
+    const out = salvageJsonObject('{"images":[{"position":"P1","tag":"半截');
+    expect(JSON.parse(out!).images).toHaveLength(1);
+    expect(JSON.parse(out!).images[0].tag).toBe('半截');
+  });
+
+  it('连 position 都没有时救不出,交给重试', () => {
     expect(salvageJsonObject('{"images":[]')).toBeNull();
+    expect(salvageJsonObject('{"images":[{"positi')).toBeNull();
     expect(salvageJsonObject('')).toBeNull();
   });
 

@@ -19,7 +19,11 @@ export function salvageJsonObject(raw: string): string | null {
   const body = text.slice(start);
 
   // 扫描一次:记下每个「对象在数组里刚闭合」的位置(优先救这些位置),同时维护开括号栈。
+  // 另外记下每个「在 images 元素对象内部」的逗号位置:一条完整元素都没有时,只能靠它
+  // 把最后那半张图补成合法对象——position 与 tag 是协议里的前两个键,截断时通常已经写完,
+  // 保住它就是保住这一楼唯一的一张图。
   const cuts: Array<{ at: number; closers: string }> = [];
+  const commas: Array<{ at: number; closers: string }> = [];
   const stack: string[] = [];
   let inString = false;
   let escaped = false;
@@ -49,6 +53,10 @@ export function salvageJsonObject(raw: string): string | null {
       }
       continue;
     }
+    // 3 层 = 正处在一个 image 对象内部:这个逗号之前是完整的键值对,可以在此切断并补括号。
+    if (ch === ',' && stack.length === 3) {
+      commas.push({ at: i, closers: [...stack].reverse().join('') });
+    }
   }
 
   // 从后往前试:越靠后救回的图越多。每次都补上此刻栈里欠的收尾括号。
@@ -62,6 +70,38 @@ export function salvageJsonObject(raw: string): string | null {
       }
     } catch {
       // 这个位置也闭合不了,再往前试。
+    }
+  }
+
+  // 一条完整元素都没写出来:退而修尾巴。截停位置常常正好在某个值写完、下一个键还没开始时,
+  // 把尾巴补成合法对象就能保住唯一的那张图。
+  // 顺序:先试「就地收尾」(丢掉悬空的逗号/冒号,字符串没闭合就补引号),再退到逗号切点
+  // ——每往前退一步,留下的字段就更少。
+  const tailCuts: string[] = [];
+  if (stack.length >= 2) {
+    let trimmed = body;
+    if (escaped) trimmed = trimmed.slice(0, -1);
+    trimmed = trimmed.replace(/[,:]\s*$/, '');
+    if (inString && !escaped) trimmed += '"';
+    tailCuts.push(trimmed + [...stack].reverse().join(''));
+    for (let c = commas.length - 1; c >= 0; c -= 1) {
+      tailCuts.push(body.slice(0, commas[c].at) + commas[c].closers);
+    }
+  }
+
+  // 只有带上 position 与 tag 才值得留(解析器缺这两个键会直接拒)。
+  for (const candidate of tailCuts) {
+    try {
+      const value: unknown = JSON.parse(candidate);
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const object = value as Record<string, unknown>;
+        const images = object.images;
+        if (!Array.isArray(images) || !images.length) continue;
+        const tail = images[images.length - 1] as Record<string, unknown> | undefined;
+        if (tail && typeof tail === 'object' && tail.position && tail.tag) return candidate;
+      }
+    } catch {
+      // 继续往前试。
     }
   }
   return null;

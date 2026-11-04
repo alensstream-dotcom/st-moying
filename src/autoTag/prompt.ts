@@ -120,10 +120,26 @@ function backendThinkingPrompt(options: AutoTagSettings, nlOn: boolean, naiCharP
     const template = naiCharPromptsOn
       ? (options.prompts?.naiV5Thinking ?? '').trim() || DEFAULT_NAI_V5_THINKING
       : (options.prompts?.naiThinking ?? '').trim() || DEFAULT_NAI_THINKING;
-    return expandNlSections(template, nlOn);
+    return `${expandNlSections(template, nlOn)}\n\n${THINKING_CAP_NOTE}`;
   }
-  return expandNlSections((options.prompts?.comfyThinking ?? '').trim() || DEFAULT_COMFY_THINKING, nlOn);
+  return `${expandNlSections((options.prompts?.comfyThinking ?? '').trim() || DEFAULT_COMFY_THINKING, nlOn)}\n\n${THINKING_CAP_NOTE}`;
 }
+
+/**
+ * 思考块的行数上限,压在思维链的最后一条 system 里。
+ *
+ * 为什么必须有:思维链模板本身有 7k~11k 字符、86~114 行要求。模型照着逐条过一遍,
+ * 思考块就能写到两三千 token;之后才开始写 JSON,于是输出预算在中途就见底,表现为
+ * 「思考块未闭合」「没有 JSON」「差两个括号」。症状看着像拒答,其实是**思考太长**。
+ *
+ * 所以这里给的是一条可以照着数的硬上限,而不是「简洁一些」这种软话:让它自己盯着行数
+ * 收笔,比在破限词里讲道理有效得多。
+ */
+export const THINKING_LINE_CAP = 12;
+
+const THINKING_CAP_NOTE = `<thinking_budget>
+<thinking> 里**最多写 ${THINKING_LINE_CAP} 行**。写满 ${THINKING_LINE_CAP} 行还有没判完的,就立刻停笔去写 JSON,剩下的边写边定——思考是草稿,长思考不会让图更好,只会把 JSON 挤到被截断。
+</thinking_budget>`;
 
 const SHOT_TAG_RE = /<bbi_image>([\s\S]*?)<\/bbi_image>/g;
 
