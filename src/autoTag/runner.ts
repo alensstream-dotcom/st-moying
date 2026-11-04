@@ -38,9 +38,14 @@ import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
 import { diagnoseShot, shotRetryNote } from '@/autoTag/shotCheck';
+import { salvageJsonObject } from '@/autoTag/salvage';
 import { diagnoseDistance, distanceRetryNote } from '@/autoTag/shotGuide';
 import { duplicatePositionNote, duplicatePositions } from '@/autoTag/positionCheck';
-import { diagnoseTruncation, EMPTY_PLAN_RETRY_NOTE, TRUNCATION_RETRY_NOTE } from '@/autoTag/truncation';
+import {
+  diagnoseTruncation,
+  EMPTY_PLAN_RETRY_NOTE,
+  truncationRetryNote,
+} from '@/autoTag/truncation';
 import {
   BBI_CHAR_EXTRA_KEY,
   CHAR_TAG_FIELDS,
@@ -433,15 +438,37 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             throw new Error(`被渠道内容过滤拦下(${block.reason})`);
           }
           const verdict = diagnoseTruncation(raw);
+          // 截断先尝试抢救:写完了几张图却断在下一张上,那几张是好的,补上收尾括号就能用。
+          // 救得回来就少发一次请求、少丢一张图;救不动再走重试。
+          let text = raw;
+          let salvaged = 0;
           if (verdict.truncated) {
-            // 形态上就是被掐断的:重试要降载,而不是原样再发一遍同样长度的请求。
-            retryNote = TRUNCATION_RETRY_NOTE;
-            throw new Error(`输出被截断(${verdict.reason})`);
+            const repaired = salvageJsonObject(raw);
+            if (repaired) {
+              try {
+                // 抢救出来的图必然少于原计划(尾巴被截掉了),这里不卡下限:
+                // 「给 2 张」也比「整楼没有图」好。
+                parseImagePlan(repaired, preparedTarget.segments, 0, promptOptions.maxImages);
+                text = repaired;
+                salvaged = 1;
+              } catch {
+                salvaged = 0;
+              }
+            }
+            if (!salvaged) {
+              // 形态上就是被掐断的:重试要降载,而不是原样再发一遍同样长度的请求。
+              // 降的是图数(输出成本的主体),单独把字写短没用——图数不减照样在同一处断。
+              retryNote = truncationRetryNote(Math.max(1, promptOptions.minImages));
+              throw new Error(`输出被截断(${verdict.reason})`);
+            }
+            console.warn(
+              `[墨影] 第 ${floor} 楼输出被截断(${verdict.reason}),已救回可闭合的部分继续`,
+            );
           }
           const candidate = parseImagePlan(
-            raw,
+            text,
             preparedTarget.segments,
-            promptOptions.minImages,
+            salvaged ? 0 : promptOptions.minImages,
             promptOptions.maxImages,
           );
           // 称呼归并与外貌兜底:模型若在 characters[].name 或 changes[].name 里写了已建档角色的

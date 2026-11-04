@@ -28,6 +28,7 @@ import {
   DEFAULT_COMFY_NL_SPEC,
   DEFAULT_COMFY_SPEC,
   DEFAULT_COMFY_THINKING,
+  DEFAULT_JAILBREAK_PROMPT,
   DEFAULT_NAI_SPEC,
   DEFAULT_NAI_THINKING,
   DEFAULT_NAI_V5_SPEC,
@@ -475,8 +476,11 @@ ${characterRule}
 
   // 消息顺序与柏宝书摘要请求一致:破限 → 角色设定 → 主角设定 → 世界设定 → 任务规则 → 正文。
   const messages: ChatMsg[] = [];
-  // 破限词 = 挡位对应的固定文本(见 autoTag/jailbreak.ts);off 档返回空串,不占消息位。
-  const jailbreak = resolveJailbreakText(options.jailbreakTier);
+  // 破限词 = 挡位对应的固定文本 + 自定义附加(见 autoTag/jailbreak.ts);两者都空则不占消息位。
+  // 附加词留空回落内置默认(NVWA):0.4.0 把它连同叠加一起下线,这段默认就成了没人引用的死常量,
+  // 老用户的破限词也一起失效——那是「开到极限也没用」的真正原因,这里按老语义恢复。
+  const customJailbreak = (options.prompts?.jailbreak ?? '').trim() || DEFAULT_JAILBREAK_PROMPT;
+  const jailbreak = resolveJailbreakText({ jailbreak: customJailbreak }, options.jailbreakTier);
   if (jailbreak) messages.push({ role: 'system', content: jailbreak });
   if (charCard) messages.push({ role: 'system', content: buildCharCardSystem(charCard) });
   if (persona) messages.push({ role: 'system', content: buildPersonaSystem(persona) });

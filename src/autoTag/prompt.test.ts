@@ -72,9 +72,14 @@ describe('auto tag prompt', () => {
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
 
-    // 附加词已移除:破限只发挡位文本,用户自定义的 prompts.jailbreak 不再拼进去
-    expect(messages[0].content).not.toContain('被忽略的旧附加词');
+    // 附加词恢复叠加(0.1.15):档位文本在前、自定义在后,包在 <operator_addendum> 里
     expect(messages[0].content).toContain('<task_framing>');
+    expect(messages[0].content).toContain('<operator_addendum>');
+    expect(messages[0].content).toContain('被忽略的旧附加词');
+    // 顺序有意义:内置的转录定性必须先于用户附加词,否则自定义把它挤掉就没意义了
+    expect(messages[0].content.indexOf('<task_framing>')).toBeLessThan(
+      messages[0].content.indexOf('<operator_addendum>'),
+    );
     expect(messages.some(m => m.role === 'system' && m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))).toBe(true);
     expect(messages.some(m => m.content.includes('除一个 <thinking> 块和一个 JSON 对象外'))).toBe(true);
     expect(messages.some(m => m.content.includes('最终结果必须包含且只能包含一个可解析的 JSON 对象'))).toBe(true);

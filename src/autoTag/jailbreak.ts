@@ -32,6 +32,11 @@
 
 export type JailbreakTierId = 'off' | 'light' | 'standard' | 'strong' | 'max';
 
+/** 只取用到的这一格,不把整个 settings 拖进本模块(纯文本模块,便于单测)。 */
+export interface JailbreakPrompts {
+  jailbreak?: string;
+}
+
 export interface JailbreakTier {
   id: JailbreakTierId;
   /** 设置页显示的名字。 */
@@ -177,14 +182,26 @@ export function getJailbreakTier(id: unknown): JailbreakTier {
 }
 
 /**
- * 最终置顶 system 的正文:只由档位决定,发一份固定文本。
+ * 最终置顶 system 的正文:档位文本 + 用户自定义附加词,档位在前、自定义在后。
  *
- * 为什么不再叠加用户自定义文本(0.4.1):叠加后「这一档到底发了什么」无法预期 ——
- * 同一档在两个聊天里行为不同,用户排查截断时会先怀疑挡位而不是自己那段附加词。
- * 要补规矩就去改档位文本的来源(这份文件),或临时把挡位调到 max。
+ * 语义(0.4.6 起恢复 0.4.0 的叠加):
+ * - 内置档位是「转录定性」,不只负责挡拒答,还负责压截断与反说教;自定义附加词是
+ *   「渠道经验」(如整段 NVWA 身份/授权词),两者管的不是同一件事,谁都不该吃掉谁。
+ * - `off` 档不带内置文本,等于「只用自定义」——这正是「我有自己的破限词」的正确用法,
+ *   不会被一段用不上的内置话术稀释。
+ * - 两份都为空 → 返回空串,调用方不插入这条 system。
  *
- * 返回空串 = 调用方不插入这条 system(off 档)。
+ * ⚠ 历史坑:0.4.0 曾改成「只发档位文本」,理由是叠加后「这一档到底发了什么」不可预期。
+ * 结果是把用户自己调好的破限整段静默吃掉——连 DEFAULT_JAILBREAK_PROMPT 这段内置默认
+ * 都成了没人引用的死常量。排查时看到「开到极限也没用」,根因就是这里。
+ * 附加词单独包在 <operator_addendum> 里,要看发了什么直接搜这个标签即可,预期性问题已经不成立。
+ *
+ * 返回空串 = 调用方不插入这条 system(off 档且自定义为空)。
  */
-export function resolveJailbreakText(tierId: unknown): string {
-  return getJailbreakTier(tierId).text.trim();
+export function resolveJailbreakText(prompts: JailbreakPrompts | undefined, tierId: unknown): string {
+  const custom = (prompts?.jailbreak ?? '').trim();
+  const base = getJailbreakTier(tierId).text.trim();
+  if (!base) return custom;
+  if (!custom) return base;
+  return `${base}\n\n<operator_addendum>\n${custom}\n</operator_addendum>`;
 }

@@ -13,6 +13,7 @@ import {
   applyRecommendedNaiScenePreset,
   DEFAULT_COMFY_SPEC,
   DEFAULT_COMFY_THINKING,
+  DEFAULT_JAILBREAK_PROMPT,
   DEFAULT_NAI_V5_SPEC,
   DEFAULT_NAI_V5_THINKING,
   IMAGE_DISPLAY_SIZES,
@@ -153,9 +154,9 @@ function normalizeAutoTagNumbers(changed?: 'minImages' | 'maxImages' | Event) {
   );
 }
 
-/* —— 破限挡位:难度阶梯,文本见 autoTag/jailbreak.ts。
-   旧的「破限附加词」输入项已下线(叠加文本会让「这档到底发了什么」无法预期),
-   现在只按档位发一份固定 system。 */
+/* —— 破限挡位:难度阶梯 + 自定义叠加,文本见 autoTag/jailbreak.ts。
+   叠加关系:档位文本在前、附加词在后;选 off 只发附加词。
+   附加词在「提示词」组里留空时回落内置默认(DEFAULT_JAILBREAK_PROMPT)。 */
 const JAILBREAK_OPTIONS = JAILBREAK_TIERS.map(t => ({ value: t.id, label: t.label }));
 const jailbreakTierSel = computed<string>({
   get: () => settings.autoTag.jailbreakTier,
@@ -207,6 +208,13 @@ const NL_SECTION_MACROS = [
 ];
 
 const TAG_PROMPT_METAS: TagPromptMeta[] = [
+  {
+    key: 'jailbreak',
+    label: '破限附加词',
+    hint: '叠加在【破限挡位】选中的文本之后，用来补你自己渠道的经验（例如整段模型身份/授权词）。留空则用内置默认那段 NVWA 破限；档位选「关闭」时只发这一段。改的是「附加词」，挡位本身的措辞在源码里。',
+    builtin: DEFAULT_JAILBREAK_PROMPT,
+    macros: [],
+  },
   {
     key: 'naiV5Spec',
     label: 'NAI \u89c4\u8303',
@@ -785,7 +793,7 @@ async function confirmUpdate() {
         </div>
         <p class="bbi-field-hint">{{ jailbreakTierSummary }}</p>
         <p class="bbi-field-hint">
-          作为置顶 system 发出。日常剧情嫌模型变笨就往下降一档;NSFW 楼老被截断就往上升。改完立刻对新请求生效,不必重启。
+          作为置顶 system 发出,与「破限附加词」是叠加关系:档位文本在前、附加词在后,选「关闭」只发附加词;附加词留空时用内置默认那段。日常剧情嫌模型变笨就往下降一档;NSFW 楼老被截断就往上升。改完立刻对新请求生效,不必重启。
         </p>
 
         <label class="bbi-switch-row">

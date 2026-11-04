@@ -61,6 +61,7 @@ src/
 │   ├── outfitState.ts # 服装账本:每人衣着与穿脱程度落 message.extra,跨楼继承 + 跳变诊断
 │   ├── castCheck.ts   # 画面事实闭环:人数对不上正文、道具没有落点(重试不再放行)
 │   ├── blockGuard.ts  # 渠道拦截:形态判定 + 兼容版降载重试(过滤不认授权话术,只认文本)
+│   ├── salvage.ts     # 半截 JSON 抢救:从后往前找可闭合处补括号,先保已写完的图再谈重试
 │   └── charReuse.ts   # 正文外形与已建档角色逐维对上 → 点名「这段就是她」,别重复建档
 ├── data/              # 素材库(内置条目 + 召回打分;条目形状见 loreTypes.ts)
 │   ├── loreTypes.ts   # 条目契约:服装/姿势/脸型/体型/同人/自定义
@@ -276,6 +277,11 @@ runForFloor(floor, opts)
 
 全部可编辑提示词(破限/规范/思维链)在 `state/settings.ts` 有内置默认常量
 (`DEFAULT_*_PROMPT`/`DEFAULT_*_SPEC`),留空回落默认 —— 改默认提示词内容先看这里。
+
+**破限 = 档位文本 + `prompts.jailbreak` 附加词**(`resolveJailbreakText(prompts, tierId)`,档位在前、
+附加词包进 `<operator_addendum>`;off 档只发附加词;留空回落 `DEFAULT_JAILBREAK_PROMPT`)。
+⚠ 历史坑:0.4.0 曾改成「只发档位文本」并下线 UI 入口,把用户自调的破限整段静默吃掉、
+`DEFAULT_JAILBREAK_PROMPT` 也变成没人引用的死常量;0.1.15 恢复叠加并补回 UI。
 
 **破限挡位只管这条副 API 请求,不进正文生成**(正文由 ST 主 API 出,插件塞不进任何提示词)。
 而渠道的内容过滤查的是请求与响应**文本**、不认授权话术,越露骨越容易被整条掐掉。所以
@@ -1002,6 +1008,7 @@ API 对象 `Object.freeze`,一个插件改不动下一个插件拿到的东西�
 | 服装跨楼账本(衣着 + 穿脱程度继承,跳变即重试) | src/autoTag/outfitState.ts,写回走 messageEdit.applyMessageText 的 extraUpdate 数组(runner 每次落盘同时写角色增量与账本),注入在 prompt.ts 的 outfitStateBlock |
 | 多人入画取舍(施受双方/接触点/道具落点必须进画面,可省项) | src/autoTag/prompt.ts 规则 6b + 6c,人数口径在规则 17 |
 | 渠道内容过滤(命中即定性 + 兼容版降载重试) | src/autoTag/blockGuard.ts(diagnoseBlock + neutralizeMessages + BLOCK_RETRY_NOTE),接入 runner.ts 的 validate 与 catch,blockedOnce 置位后所有重试走中性化提示词 |
+| 输出被截断(先抢救已写完的图,再砍图数重试) | src/autoTag/salvage.ts(salvageJsonObject,从后往前找可闭合位置)+ src/autoTag/truncation.ts(truncationRetryNote 按图数降载),接在 runner.ts validate 的截断分支 |
 | 角色库 v3(基线+楼层增量/changes ops/@占位符兜底/历史回滚) | src/autoTag/charAnchors.ts + src/state/charTags.ts + src/autoTag/runner.ts |
 | Vibe 分组 / 搜索 / 启用集合判定 | src/backends/vibeGroups.ts(纯逻辑)+ NaiPanel.vue(交互) |
 | 副 API 请求(代理/SSE/超时/测试) | src/api/client.ts |

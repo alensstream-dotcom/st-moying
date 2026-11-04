@@ -76,19 +76,34 @@ function braceDepth(json: string): number {
 /**
  * 命中截断时的重试附加指令。
  *
- * 写在重试请求的最后一条 system 里,只影响这一次:要求模型把输出压到能一次说完,
- * 并把「先闭合结构」排在「多给一张图」之前——截断的根因是输出太长,
- * 不是模型不懂要求。
+ * 写在重试请求的最后一条 system 里,只影响这一次:要求模型把输出压到能一次说完。
+ *
+ * 关键在于**减的是图数,不是字数**。旧版只说「把 tag 写短、思考压短」,可输出的主要
+ * 成本是「一张图 = 一个 Base 串 + 每角色一个块」,图数不减,重试照样在同一处被掐断——
+ * 用户看到的就是反复报「JSON 未闭合」。所以这里直接把本楼图数压到下限(没有下限就压到 1),
+ * 先保证交得出完整 JSON;少的那张比整楼空白好补。
+ *
+ * @param keep 本次允许的最大图数;传 0 表示不限(由调用方按设置算)
  */
-export const TRUNCATION_RETRY_NOTE = [
-  '<retry_after_truncation>',
-  '上一次的输出在中途被切断了(思考块或 JSON 没有闭合)。本次必须一次说完:',
-  '- <thinking> 压到 5 行以内,只写结论,不再逐条复述正文。',
-  '- 每张图的 tag 只保留必要词,不写同义重复;characters 里每个角色一块即可。',
-  '- 先写完 Base 再逐个写角色,最后立刻闭合 JSON;宁可少给一张图,也不要在中途断掉。',
-  '- 不要解释为什么变短,直接从 <thinking> 开始输出。',
-  '</retry_after_truncation>',
-].join('\n');
+export function truncationRetryNote(keep = 0): string {
+  const limit = keep > 0
+    ? `- 本楼最多只出 ${keep} 张图，别的候选全部放弃；先把这 ${keep} 张写完整。`
+    : '- 本楼只出 1 张图，别的候选全部放弃；先把这 1 张写完整。';
+  return [
+    '<retry_after_truncation>',
+    '上一次的输出在中途被切断了(思考块或 JSON 没有闭合)。本次必须一次说完:',
+    // 图数是输出的主体成本:先砍它,再谈写得短不短。
+    limit,
+    '- <thinking> 压到 5 行以内,只写结论,不再逐条复述正文。',
+    '- 每张图的 tag 只保留必要词,不写同义重复;characters 里每个角色一块即可。',
+    '- 先写完 Base 再逐个写角色,最后立刻闭合 JSON;宁可少给一张图,也不要在中途断掉。',
+    '- 不要解释为什么变短,直接从 <thinking> 开始输出。',
+    '</retry_after_truncation>',
+  ].join('\n');
+}
+
+/** 兼容旧调用:不限图数时的重试指令。 */
+export const TRUNCATION_RETRY_NOTE = truncationRetryNote(0);
 
 /**
  * 「模型交了空 images」时的第二次要求。
