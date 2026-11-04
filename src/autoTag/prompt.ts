@@ -403,6 +403,13 @@ ${sizeRule}
   - **从属关系**：道具属于谁的手、衣服挂在谁身上、身体属于谁，都要绑定；不许让同一个物件同时归两个人（一双不属于任何人的手最容易画成第三个人）。
   - 人数 tag 与角色块必须一致：画面里有 1 女 2 男就写 1girl, 2boys 并给三个人各一个角色块（NAI V5），只写 2girls 而实际两个人，模型就会画出多出来的器官。男主的局部身位也要占一个人数，不能因为不写脸就不计人。
 6c. 落 tag 之前先用一句话把这一格说成人话：「谁 · 用什么东西 · 在哪个部位 · 做什么 · 什么反应」。这句概括是这一格的骨架，tag 只是它的逐项翻译——写 tag 时对着它逐字核，漏一项就补一项。**这句写不出来的格子不许画**（说明你自己也没看清画面，画出来必然是远景加站桩）。
+  - **长段剧情五刀剔除法（当选中的段落字数很多时，先砍掉五类非画面噪音再写概括句）**：
+    · 第一刀砍台词与声音：骂声、求饶、喘息声本身画不出来，一律转化为女主的嘴型与微表情（parted lips、biting lip、open mouth、gasping、tears）。
+    · 第二刀砍回忆、心理与比喻（最容易污染画面）：如正文写「她想起昨日在会议室里还是高高在上的女总裁，此刻却像猎物般任人摆布」，严禁把回忆或比喻里的 meeting room、business suit、prey 写进 tag，只提炼当前屈辱潮红的表情（humiliation、blush、clenched teeth）。
+    · 第三刀砍快门前的铺垫过渡动作（只留峰值定格一帧）：长段常写连续动作链（如「他把空酒杯扔在地毯上 → 扯松领带 → 走上前按住她的手腕 → 另一只手探入裙底碾压阴蒂」），一张图只有一次快门！已做完的「扔酒杯、扯领带、走上前」必须全部砍掉，只画最后接触最强烈的峰值定格帧；把先后动作全写进去会让男主长出四只手。
+    · 第四刀砍抽象副词与修辞：「粗暴地、慢条斯理地、不知廉耻地」全部砍掉，转化为可见的物理形变（fingers sinking into skin、grabbed breast、arched back、curled toes、grabbing bedsheet）。
+    · 第五刀砍镜头外的远景与边缘杂物：特写/半身/七分身下，正文顺嘴提的远处家具、窗外街景、景别外的鞋袜全部砍掉。
+    · 【长段脱水参考正例】：原段 160 字写完「台词求饶＋回忆昨日会议室冷艳总裁＋男人扔酒杯扯领带走上前＋一手将她双腕按在落地窗上＋一手探入包臀裙与蕾丝内裤碾压阴蒂令她弓腰流泪」→ 五刀剔除后唯一快门概括句：「男主在背后一手将女主双腕按在落地窗上、一手探入她掀起的包臀裙与内裤碾压阴蒂，女主弓腰咬唇流泪」。
   - 最重要的三件（谁在动、用什么、落在哪）必须出现在 tag 的第一句，位置固定在最前面；其余细节按「离接触点由近到远」排，越远越可能被模型丢，所以远处的干脆不写。
   - **tag 不是越多越好**：只写看得见且必须看见的。同一个意思不重复（large breasts 与 huge breasts 不要并存、long hair 与 very long hair 也不要），效果词不叠三层（不要太 seductive、beautiful、amazing 一路形容词），只写会在画面上留下具体形状的东西——剪裁、接触、方向、状态。tag 数控制在 25～40 个，超过就说明你在塞细节，先砍远景与服饰细节。
   - 动作与道具要绑成词组落在一起（brush on pussy、hand pressing her back、fingers inside her），分成 brush 与 pussy 两个散 tag，模型就只会画一支飘着的毛笔和一个裸体。
@@ -477,6 +484,10 @@ ${characterRule}
     · 涂抹 / 书写 → X on \<部位\>、writing on \<部位\>、smeared across \<部位\>
     · 碰到自己 → \<部位\> on own \<部位\>（hand on own cheek、fingers on own lips），不写 hand、cheek
   - **先定空间关系，再写动作**：两人的位置关系是构图的地基，必须在 base 里先写清——facing each other、in front of him、behind her、side by side、back to back、straddling him、bent over、kneeling in front of him。位置关系缺了，模型只能把两个人并排摆好，再让谁也没碰到谁。
+  - **多人身体接触＋物-人接触的「三元闭环绑定公式」**（同时解决人和人的运动方向一致、物体和人的关系与剧情一致）：
+    · 第一元【Base 写空间方位＋共享接触词组】：把人と人、物与身体交汇的接触点写成带介词/分词的短语放进 Base（如 calligraphy brush on pussy, writing on belly, red ink on skin, hand spreading her thighs）。
+    · 第二元【施动方写持有物＋source#施力动作】：在发起动作的角色块写 holding \<道具\> 与成对的 source#\<动作\>（如男主块写 boy, faceless male, pov hands, holding calligraphy brush, source#writing on body, source#spreading her thighs）。
+    · 第三元【受动方写受力部位＋target#受迫状态＋生理反应】：在承受动作的女主角色块写明被接触的部位、target#\<动作\> 与身体形变反应（如 spread legs, pussy, belly, red ink on skin, target#written on, target#thighs spread, biting lip, blush, trembling, curled toes）。三元缺一不可，且有 source# 就必须在受力方配对写 target#，锁死运动箭头方向。
   - 绑不住就换取景，不要硬绑：接触太细、部位太小、两人全身塞不进一个画面时，改成 close-up + 只留这一段接触（她的手指＋他的手背），比画两个人各自站着强得多。
   - 施受方向跟着正文走：女主主动时动作词挂在女主身上（她伸手、她拉、她按、她跨坐），男主只写被作用的部位。
   - 局部特写（埋胸、摸腿、亲锁骨这类）**必须尽量同框女主的眼睛或脸**：改用 from above + looking up + upper body，或 cowboy shot + 俯视，让关键部位和她的脸同时在画面里；同框不下就退一档景别，**绝不许把头切掉只画两条腿**。只有当正文的看点就是那个部位本身（乳首被含住、穴口被拨开、手指进出）时，才允许纯局部 close-up / lower body，此时靠 body tag 交代是哪一层。

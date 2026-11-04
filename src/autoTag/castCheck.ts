@@ -121,6 +121,17 @@ export function diagnoseCast(
         gaps.push({ kind: 'missing-actor', detail: `角色「${item.name}」的 tag 是空的` });
       }
     }
+    // 多人角色块使用了单向动作标签 source# / target# 时,必须成对闭合(一施一受)
+    if (named >= 2) {
+      const hasSource = characters.some(item => /\bsource#/i.test(item.tag ?? ''));
+      const hasTarget = characters.some(item => /\btarget#/i.test(item.tag ?? ''));
+      if (hasSource !== hasTarget) {
+        gaps.push({
+          kind: 'contact-unbound',
+          detail: `角色块写了单边 ${hasSource ? 'source#' : 'target#'} 却没有另一方的 ${hasSource ? 'target#' : 'source#'} 配对,多人接触的施受运动方向不闭合`,
+        });
+      }
+    }
   }
   return gaps;
 }
@@ -128,42 +139,61 @@ export function diagnoseCast(
 /**
  * 道具表。key = 匹配正文的写法,value = 该道具在 tag 里的写法。
  *
- * 只收「必须在某个部位上作用」的道具:笔、鞭子、冰块这些离了落点就没有意义。
- * 杯子、手机这类拿着就行、落点无所谓的不收。
+ * 只收「必须在某个部位上作用」的道具:笔、鞭子、冰块、绳索、口球、刀刃这些离了落点就没有意义。
+ * 普通随身物件不收。
  */
 const PROP_RULES: ReadonlyArray<[RegExp, RegExp]> = [
   [/毛笔|毛笔墨水|笔尖|笔杆/, /(?:brush|calligraphy[-_ ]?brush|paintbrush)/i],
   [/羽毛(?:棒|尖)?拨|鸡毛掸/, /feather/i],
   [/蜡烛|烛油|蜡油/, /(?:candle|wax|wax[-_ ]?play)/i],
   [/冰块|冰块儿/, /ice/i],
-  [/鞭子|皮鞭|马鞭/, /(?:whip|crop)/i],
-  [/按摩棒|跳蛋|振动棒|假阳具|拉珠/, /(?:vibrator|dildo|sex[-_ ]?toy|anal[-_ ]?beads)/i],
+  [/鞭子|皮鞭|马鞭|戒尺|藤条/, /(?:whip|crop|paddle|cane|rod)/i],
+  [/按摩棒|跳蛋|振动棒|假阳具|拉珠/, /(?:vibrator|dildo|sex[-_ ]?toy|anal[-_ ]?beads|egg[-_ ]?vibrator)/i],
   [/毛笔|钢笔|记号笔|马克笔/, /(?:pen|marker)/i],
+  [/绳子|麻绳|红绳|绳索|捆绑|五花大绑/, /(?:rope|shibari|bondage)/i],
+  [/手铐|脚铐|镣铐|铐住/, /(?:handcuffs|shackles|cuffs|manacles)/i],
+  [/项圈|狗链|锁链|铁链/, /(?:collar|leash|chain)/i],
+  [/口球|眼罩|封口胶带|蒙住眼睛/, /(?:gag|ball[-_ ]?gag|blindfold|tape)/i],
+  [/刀刃|匕首|刀尖|剑尖|短刀/, /(?:knife|blade|dagger|sword)/i],
+  [/针筒|注射器|针尖/, /(?:syringe|needle)/i],
+  [/红酒|酒液|牛奶|精油|润滑液/, /(?:wine|milk|oil|lotion)/i],
 ];
 
 /** 落点/接触部位词。道具必须落在这些词里的某一个上。 */
 const TARGET_RE =
-  /(?:breast|nipple|areola|belly|navel|thigh|thighs|inner[-_ ]?thigh|hip|hips|waist|crotch|pussy|vulva|clitoris|labia|mons|groin|back|spine|shoulder|neck|face|cheek|chin|lips|chest|collarbone|skin)/i;
+  /(?:breast|nipple|areola|belly|navel|thigh|thighs|inner[-_ ]?thigh|hip|hips|waist|crotch|pussy|vulva|clitoris|labia|mons|groin|back|spine|shoulder|neck|face|cheek|chin|lips|mouth|tongue|throat|ear|ears|eye|eyes|chest|collarbone|skin|wrist|wrists|ankle|ankles|foot|feet|toe|toes|ass|butt|buttocks|anus)/i;
 
 /**
- * 正文说「用道具在某处作用」,tag 却没写出落点。
+ * 正文说「用道具在某处作用」,tag 却没写出落点或没绑定到部位上。
  *
- * 只在两件事同时成立时判:正文命中道具、tag 里也有这个道具;
+ * 只在两件事同时成立时判:正文命中道具、tag(含角色块)里也有这个道具;
  * tag 里压根没写道具时是另一回事(可能这格确实没入画)。
  */
-export function diagnosePropTarget(text: string, tag: string): CastGap[] {
+export function diagnosePropTarget(text: string, tag: string, charTags: string[] = []): CastGap[] {
   const hay = text ?? '';
-  const tagText = tag ?? '';
+  const allTagText = [tag ?? '', ...charTags].filter(Boolean).join(', ');
   const gaps: CastGap[] = [];
   for (const [zh, en] of PROP_RULES) {
     const zhMatch = hay.match(zh);
     if (!zhMatch) continue;
-    if (!en.test(tagText)) continue;
+    if (!en.test(allTagText)) continue;
     // 道具出现了,但没有任何部位词:沦为摆设
-    if (!TARGET_RE.test(tagText)) {
+    if (!TARGET_RE.test(allTagText)) {
       gaps.push({
         kind: 'prop-without-target',
         detail: `正文写了用「${zhMatch[0]}」作用在身体上,画面有道具却没有落点部位`,
+      });
+      break;
+    }
+    // 道具和部位都在,但如果正文明确有接触动作(写/划过/贴/刺/滴/捆等),却没有任何介词或动词绑定,模型会画成两样独立物体
+    if (
+      (CONTACT_VERB_RE.test(hay) || /(?:写字|抽打|滴落|滴在|捆住|绑住|铐住|戴上|塞入)/.test(hay)) &&
+      !BINDING_RE.test(allTagText) &&
+      !/(?:source#|target#|mutual#)/i.test(allTagText)
+    ) {
+      gaps.push({
+        kind: 'contact-unbound',
+        detail: `正文写了用「${zhMatch[0]}」作用在身体上,画面虽有道具与部位却只是孤立并列,未用介词或动作词组绑定(应写 <道具> on/against/into/around <部位>)`,
       });
       break;
     }
@@ -178,15 +208,15 @@ export function diagnosePropTarget(text: string, tag: string): CastGap[] {
  * 道具在、身体在,但两者之间没有绑定词,模型只会并排画两样东西。
  */
 const BINDING_RE =
-  /(?:\bon\b|\bonto\b|\bagainst\b|\binto\b|\binside\b|\bbetween\b|\bover\b|\bacross\b|\balong\b|\bdown\b|\bup\b|pressing|pressed|touching|touched|resting|rests|rubbing|pulling|pulled|pushing|pushed|sliding|slides|dripping|dripped|held|holding|wrapped|around|inserted|penetrat|spread|smeared|trailing|traced|lifted|lifting)/i;
+  /(?:\bon\b|\bonto\b|\bagainst\b|\binto\b|\binside\b|\bbetween\b|\bover\b|\bacross\b|\balong\b|\bdown\b|\bup\b|\bunder\b|\bthrough\b|pressing|pressed|touching|touched|resting|rests|rubbing|pulling|pulled|pushing|pushed|sliding|slides|dripping|dripped|held|holding|wrapped|around|inserted|penetrat|spread|smeared|trailing|traced|lifted|lifting|writing|written|grabbing|grabbed|pinning|pinned|stepping|stepped|bound|tied|licking|sucking|kissing|biting|spanking|straddling)/i;
 
 /**
- * 正文里「道具作用在身体上」的动作词。命中才查绑定。
+ * 正文里「道具或肢体作用在身体上」的动作词。命中才查绑定。
  *
  * 不算接触的:拿、握、举、放回桌上——这些本来就只是握着,落点无所谓。
  */
 const CONTACT_VERB_RE =
-  /(?:划过|划向|滑向|滑过|蹭过|蹭向|贴上|贴住|抵住|抵在|按在|按上|压上|压在|落在|放到|放在|抹在|涂在|写上|写向|点上|刺入|探进|塞进|插入|伸进|搅动|摩擦|磨蹭|扫过|拂过|绕上|缠上|卷上|勾住|勾在|挑开|拨开|推开|分开)/;
+  /(?:划过|划向|滑向|滑过|蹭过|蹭向|贴上|贴住|抵住|抵在|按在|按上|压上|压在|落在|放到|放在|抹在|涂在|写上|写向|点上|刺入|探进|塞进|插入|伸进|搅动|摩擦|磨蹭|扫过|拂过|绕上|缠上|卷上|勾住|勾在|挑开|拨开|推开|分开|揉捏|捏住|掐住|抓着|按住)/;
 
 /**
  * 道具或第二个人在正文里接触了身体,tag 却只是把它们并排列出。
@@ -196,22 +226,22 @@ const CONTACT_VERB_RE =
  *
  * @param text     该图对应那一句正文
  * @param tag      Base tag
- * @param charTags 角色块 tag(NAI V5)。绑定词常常写在角色块里,所以要一起看。
+ * @param charTags 角色块 tag(NAI V5)。绑定词与部位常常写在角色块里,所以要合起来看。
  */
 export function diagnoseContact(text: string, tag: string, charTags: string[] = []): CastGap[] {
   const hay = text ?? '';
   const verb = hay.match(CONTACT_VERB_RE);
   if (!verb) return [];
   const tagText = tag ?? '';
-  if (!tagText.trim()) return [];
-  // 绑定词可能写在 Base,也可能写在任一角色块里——任一处有就算绑定成立
-  if (BINDING_RE.test(tagText)) return [];
-  if (charTags.some(item => BINDING_RE.test(item ?? ''))) return [];
+  const allText = [tagText, ...charTags].filter(Boolean).join(', ');
+  if (!allText.trim()) return [];
+  // 绑定词或 NAI V4.5/V5 的 source#/target#/mutual# 出现在任一处就算绑定成立
+  if (BINDING_RE.test(allText) || /(?:source#|target#|mutual#)/i.test(allText)) return [];
 
-  // 只有当画面里确实同时有「手/手臂/道具」与「身体」两者时才可能是并列画法;
+  // 只有当画面(含 Base 与角色块)里确实同时有「手/手臂/道具」与「身体」两者时才可能是并列画法;
   // 少任何一边都不是这条要管的事。
-  const hasActor = /(?:hand|hands|arm|arms|finger|fingers|pov hands|object|prop)/i.test(tagText);
-  const hasBody = TARGET_RE.test(tagText);
+  const hasActor = /(?:hand|hands|arm|arms|finger|fingers|pov hands|object|prop)/i.test(allText);
+  const hasBody = TARGET_RE.test(allText);
   if (!hasActor || !hasBody) return [];
 
   return [
@@ -231,10 +261,10 @@ export function castRetryNote(gaps: CastGap[]): string {
 ${lines.join('\n')}
 改法:
 - 人数:正文里有几个在场者就写几个,人数 tag 写成 2girls/1boy+2girls 这样,并给每个可见个体一个角色块;两个人只剩一个人时,画面就会退化成自慰。
-- 道具:写了道具就必须写它落在哪个部位上,再补该部位的接触词(brush on pussy、whip on thigh 这类);只写一件孤立道具,模型会把它画在手里当摆设。${
+- 道具:写了道具就必须按「三元闭环」写清谁拿着(holding <prop>)、落在哪个部位上(<prop> on/against/into/around <部位>)、以及受作部位的反应;只写一件孤立道具,模型会把它画在半空当摆设。${
     hasContact
       ? `
-- 接触:并排列出「手/道具」和「身体部位」不会让它们碰上,必须用一个绑定词把两者钉在一起(hand on cheek、brush on pussy、fingers inside her、hand pressing her back);英文介词 on / against / into / around 或现在分词 pressing / holding / resting 都算绑定。实在绑不住就改取景:close-up + hand focus,让画面里只留下这一段接触。`
+- 接触:并排列出「手/道具」和「身体部位」不会让它们碰上,必须用一个绑定词把两者钉在一起(hand on cheek、brush on pussy、fingers inside her、hand pressing her back),并在 NAI V4.5/V5 角色块中用成对的 source#<动作> 与 target#<动作> 锁定施受方向;英文介词 on / against / into / around 或现在分词 pressing / holding / resting / writing 都算绑定。实在绑不住就改取景:close-up + hand focus,让画面里只留下这一段接触。`
       : ''
   }
 - 只改这些问题对应的部分,不过改动的地方保持原样。

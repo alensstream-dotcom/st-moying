@@ -583,6 +583,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                   ...aliasPresent,
                 ]),
               ];
+              const charTagList = (image.characters ?? []).map(character => character.tag);
               const found = [
                 ...diagnoseCast(
                   text,
@@ -591,11 +592,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                   present,
                   profile.naiCharPrompts,
                 ),
-                ...diagnosePropTarget(text, image.tag),
+                ...diagnosePropTarget(text, image.tag, charTagList),
                 ...diagnoseContact(
                   text,
                   image.tag,
-                  (image.characters ?? []).map(character => character.tag),
+                  charTagList,
                 ),
               ];
               for (const gap of found) {

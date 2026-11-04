@@ -1478,5 +1478,7 @@ describe('思考块预算上限', () => {
     expect(all).toContain('严禁给男主编造发色、瞳色与正脸表情');
     expect(all).toContain('显式情欲与体位接触锚点（最高优）');
     expect(all).toContain('前戏半脱/诱惑姿态 → 核心体位推进 → 敏感点特写/高潮余韵');
+    expect(all).toContain('长段剧情五刀剔除法');
+    expect(all).toContain('三元闭环绑定公式');
   });
 });

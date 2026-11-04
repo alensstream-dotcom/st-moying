@@ -90,6 +90,34 @@ describe('diagnoseCast', () => {
     ], [], false);
     expect(gaps).toEqual([]);
   });
+
+  it('多人角色块只写单边 source# 缺 target# 配对时报警(运动关系不闭合)', () => {
+    const gaps = diagnoseCast(
+      '他从背后揉捏她的胸口',
+      '1girl, 1boy',
+      [
+        { name: '林夏', tag: 'girl, large breasts, blush' },
+        { name: '男主', tag: 'boy, faceless male, pov hands, source#grabbing breasts' },
+      ],
+      [],
+      true,
+    );
+    expect(gaps.some(gap => gap.kind === 'contact-unbound' && gap.detail.includes('source#'))).toBe(true);
+  });
+
+  it('多人角色块 source# 与 target# 成对出现时通过', () => {
+    const gaps = diagnoseCast(
+      '他从背后揉捏她的胸口',
+      '1girl, 1boy',
+      [
+        { name: '林夏', tag: 'girl, large breasts, target#grabbed, blush' },
+        { name: '男主', tag: 'boy, faceless male, pov hands, source#grabbing breasts' },
+      ],
+      [],
+      true,
+    );
+    expect(gaps).toEqual([]);
+  });
 });
 
 describe('diagnosePropTarget', () => {
@@ -101,6 +129,26 @@ describe('diagnosePropTarget', () => {
 
   it('写了落点就不报警', () => {
     expect(diagnosePropTarget('毛笔在她阴部上写字', '1girl, brush on pussy, spread pussy')).toEqual([]);
+  });
+
+  it('正文写了用毛笔写字,虽有毛笔和部位但孤立并列无绑定词时报警(contact-unbound)', () => {
+    const gaps = diagnosePropTarget('毛笔在她阴部上写字', '1girl, brush, pussy');
+    expect(gaps[0]?.kind).toBe('contact-unbound');
+  });
+
+  it('NAI V5 道具与部位分属不同角色块且带绑定或 source#/target# 时通过', () => {
+    expect(
+      diagnosePropTarget('他用毛笔在她小腹上写字', '1girl, 1boy, calligraphy brush on belly', [
+        'girl, belly, target#written on, trembling',
+        'boy, faceless male, pov hands, holding calligraphy brush, source#writing on body',
+      ]),
+    ).toEqual([]);
+  });
+
+  it('扩展道具表:红绳捆绑、手铐铐住、红酒滴落均能校验落点与绑定', () => {
+    expect(diagnosePropTarget('红绳紧紧缠上她的手腕', '1girl, red rope')).toHaveLength(1);
+    expect(diagnosePropTarget('红绳紧紧缠上她的手腕', '1girl, red rope around wrists')).toEqual([]);
+    expect(diagnosePropTarget('冰凉的红酒滴落在她的乳沟里', '1girl, wine dripping on cleavage, breasts')).toEqual([]);
   });
 
   it('正文有道具但 tag 压根没画道具时不管(可能这格没入画)', () => {
@@ -137,6 +185,15 @@ describe('diagnoseContact', () => {
         'girl, her hand pressing his chest',
       ]),
     ).toEqual([]);
+  });
+
+  it('NAI V5 手与身体部位分属不同角色块且无任何绑定词或 source#/target# 时报警', () => {
+    const gaps = diagnoseContact('他的大手按在她的胸口揉捏', '1girl, 1boy', [
+      'girl, large breasts, blush',
+      'boy, faceless male, pov hands',
+    ]);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]?.kind).toBe('contact-unbound');
   });
 
   it('正文没有接触动词时不管', () => {
