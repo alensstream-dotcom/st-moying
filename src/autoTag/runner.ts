@@ -1,4 +1,5 @@
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
+import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { readBookMemory } from '@/autoTag/bookMemory';
 import {
   applyPositionedCharRefs,
@@ -406,19 +407,31 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 上一次 attempt 是否被判为「被截断」:是则下一次重发时追加降载指令。
     // 不增加重试次数(那是用户的成本上限),只让重试打在正确的点上。
     let retryNote = '';
+    // 上一次是否被渠道侧拦过:是则后续重试改发「兼容版」提示词(露骨示例词换成中性占位),
+    // 并只保留最小结构要求。过滤发生在模型看到请求之前,加授权话术没用,只能把请求改淡。
+    let blockedOnce = false;
     for (let attempt = 0; attempt <= retries && !plan; attempt++) {
       if (controller.signal.aborted) {
         processed.delete(identity);
         return;
       }
+      const baseMessages = blockedOnce ? neutralizeMessages(messages) : messages;
       const attemptMessages: ChatMsg[] = retryNote
-        ? [...messages, { role: 'system', content: retryNote }]
-        : messages;
+        ? [...baseMessages, { role: 'system', content: retryNote }]
+        : baseMessages;
       try {
         // parsed 用对象壳装着:validate 闭包写入,await 之后读取——请求成功 + 验收通过才非空。
         // (直接 let 会被 TS 收窄成 null:闭包内的赋值控制流分析看不见。)
         const parsed: { plan: ImagePlan | null } = { plan: null };
-        const validate = (raw: string) => {
+        const validate = (raw: string, meta?: { finishReason?: string | null }) => {
+          // 渠道拦截先判:它和「截断」的表现很像(空、半截、一段客气话),但修法相反——
+          // 截断要压输出,拦截要把请求本身改淡。判错方向会让重试打在错的地方。
+          const block = diagnoseBlock(raw, meta?.finishReason);
+          if (block.blocked) {
+            blockedOnce = true;
+            retryNote = BLOCK_RETRY_NOTE;
+            throw new Error(`被渠道内容过滤拦下(${block.reason})`);
+          }
           const verdict = diagnoseTruncation(raw);
           if (verdict.truncated) {
             // 形态上就是被掐断的:重试要降载,而不是原样再发一遍同样长度的请求。
@@ -609,6 +622,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           return;
         }
         lastError = error instanceof Error ? error.message : String(error);
+        // HTTP 层被拦时错误信息里带的是渠道原文(常见 400 + 「内容审核」),它进不了 validate
+        // (内容为空时 client 直接抛错),所以这里补判一次。空内容同样按被拦处理:
+        // 两者都要降载,判错方向的代价只是这一次重试更短,不会更差。
+        if (/空内容/.test(lastError) || diagnoseBlock(lastError).blocked) {
+          blockedOnce = true;
+          retryNote = BLOCK_RETRY_NOTE;
+        }
         console.warn(`[墨影] 第 ${floor} 楼第 ${attempt + 1}/${retries + 1} 次生成 tag 失败`, error);
       }
     }
@@ -919,6 +939,12 @@ export async function requestSlotTag(floor: number, seq: number): Promise<void> 
 export function cancelFloorTags(floor: number): void {
   const chatId = getContext()?.getCurrentChatId?.() ?? '';
   running.get(`${chatId}\u0000${floor}`)?.abort();
+}
+
+/** 查询某楼是否正在跑自动生图 tag 分析 */
+export function isFloorTagRunning(floor: number): boolean {
+  const chatId = getContext()?.getCurrentChatId?.() ?? '';
+  return running.has(`${chatId}\u0000${floor}`);
 }
 
 /** Only pair automatic tagging with the final render of a real ST generation. */

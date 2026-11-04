@@ -60,6 +60,7 @@ src/
 │   ├── shotGuide.ts   # 景别判据:正文点名部位 → 该离多近(推荐档/诊断过远/重试话术)
 │   ├── outfitState.ts # 服装账本:每人衣着与穿脱程度落 message.extra,跨楼继承 + 跳变诊断
 │   ├── castCheck.ts   # 画面事实闭环:人数对不上正文、道具没有落点(重试不再放行)
+│   ├── blockGuard.ts  # 渠道拦截:形态判定 + 兼容版降载重试(过滤不认授权话术,只认文本)
 │   └── charReuse.ts   # 正文外形与已建档角色逐维对上 → 点名「这段就是她」,别重复建档
 ├── data/              # 素材库(内置条目 + 召回打分;条目形状见 loreTypes.ts)
 │   ├── loreTypes.ts   # 条目契约:服装/姿势/脸型/体型/同人/自定义
@@ -275,6 +276,18 @@ runForFloor(floor, opts)
 
 全部可编辑提示词(破限/规范/思维链)在 `state/settings.ts` 有内置默认常量
 (`DEFAULT_*_PROMPT`/`DEFAULT_*_SPEC`),留空回落默认 —— 改默认提示词内容先看这里。
+
+**破限挡位只管这条副 API 请求,不进正文生成**(正文由 ST 主 API 出,插件塞不进任何提示词)。
+而渠道的内容过滤查的是请求与响应**文本**、不认授权话术,越露骨越容易被整条掐掉。所以
+`autoTag/blockGuard.ts` 做三件事:`diagnoseBlock` 把 `finish_reason=content_filter`、空回复、
+一段「抱歉,这段内容…」的客气话单独定性成「被渠道内容过滤拦下」(不再混进解析失败);
+命中后 runner 置 `blockedOnce`,后续重发改发 `neutralizeMessages` 处理过的兼容版(露骨示例词换成
+中性占位)+ `BLOCK_RETRY_NOTE`(压到最小结构);平时则在协议与思考清单里要求用英文 tag 短词描述
+身体与接触,少写中文长句——中文露骨长句是流式输出最先被斩断的地方。
+
+⚠ 拦截判定的形态优先:`content_filter` > 空内容 > 拒答散文,**任何一条出现花括号就交回解析器**
+(已经开始写 JSON 就属于协议问题,不是拦截问题)。这个先判顺序是必要的——截断要压输出、
+拦截要把请求改淡,判错方向会让重试打在错的地方。
 
 ⚠ **设置页只暴露两对规范/思维链:ComfyUI 与 NAI**,后者存在 `naiV5Spec` / `naiV5Thinking`
 (键名带 V5 是历史命名,内容对 4.5 同样适用,面板标签已改成不提代数的「NAI 规范/思维链」)。
@@ -988,6 +1001,7 @@ API 对象 `Object.freeze`,一个插件改不动下一个插件拿到的东西�
 | 画面事实闭环(人数对不上正文 / 道具没有落点 → 重试) | src/autoTag/castCheck.ts(diagnoseCast + diagnosePropTarget),诊断接在 runner.ts validate,文案在 prompt.ts 规则 6b/6c/17 |
 | 服装跨楼账本(衣着 + 穿脱程度继承,跳变即重试) | src/autoTag/outfitState.ts,写回走 messageEdit.applyMessageText 的 extraUpdate 数组(runner 每次落盘同时写角色增量与账本),注入在 prompt.ts 的 outfitStateBlock |
 | 多人入画取舍(施受双方/接触点/道具落点必须进画面,可省项) | src/autoTag/prompt.ts 规则 6b + 6c,人数口径在规则 17 |
+| 渠道内容过滤(命中即定性 + 兼容版降载重试) | src/autoTag/blockGuard.ts(diagnoseBlock + neutralizeMessages + BLOCK_RETRY_NOTE),接入 runner.ts 的 validate 与 catch,blockedOnce 置位后所有重试走中性化提示词 |
 | 角色库 v3(基线+楼层增量/changes ops/@占位符兜底/历史回滚) | src/autoTag/charAnchors.ts + src/state/charTags.ts + src/autoTag/runner.ts |
 | Vibe 分组 / 搜索 / 启用集合判定 | src/backends/vibeGroups.ts(纯逻辑)+ NaiPanel.vue(交互) |
 | 副 API 请求(代理/SSE/超时/测试) | src/api/client.ts |

@@ -1423,4 +1423,11 @@ describe('素材候选摇号与同职业区分', () => {
     expect(contract).toContain('一个人两根肉棒');
     expect(contract).toContain('不按有没有露脸');
   });
+
+  it('契约要求描述用英文短词,少写中文长句(渠道输出过滤的口子)', async () => {
+    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
+    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
+    expect(contract).toContain('英文 tag 短词');
+    expect(contract).toContain('最先斩断');
+  });
 });

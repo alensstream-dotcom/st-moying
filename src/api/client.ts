@@ -34,6 +34,11 @@ export class ApiError extends Error {
   }
 }
 
+/** 把 finish_reason 拼进错误信息;空/无则返回空串。 */
+function finishTag(reason: unknown): string {
+  return typeof reason === 'string' && reason ? `(finish_reason=${reason})` : '';
+}
+
 /**
  * 规范化 OpenAI 兼容 base url:
  * - 用户填完整 /chat/completions 时只去掉端点后缀;
@@ -68,7 +73,7 @@ export interface RequestOptions {
    * 看历史的人会误以为成功也重复调用。验收抛错 = 记为失败并把错误原样抛出,
    * 由调用方决定重试/放弃。
    */
-  validate?: (content: string) => void;
+  validate?: (content: string, meta?: { finishReason?: string | null }) => void;
 }
 
 /* ============ 请求历史埋点(纯辅助,绝不允许影响主流程) ============ */
@@ -284,7 +289,9 @@ async function requestCompletionAtUrl(
       if (stream) {
         const finish = { finishReason: null as string | null, nativeFinishReason: null as string | null };
         const streamed = await readSseContent(resp, finish);
-        if (!streamed) throw new ApiError('副 API 返回空内容');
+        // 空内容带上 finish_reason:被渠道过滤时它往往是 content_filter,空串本身看不出区别,
+        // 而调用方要靠它决定「重发同一份」还是「改淡了再发」。
+        if (!streamed) throw new ApiError(`副 API 返回空内容${finishTag(finish.finishReason)}`);
         // 流式无 usage:ST 构造上游请求体是字段白名单,不含 stream_options,
         // 没法让上游在末尾回 usage chunk。只能事后本地估算。
         return { content: streamed, usage: { prompt: null, completion: null }, ...finish };
@@ -296,9 +303,9 @@ async function requestCompletionAtUrl(
       }
 
       const parsed = extractContent(data);
-      if (!parsed) throw new ApiError('副 API 返回空内容');
       // ST 代理非流式分支是 response.send(json) 原样透传,故 usage 是上游真值。
       const choice = data?.choices?.[0];
+      if (!parsed) throw new ApiError(`副 API 返回空内容${finishTag(choice?.finish_reason)}`);
       return {
         content: parsed,
         usage: readUsage(data),
@@ -319,7 +326,7 @@ async function requestCompletionAtUrl(
       }));
     }
     // A response is still marked successful only after caller validation passes.
-    opts.validate?.(result.content);
+    opts.validate?.(result.content, { finishReason: result.finishReason });
 
     if (historyId !== null) {
       const hasReal = result.usage.prompt !== null;

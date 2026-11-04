@@ -226,6 +226,12 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
   }
 }
 
+const activeBatch: BackgroundJob[] = [];
+
+export function isBackgroundGenRunning(): boolean {
+  return running || activeBatch.length > 0;
+}
+
 /**
  * 依次跑一批任务（不并发：NAI 的闸门在 generateImage 里，但后台场景不值得抢）。
  * 每个任务先抢标记：抢不到说明前台卡片已经在跑，直接让位。
@@ -233,31 +239,30 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
 export async function runBackgroundGenerations(jobs: BackgroundJob[]): Promise<void> {
   if (!jobs.length) return;
   bindResumeListener();
-  // 让出一小段:先让前台卡片挂载、先决定它跑不跑。两边都用 hasActiveGen 判重,
-  // 谁先开跑谁是主人;这段延迟只保证「前台还有机会接手」,不会造成双跑。
-  await new Promise<void>(resolve => {
-    setTimeout(resolve, 300);
-  });
-  // 再摘掉这批槽位的自动生成标记:从此由后台负责到底。
-  //
-  // 旧做法是「抢标记,抢不到就让位给前台卡片」,结果第一张图经常卡住 ——
-  // 前台卡片在重渲染时先一步消费了标记,但它自己的相位判定(shouldAutoGenerate)
-  // 只放行 pending/stale;只要该槽位还留着上一次的结果或被判成 error,标记就被
-  // 吃掉而没人跑,谁也等不到下一次自动触发,用户只能手动点一下。
-  // 现在改成:标记一律先摘,前台别再来抢;后台跑完用 hydrateMessage 把卡片推到 ready,
-  // 失败则进续跑队列并让卡片显示错误 —— 两条路都有结果,不再有「没人生成也没人报错」。
+  // 让出一小段:先让前台卡片挂载、先决定它跑不跑。但在手机后台(document.hidden)时前台卡片根本不挂载,无需白等 300ms。
+  const isHidden = typeof document !== 'undefined' && (document.hidden || document.visibilityState === 'hidden');
+  if (!isHidden) {
+    await new Promise<void>(resolve => {
+      setTimeout(resolve, 300);
+    });
+  }
   for (const job of jobs) {
     consumeAutoGenerate(job.chatId, job.messageId, job.swipeId, job.seq);
+    const k = jobKey(job);
+    if (!activeBatch.some(item => jobKey(item) === k)) {
+      activeBatch.push(job);
+    }
   }
   if (running) {
-    // 已有后台批次在跑:把新任务并进队列,由可见性钩子接力,避免两条链同时压 NAI
+    // 已有后台批次在跑:新任务已经并入 activeBatch 内存队列,当前循环会紧接着跑完它!
+    // 同时写入 pending 持久化防进程被杀,绝不能像旧版那样 enqueue 后直接停工傻等 visibilitychange!
     for (const job of jobs) enqueue(job, '等待后台批次让位');
     return;
   }
   running = true;
   try {
-    for (const job of jobs) {
-      // runOne 内部会判断前台是否正在这个槽位上跑,是则让位不双跑
+    while (activeBatch.length > 0) {
+      const job = activeBatch.shift()!;
       const outcome = await runOne(job);
       if (outcome !== 'ok') {
         console.info(
@@ -267,6 +272,10 @@ export async function runBackgroundGenerations(jobs: BackgroundJob[]): Promise<v
     }
   } finally {
     running = false;
+    // 如果持久化队列里还有等待项,自动接力续跑(即使在手机后台也不停下)
+    if (readPending().some(item => item.attempts < MAX_RESUME && chatMatches(item.job.chatId))) {
+      setTimeout(() => { void resumePending(); }, 120);
+    }
   }
 }
 

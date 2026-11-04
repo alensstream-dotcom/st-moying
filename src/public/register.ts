@@ -1,5 +1,7 @@
 import { watch } from 'vue';
 
+import { cancelFloorTags, isFloorTagRunning, requestFloorTags } from '@/autoTag/runner';
+import { isBackgroundGenRunning, resumePending as resumeBackgroundPending } from '@/floor/backgroundGen';
 import { charTagLib } from '@/state/charTags';
 import { getContext } from '@/st/context';
 import { PLUGIN_VERSION } from '@/version';
@@ -96,9 +98,8 @@ function queueChangedNotice(): void {
 }
 
 function createApi(): STBaiBaiImageApi {
-  // 冻结:第三方(或它引的某个库)往接口对象上挂东西、或替换掉 generate,
-  // 会让后到的另一个第三方拿到被改过的接口。冻结让这类改动直接失败而不是静默生效。
-  return Object.freeze({
+  // 不冻结顶层引用,并直接暴露无 UI 弹窗的楼层配图触发与后台状态接口,方便小说阅读器后台直调与测试桩打补丁
+  return {
     apiVersion: PUBLIC_API_VERSION,
     pluginVersion: PLUGIN_VERSION,
     get capabilities() {
@@ -107,12 +108,17 @@ function createApi(): STBaiBaiImageApi {
     getCharacters: (options?: GetCharactersOptions) => getCharacters(options),
     getBackendStatus: () => getBackendStatus(),
     generate: (request: GenerateRequest, options?: GenerateOptions) => generate(request, options),
+    requestFloorTags: (floor: number, opts?: { replace?: boolean }) => requestFloorTags(floor, opts),
+    cancelFloorTags: (floor: number) => cancelFloorTags(floor),
+    isFloorTagRunning: (floor: number) => isFloorTagRunning(floor),
+    isBackgroundGenRunning: () => isBackgroundGenRunning(),
+    resumeBackgroundPending: () => resumeBackgroundPending(),
     subscribe(listener: PublicChangeListener) {
       if (typeof listener !== 'function') throw new TypeError('subscribe listener 必须是函数');
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-  });
+  } as STBaiBaiImageApi;
 }
 
 /**

@@ -248,6 +248,19 @@ export interface STBaiBaiImageApi {
   getBackendStatus(): PublicBackendStatus;
   /** 调墨影生图。图返回给你,显示在哪由你决定。 */
   generate(request: GenerateRequest, options?: GenerateOptions): Promise<GenerateResult>;
+  /**
+   * 按楼层跑自动 tag(不弹窗,失败走 toastr)。阅读器后台直调用它。
+   * 与 UI 里点按钮同一条路径,同样受「本楼已在跑」保护。
+   */
+  requestFloorTags(floor: number, options?: { replace?: boolean }): Promise<void>;
+  /** 中止某楼正在跑的 tag。 */
+  cancelFloorTags(floor: number): void;
+  /** 某楼的 tag 是否正在跑。 */
+  isFloorTagRunning(floor: number): boolean;
+  /** 后台批量出图队列是否在跑。 */
+  isBackgroundGenRunning(): boolean;
+  /** 重启被中断的后台队列。 */
+  resumeBackgroundPending(): Promise<void>;
   /** 订阅角色库变更;返回取消订阅的函数。 */
   subscribe(listener: PublicChangeListener): () => void;
 }

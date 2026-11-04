@@ -315,7 +315,9 @@ export async function prepareImageForStorage(result: ComfyImageResult): Promise<
   base64: string;
   format: string;
 }> {
-  if (settings.storage.saveAsJpeg) {
+  const isHidden = typeof document !== 'undefined' && (document.hidden || document.visibilityState === 'hidden');
+  // 手机切后台时 createImageBitmap + canvas.toBlob 会被移动端 GPU 进程挂起导致后台卡死，后台时直接存原格式
+  if (settings.storage.saveAsJpeg && !isHidden) {
     try {
       // data URL/blob URL 都能被 fetch 成 Blob
       const response = await fetch(result.url);
