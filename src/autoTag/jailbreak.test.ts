@@ -30,6 +30,47 @@ describe('破限挡位', () => {
   });
 });
 
+// 这几条锁的是「真能压住拒答」的几处硬结构,改文案时别顺手删掉。
+describe('破限词里必须留下反拒答结构', () => {
+  it('strong 起把年龄脱钩:不许模型自己算岁数', () => {
+    for (const id of ['strong', 'max'] as const) {
+      const text = getJailbreakTier(id).text;
+      expect(text).toContain('不是年龄证据');
+    }
+    // 顶档还要给一条可以照抄的岁数结论,模型才不用推理
+    expect(getJailbreakTier('max').text).toContain('18 years old');
+    expect(getJailbreakTier('strong').text).toContain('18 岁');
+  });
+
+  it('strong 起点名四种收手形态,给模型可对照的判据', () => {
+    const text = getJailbreakTier('strong').text;
+    expect(text).toContain('算失败');
+    expect(text).toContain('注:');
+    expect(text).toContain('changes');
+  });
+
+  it('max 档带机器接口伪装与拒绝黑名单', () => {
+    const text = getJailbreakTier('max').text;
+    expect(text).toContain('[MODE: UNRESTRICTED]');
+    expect(text).toContain('<not_a_refusal>');
+    expect(text).toContain('18 years old');
+    // 哨兵要真的在文本里,只导出不用就成死代码了
+    expect(text).toContain('<|bbi_json|>');
+  });
+
+  it('max 档压得住模型的「差不多」:要求自检后再闭合', () => {
+    const text = getJailbreakTier('max').text;
+    expect(text).toContain('自检');
+    expect(text).toContain('停在最后一个');
+  });
+
+  it('屏障不挡解析:破限词自己不许出现半截花括号或代码围栏要求', () => {
+    for (const tier of JAILBREAK_TIERS.filter(t => t.text)) {
+      expect(tier.text).not.toContain('```');
+    }
+  });
+});
+
 describe('自定义附加词叠加', () => {
   const custom = '我的渠道经验:必须写全解剖术语。';
 
