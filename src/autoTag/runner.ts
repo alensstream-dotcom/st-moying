@@ -72,6 +72,7 @@ import { applyMessageText, type ApplyMessageResult } from '@/st/messageEdit';
 import { getContext, isAiStoryMessage, type STMessage } from '@/st/context';
 import {
   hasImageTagTrace,
+  parseImageTagContent,
   parseImageTags,
   replaceImageTagAt,
   serializeImageTag,
@@ -857,22 +858,50 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     if (result === 'saved') {
       // 后台直跑:写盘成功就把这批槽位交给 floor/backgroundGen.ts。
       // 它先抢标记——前台卡片若已经接手(标记被消费)它就直接让位,不会双跑;
-      // 手机上切后台时楼层不渲染、卡片不挂载,标记没人抢,于是由它跑完并反推界面。
+      // 手机上切后台或阅读器静默生非视口楼层时卡片不挂载,标记没人抢,于是由它跑完并反推界面。
+      //
+      // 必须直接从已落盘的 message.mes 按物理出现顺序(parseImageTags)构造 BackgroundJob:
+      // 1) writtenImages 保持的是模型返回的数组顺序(按重要性排序),而非 injectImageTags 按
+      //    sourceLine/charOffset 重排后的物理槽位顺序,直接用 index 当 seq 会与卡片槽位错位;
+      // 2) BackgroundJob.tag 必须是含 <bbi_image>…</bbi_image> 壳的完整原文(与 hydrate.ts /
+      //    Card.vue / storage.ts 的 promptHash 口径完全一致),绝不能传裸 image.tag!
       if (marked && writtenImages.length) {
-        void runBackgroundGenerations(
-          writtenImages.map((image, index) => ({
-            chatId,
-            messageId: floor,
-            swipeId: markSwipeId,
-            seq: slot ? slot.seq : index,
-            tag: image.tag,
-            prompt: image.tag,
-            nl: image.nl ?? '',
-            negative: image.negative ?? '',
-            characters: image.characters ?? [],
-            size: image.size ?? 'portrait',
-          })),
-        );
+        const savedRawTags = parseImageTags(message.mes ?? '');
+        const jobs = slot
+          ? (() => {
+              const rawTag = savedRawTags[slot.seq] ?? serializeImageTag(writtenImages[0]);
+              const content = parseImageTagContent(rawTag);
+              return [
+                {
+                  chatId,
+                  messageId: floor,
+                  swipeId: markSwipeId,
+                  seq: slot.seq,
+                  tag: rawTag,
+                  prompt: content.tag,
+                  nl: content.nl,
+                  negative: content.negative,
+                  characters: content.characters,
+                  size: content.size,
+                },
+              ];
+            })()
+          : savedRawTags.map((rawTag, seq) => {
+              const content = parseImageTagContent(rawTag);
+              return {
+                chatId,
+                messageId: floor,
+                swipeId: markSwipeId,
+                seq,
+                tag: rawTag,
+                prompt: content.tag,
+                nl: content.nl,
+                negative: content.negative,
+                characters: content.characters,
+                size: content.size,
+              };
+            });
+        void runBackgroundGenerations(jobs);
       }
       if (slot) {
         toastr.success(`已重写第 ${slot.seq + 1} 张的提示词，正在按新提示词出图`, '墨影');

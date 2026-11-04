@@ -1436,3 +1436,39 @@ describe('素材候选摇号与同职业区分', () => {
     expect(contract).toContain('最先斩断');
   });
 });
+
+// 截断的主因是思考太长。上限必须跟着图数走:V5 第二层是每张图 8 行槽位,
+// 固定值会在多图时逼模型要么超上限、要么漏槽位。
+describe('思考块预算上限', () => {
+  function mk(maxImages: number): AutoTagSettings {
+    return {
+      enabled: true,
+      contextMessages: 2,
+      minImages: 1,
+      maxImages,
+      retryCount: 0,
+      autoGenerate: true,
+      jailbreakTier: 'strong',
+      lore: {
+        enabled: false,
+        maxNsfw: 3,
+        wardrobeLimit: 0,
+        poseLimit: 0,
+        faces: false,
+        faceLimit: 0,
+        thumbModel: '',
+        thumbIntervalMs: 10000,
+      },
+      prompts: {} as AutoTagPrompts,
+    };
+  }
+
+  it('上限按图数长,不是固定值', async () => {
+    const one = (await buildAutoTagMessages(context(), 1, mk(1), null)).map(m => m.content).join('\n');
+    const three = (await buildAutoTagMessages(context(), 1, mk(3), null)).map(m => m.content).join('\n');
+    expect(one).toContain('<thinking_budget>');
+    // 1 张 = 12 + 8,3 张 = 36。上限固定的话多图时必然超。
+    expect(one).toContain('最多 20 行');
+    expect(three).toContain('最多 36 行');
+  });
+});

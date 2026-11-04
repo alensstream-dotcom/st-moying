@@ -29,12 +29,14 @@ import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import type { Orientation } from '@/backends/size';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { consumeAutoGenerate } from '@/floor/autoGenerate';
-import { beginGen, clearGen, failGen, getGenRecord, hasActiveGen, setGenPhase, slotKey } from '@/floor/genState';
+import { beginGen, clearGen, failGen, getGenRecord, hasActiveGen, setGenPhase, setGenRetry, setQueueAhead, slotKey } from '@/floor/genState';
 import { hydrateMessage } from '@/floor/hydrate';
-import { saveImageResult } from '@/floor/storage';
+import { isImageMissing } from '@/floor/missingImages';
+import { historyEntries, promptHash, readStore, saveImageResult } from '@/floor/storage';
 import { activeComfyPreset, settings } from '@/state/settings';
 import { beginImage, failImage, finishImage } from '@/state/history';
 import { getContext } from '@/st/context';
+import { parseImageTags, serializeImageTag } from '@/st/imageTagRegex';
 
 /** 一个待生成槽位的全部输入。与 ImageTagContent 同形,外加楼层坐标。 */
 export interface BackgroundJob {
@@ -145,14 +147,46 @@ function safeHistory<T>(run: () => T): T | null {
   }
 }
 
+function resolveFullTag(job: BackgroundJob): string {
+  if (/^<bbi_image\b/i.test(job.tag.trim())) return job.tag;
+  const ctx = getContext();
+  const mes = ctx?.chat?.[job.messageId]?.mes;
+  if (typeof mes === 'string') {
+    const raw = parseImageTags(mes)[job.seq];
+    if (raw) return raw;
+  }
+  return serializeImageTag({
+    tag: job.prompt || job.tag,
+    nl: job.nl,
+    negative: job.negative,
+    characters: job.characters,
+    size: job.size,
+  });
+}
+
 /**
  * 跑一个槽位。**不校验、不排队、不碰 DOM** —— 调用方负责决定要不要跑。
  *
- * 返回 'ok' 落盘成功 | 'skipped' 当前聊天不是它/后端没配好 | 'failed' 已进续跑队列。
+ * 返回 'ok' 落盘成功 | 'skipped' 当前聊天不是它/后端没配好/前台已跑完 | 'failed' 已进续跑队列。
  */
 async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 'skipped' | 'failed'> {
   if (!backendStatus().configured) return 'skipped';
   if (!chatMatches(job.chatId)) return 'skipped';
+
+  const fullTag = resolveFullTag(job);
+  const currentHash = promptHash(fullTag);
+  const ctx = getContext();
+  const message = ctx?.chat?.[job.messageId];
+  // 前台卡片在 300ms 等待窗口内可能已经跑完并落盘:查一次 extra,已有存活成图就无需再跑一遍
+  if (message) {
+    const existing = historyEntries(readStore(message), job.swipeId, currentHash, job.seq).filter(
+      entry => !isImageMissing(entry.path),
+    );
+    if (existing.length > 0) {
+      dropPending(jobKey(job));
+      return 'skipped';
+    }
+  }
 
   const key = slotKey(job.chatId, job.messageId, job.swipeId, job.seq);
   // 前台卡片正在这个槽位上跑时不接管:beginGen 会 abort 同 key 的 controller,
@@ -171,10 +205,13 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
       `[墨影] 后台出图接管僵尸槽位：第 ${job.messageId} 楼第 ${job.seq + 1} 张（phase=${running.phase}，无在途任务）`,
     );
   }
-  const handle = beginGen(key, job.prompt, 'queued');
+  const naiActive = settings.defaultBackend === 'nai';
+  // 必须传 currentHash(promptHash(fullTag)) 而非 job.prompt!
+  // 否则随后水合挂载 Card.vue 时,watch(hash, current => reconcileGen(key, current))
+  // 会因为 record.hash !== promptHash(props.tag) 当场 abort 掐死后台正在生成的任务!
+  const handle = beginGen(key, currentHash, naiActive ? 'queued' : 'generating');
 
   const seed = decideSeed(settings.defaultBackend);
-  const naiActive = settings.defaultBackend === 'nai';
   const historyId = safeHistory(() =>
     beginImage({
       backend: naiActive ? 'nai' : 'comfyui',
@@ -191,7 +228,6 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
   );
 
   try {
-    setGenPhase(key, handle.token, 'generating');
     const { result, meta } = await generateImage(
       {
         prompt: job.prompt,
@@ -202,15 +238,20 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
         seed,
       },
       handle.signal ?? signal,
+      {
+        onStart: () => setGenPhase(key, handle.token, 'generating'),
+        onQueue: ahead => setQueueAhead(key, handle.token, ahead),
+        onRetry: retry => setGenRetry(key, handle.token, retry),
+      },
     );
-    await saveImageResult(job.messageId, job.swipeId, job.seq, job.tag, seed, result, meta);
+    await saveImageResult(job.messageId, job.swipeId, job.seq, fullTag, seed, result, meta);
     result.revoke();
     if (historyId !== null) safeHistory(() => finishImage(historyId));
     clearGen(key, handle.token);
     dropPending(jobKey(job));
     // 落盘后反推界面:前台卡片从 extra 变成 ready,后台回来时一进聊天就已就绪
-    const ctx = getContext();
-    if (ctx) hydrateMessage(job.messageId, ctx);
+    const latestCtx = getContext();
+    if (latestCtx) hydrateMessage(job.messageId, latestCtx);
     return 'ok';
   } catch (error) {
     const aborted = error instanceof DOMException && error.name === 'AbortError';
@@ -221,7 +262,7 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
       return 'skipped';
     }
     failGen(key, handle.token, message);
-    enqueue(job, message);
+    enqueue({ ...job, tag: fullTag }, message);
     return 'failed';
   }
 }
@@ -302,11 +343,16 @@ export async function resumePending(): Promise<void> {
   running = true;
   try {
     for (const job of batch) {
-      const entry = readPending().find(item => jobKey(item.job) === jobKey(job));
+      const k = jobKey(job);
+      const entry = readPending().find(item => jobKey(item.job) === k);
       if (!entry || entry.attempts >= MAX_RESUME) continue;
       // 续跑前同样抢标记:标记若还在,说明前台从没接手过,这次由我们兜住
       consumeAutoGenerate(job.chatId, job.messageId, job.swipeId, job.seq);
-      await runOne(job);
+      const outcome = await runOne(job);
+      if (outcome === 'skipped') {
+        const key = slotKey(job.chatId, job.messageId, job.swipeId, job.seq);
+        if (!hasActiveGen(key)) dropPending(k);
+      }
     }
   } finally {
     running = false;
@@ -323,4 +369,17 @@ export async function resumePending(): Promise<void> {
 export function backgroundQueueState(): { count: number; lastError: string } {
   const items = readPending();
   return { count: items.length, lastError: items[items.length - 1]?.lastError ?? '' };
+}
+
+/** 仅测试用:重置模块级内存状态。 */
+export function _resetBackgroundGenForTest(): void {
+  pending = [];
+  loaded = false;
+  running = false;
+  activeBatch.length = 0;
+  try {
+    localStorage.removeItem(PENDING_KEY);
+  } catch {
+    // ignore
+  }
 }

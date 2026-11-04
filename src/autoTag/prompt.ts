@@ -115,14 +115,19 @@ function backendPromptSpec(options: AutoTagSettings, nlOn: boolean, naiCharPromp
  * 邻接绑定——共用一份 ComfyUI 口径的思维链会让它被要求填规范从未教过的东西。
  * webui 暂无专属规范,回落 comfy 那份(该后端尚未接入)。
  */
-function backendThinkingPrompt(options: AutoTagSettings, nlOn: boolean, naiCharPromptsOn: boolean): string {
+function backendThinkingPrompt(
+  options: AutoTagSettings,
+  nlOn: boolean,
+  naiCharPromptsOn: boolean,
+  images: number,
+): string {
   if (settings.defaultBackend === 'nai') {
     const template = naiCharPromptsOn
       ? (options.prompts?.naiV5Thinking ?? '').trim() || DEFAULT_NAI_V5_THINKING
       : (options.prompts?.naiThinking ?? '').trim() || DEFAULT_NAI_THINKING;
-    return `${expandNlSections(template, nlOn)}\n\n${THINKING_CAP_NOTE}`;
+    return `${expandNlSections(template, nlOn)}\n\n${thinkingCapNote(images)}`;
   }
-  return `${expandNlSections((options.prompts?.comfyThinking ?? '').trim() || DEFAULT_COMFY_THINKING, nlOn)}\n\n${THINKING_CAP_NOTE}`;
+  return `${expandNlSections((options.prompts?.comfyThinking ?? '').trim() || DEFAULT_COMFY_THINKING, nlOn)}\n\n${thinkingCapNote(images)}`;
 }
 
 /**
@@ -132,14 +137,22 @@ function backendThinkingPrompt(options: AutoTagSettings, nlOn: boolean, naiCharP
  * 思考块就能写到两三千 token;之后才开始写 JSON,于是输出预算在中途就见底,表现为
  * 「思考块未闭合」「没有 JSON」「差两个括号」。症状看着像拒答,其实是**思考太长**。
  *
- * 所以这里给的是一条可以照着数的硬上限,而不是「简洁一些」这种软话:让它自己盯着行数
- * 收笔,比在破限词里讲道理有效得多。
+ * 为什么不给一个固定数:第二层的槽位块是**每张图**写一块(V5 光槽位就 8 行),
+ * 固定 12 行在两三张图时根本塞不下,模型要么违反上限要么漏槽位。所以这里给的是
+ * 「第一层固定 + 每张图固定」的算术式:让它能自己算,也能在少图时确实压得住。
  */
 export const THINKING_LINE_CAP = 12;
+/** 第二层每张图的槽位块大致行数(仅用于算上限,不要求严格对齐)。 */
+export const THINKING_LINES_PER_IMAGE = 8;
 
-const THINKING_CAP_NOTE = `<thinking_budget>
-<thinking> 里**最多写 ${THINKING_LINE_CAP} 行**。写满 ${THINKING_LINE_CAP} 行还有没判完的,就立刻停笔去写 JSON,剩下的边写边定——思考是草稿,长思考不会让图更好,只会把 JSON 挤到被截断。
+export function thinkingCapNote(images: number): string {
+  const perImage = Math.max(1, Math.floor(images) || 1);
+  const cap = THINKING_LINE_CAP + perImage * THINKING_LINES_PER_IMAGE;
+  return `<thinking_budget>
+<thinking> 最多 ${cap} 行:第一层整楼只写一次,压在 ${THINKING_LINE_CAP} 行内;第二层每张图的槽位块约 ${THINKING_LINES_PER_IMAGE} 行,共 ${perImage} 张。
+到了 ${cap} 行还没写完全部槽位,就立刻停笔去写 JSON,剩下没写的槽位边写 tag 边定——思考是草稿,长思考不会让图更好,只会把 JSON 挤到被截断。
 </thinking_budget>`;
+}
 
 const SHOT_TAG_RE = /<bbi_image>([\s\S]*?)<\/bbi_image>/g;
 
@@ -506,7 +519,7 @@ ${characterRule}
   messages.push({ role: 'system', content: fixedContract });
   // 思维链:压在任务协议之后,要求模型先在 <thinking> 里过检查点再输出 JSON。
   // 解析端(protocol.ts)会先剥掉 think 块再取 JSON,二者配套;按后端取对应的那一份。
-  const thinking = backendThinkingPrompt(options, nlOn, naiCharPromptsOn);
+  const thinking = backendThinkingPrompt(options, nlOn, naiCharPromptsOn, options.maxImages);
   if (thinking) messages.push({ role: 'system', content: thinking });
   const libraryBlock = library?.trim() || `【角色固定外貌库】[system-maintained; currently empty]\n（当前为空，没有任何角色已建档。世界书、角色卡、柏宝书和正文只提供建档依据；未列在本区块中的正式角色必须通过 field:"new" 建档。）`;
   // 素材库候选:用「目标正文 + 最近一段上下文」召回服装/姿势指纹,命中才注入。
