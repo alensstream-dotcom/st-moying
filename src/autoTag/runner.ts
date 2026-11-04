@@ -37,10 +37,20 @@ import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/g
 import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
-import { diagnoseShot, shotRetryNote } from '@/autoTag/shotCheck';
+import {
+  diagnoseMonotonousShots,
+  diagnoseShot,
+  monotonousShotRetryNote,
+  shotRetryNote,
+} from '@/autoTag/shotCheck';
 import { salvageJsonObject } from '@/autoTag/salvage';
 import { diagnoseDistance, distanceRetryNote } from '@/autoTag/shotGuide';
-import { duplicatePositionNote, duplicatePositions } from '@/autoTag/positionCheck';
+import {
+  adjacentPositionNote,
+  adjacentPositions,
+  duplicatePositionNote,
+  duplicatePositions,
+} from '@/autoTag/positionCheck';
 import {
   diagnoseTruncation,
   EMPTY_PLAN_RETRY_NOTE,
@@ -513,15 +523,35 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               throw new Error(`落位重复(${dups.join('、')})`);
             }
           }
+          // 落位紧邻:当正文句子充裕时,两张图落在紧挨着的前后两句话(如 P5 与 P6),
+          // 属于同一自然段的同一瞬间,会导致插图紧贴且画面雷同。
+          if (!slot && attempt < retries) {
+            const adj = adjacentPositions(candidate.images, preparedTarget.segments.length);
+            if (adj.length) {
+              retryNote = adjacentPositionNote(adj);
+              throw new Error(`落位紧邻(${adj.map(([a, b]) => `${a}-${b}`).join('、')})`);
+            }
+          }
           // 景别过远:正文点名了具体部位,画面却拍成远景。这条排在缺项检查之前——
           // 缺景别词只是「画面会平」,景别过远是「这张图白拍」,前者由后者一并带上。
           // 同样只在还有重试次数时纠,没次数就放行。
           if (attempt < retries) {
             const segmentText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
+            const prevSegText = (pos: string): string => {
+              const m = /^P(\d+)$/i.exec(pos.trim());
+              if (!m) return '';
+              const n = Number.parseInt(m[1], 10);
+              return n > 1 ? (segmentText.get(`P${n - 1}`) ?? '') : '';
+            };
             const seenGap = new Set<string>();
             const farGaps = candidate.images
               .map(image => {
-                const gap = diagnoseDistance(segmentText.get(image.position) ?? '', image.tag);
+                const gap = diagnoseDistance(
+                  segmentText.get(image.position) ?? '',
+                  image.tag,
+                  (image.characters ?? []).map(character => character.tag),
+                  prevSegText(image.position),
+                );
                 if (!gap) return null;
                 const key = `${image.position}\u0000${gap.suggest}`;
                 if (seenGap.has(key)) return null;
@@ -586,10 +616,22 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           if (!slot && attempt < retries && outfitStates.size) {
             const outfitGaps: OutfitGap[] = [];
             const outfitText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
+            const prevOutfitText = (pos: string): string => {
+              const m = /^P(\d+)$/i.exec(pos.trim());
+              if (!m) return '';
+              const n = Number.parseInt(m[1], 10);
+              return n > 1 ? (outfitText.get(`P${n - 1}`) ?? '') : '';
+            };
             for (const image of candidate.images) {
               outfitGaps.push(...diagnoseOutfit(image, outfitStates));
+              const windowText = [
+                prevOutfitText(image.position),
+                outfitText.get(image.position) ?? '',
+              ]
+                .filter(Boolean)
+                .join(' ');
               outfitGaps.push(
-                ...diagnoseGarment(image, outfitStates, outfitText.get(image.position) ?? ''),
+                ...diagnoseGarment(image, outfitStates, windowText),
               );
             }
             if (outfitGaps.length) {
@@ -616,6 +658,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             if (gaps.length) {
               retryNote = shotRetryNote(gaps);
               throw new Error(`构图缺项(${gaps.join('、')})`);
+            }
+            if (!slot) {
+              const monoGaps = diagnoseMonotonousShots(candidate.images);
+              if (monoGaps.length) {
+                retryNote = monotonousShotRetryNote(monoGaps);
+                throw new Error(
+                  `构图雷同(${monoGaps.map(g => `${g.positions.join('/')} 均为 ${g.signature}`).join('、')})`,
+                );
+              }
             }
           }
           parsed.plan = candidate;

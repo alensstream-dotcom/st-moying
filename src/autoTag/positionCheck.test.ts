@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { duplicatePositionNote, duplicatePositions } from '@/autoTag/positionCheck';
+import {
+  adjacentPositionNote,
+  adjacentPositions,
+  duplicatePositionNote,
+  duplicatePositions,
+} from '@/autoTag/positionCheck';
 
 describe('positionCheck 落位重复', () => {
   it('两个地址一样就算重复', () => {
@@ -38,6 +43,18 @@ describe('positionCheck 落位重复', () => {
     const note = duplicatePositionNote(['P4']);
     expect(note).toContain('张数不变');
     expect(note).toContain('P4');
+    expect(note).toContain('<position_retry>');
+  });
+
+  it('句数充裕时拦截紧邻的前后两句(如 P5 与 P6)', () => {
+    expect(adjacentPositions([{ position: 'P5' }, { position: 'P6' }], 12)).toEqual([
+      ['P5', 'P6'],
+    ]);
+    expect(adjacentPositions([{ position: 'P2' }, { position: 'P7' }], 12)).toEqual([]);
+    // 句数较少(< 8)时允许相邻句
+    expect(adjacentPositions([{ position: 'P2' }, { position: 'P3' }], 5)).toEqual([]);
+    const note = adjacentPositionNote([['P5', 'P6']]);
+    expect(note).toContain('P5 与 P6');
     expect(note).toContain('<position_retry>');
   });
 });

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { diagnoseShot, shotRetryNote } from '@/autoTag/shotCheck';
+import {
+  diagnoseMonotonousShots,
+  diagnoseShot,
+  monotonousShotRetryNote,
+  shotRetryNote,
+} from '@/autoTag/shotCheck';
 
 describe('diagnoseShot', () => {
   it('景别与机位都有时不算缺项', () => {
@@ -58,5 +63,27 @@ describe('shotRetryNote', () => {
     const note = shotRetryNote(['机位']);
     expect(note).toContain('没有交代机位');
     expect(note).not.toContain('景别 与');
+  });
+});
+
+describe('diagnoseMonotonousShots 同楼构图雷同检查', () => {
+  it('同楼出现两张 upper body + from front 证件照连拍时报警', () => {
+    const gaps = diagnoseMonotonousShots([
+      { position: 'P2', tag: '1girl, upper body, from front, classroom' },
+      { position: 'P6', tag: '1girl, upper body, straight-on, corridor' },
+    ]);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]?.signature).toBe('upper+front');
+    expect(gaps[0]?.positions).toEqual(['P2', 'P6']);
+    expect(monotonousShotRetryNote(gaps)).toContain('<shot_variety_retry>');
+  });
+
+  it('景别或机位拉开层次时不报警', () => {
+    const gaps = diagnoseMonotonousShots([
+      { position: 'P2', tag: '1girl, full body, from behind, courtyard' },
+      { position: 'P6', tag: '1girl, 1boy, cowboy shot, from side, across table' },
+      { position: 'P9', tag: '1girl, close-up, from above, tears' },
+    ]);
+    expect(gaps).toEqual([]);
   });
 });

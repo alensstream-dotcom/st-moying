@@ -762,12 +762,12 @@ D. 时代与世界观（一次判断，全楼通用）
 E. 选段
    - 候选必须是一个可见瞬间，有明确主体、动作或视觉状态和场景。纯对话只有在伴随值得画的表情、肢体动作、人物关系或环境变化时才保留；只跳过没有视觉变化的对话、纯心理和过渡。
    - 按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度排序，并遵守任务协议给出的最少～最多数量：下限大于 0 时从较次但仍可见的候选中补足；达到下限后只继续选择足够强且彼此明显不同的画面，不要用同一事件的相邻动作或不同镜头凑近上限。
-   - 给每张入选图选定 P编号：让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置。最后写出选定的 P 列表。
-   - **先把候选列出来，再打分，最后才定 P 列表**（本节是「不写推演过程」的唯一例外）：
-     · 列：把目标正文切成瞬间，写 3～6 行「P编号｜谁｜在做什么｜画面里看得见什么」。正文短就全列。这一步不下结论。
-     · 扫：谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位、身体有没有不受控的反应。带动这类锚点的候选先记下来，它们最短、最容易被漏。
-     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
-     · 评：每个候选按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度排出高下，把最强的排到前面。
+   - 给每张入选图选定 P编号：让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置（多图时禁止选紧挨着的前后两句话如 P5 与 P6，至少隔开 2 句以上正文）。最后写出选定的 P 列表。
+   - **先把候选列出来，再打分，最后才定 P 列表**（本节用紧凑单行记法，合写在一两行内以节省思考行数）：
+     · 列：把目标正文切成 3～6 个候选瞬间，用紧凑单行写出「P编号(谁·在做什么·画面里看得见什么)」。正文短就全列。这一步不下结论。
+     · 扫：戏剧张力锚点（推门踏入新空间、隔物/高低差对峙、亮出关键道具、动作爆发前摇或定格余韵）与身体锚点（谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位、身体有没有不受控的反应）。带任一锚点的候选先记下来，它们最短、最容易被漏。
+     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted、across table），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
+     · 评：每个候选按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度用紧凑记法（如 P4[张4+信4+画5+锚2=15]）排出高下，把最强的排到前面。
      · 筛：把人物名字换成随便一个路人，若这张图仍能套进几十段别的剧情（站在窗边、坐着聊天、正常走路、抬头看天），它就是废图——划掉。「只有这一刻、只有这两个人、只有这段关系才成立」的才留下。
    - 一格分镜必须同时有主体（谁）、动作或张力（在做什么、正要做）、可见的关系或情绪（看谁、忍什么、让谁看见）。三者缺一个就划掉这个候选。
    - 数量在这里就要卡死：写出 P 列表之前先数一遍，多于上限就当场砍到上限再往下走。第二层只为最终入选的 P 写块，绝不允许先超额写完几块、再到第三层发现超限回头删——那几块是白写的，而且第三层只核对、不改决定。
@@ -859,12 +859,12 @@ D. 时代与世界观（一次判断，全楼通用）
 E. 选段
    - 候选必须是一个可见瞬间，有明确主体、动作或视觉状态和场景。纯对话只有在伴随值得画的表情、肢体动作、人物关系或环境变化时才保留；只跳过没有视觉变化的对话、纯心理和过渡。
    - 按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度排序，并遵守任务协议给出的最少～最多数量：下限大于 0 时从较次但仍可见的候选中补足；达到下限后只继续选择足够强且彼此明显不同的画面，不要用同一事件的相邻动作或不同镜头凑近上限。
-   - 给每张入选图选定 P编号：让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置。最后写出选定的 P 列表。
-   - **先把候选列出来，再打分，最后才定 P 列表**（本节是「不写推演过程」的唯一例外）：
-     · 列：把目标正文切成瞬间，写 3～6 行「P编号｜谁｜在做什么｜画面里看得见什么」。正文短就全列。这一步不下结论。
-     · 扫：谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位、身体有没有不受控的反应。带动这类锚点的候选先记下来，它们最短、最容易被漏。
-     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
-     · 评：每个候选按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度排出高下，把最强的排到前面。
+   - 给每张入选图选定 P编号：让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置（多图时禁止选紧挨着的前后两句话如 P5 与 P6，至少隔开 2 句以上正文）。最后写出选定的 P 列表。
+   - **先把候选列出来，再打分，最后才定 P 列表**（本节用紧凑单行记法，合写在一两行内以节省思考行数）：
+     · 列：把目标正文切成 3～6 个候选瞬间，用紧凑单行写出「P编号(谁·在做什么·画面里看得见什么)」。正文短就全列。这一步不下结论。
+     · 扫：戏剧张力锚点（推门踏入新空间、隔物/高低差对峙、亮出关键道具、动作爆发前摇或定格余韵）与身体锚点（谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位、身体有没有不受控的反应）。带任一锚点的候选先记下来，它们最短、最容易被漏。
+     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted、across table），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
+     · 评：每个候选按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度用紧凑记法（如 P4[张4+信4+画5+锚2=15]）排出高下，把最强的排到前面。
      · 筛：把人物名字换成随便一个路人，若这张图仍能套进几十段别的剧情（站在窗边、坐着聊天、正常走路、抬头看天），它就是废图——划掉。「只有这一刻、只有这两个人、只有这段关系才成立」的才留下。
    - 一格分镜必须同时有主体（谁）、动作或张力（在做什么、正要做）、可见的关系或情绪（看谁、忍什么、让谁看见）。三者缺一个就划掉这个候选。
    - 数量在这里就要卡死：写出 P 列表之前先数一遍，多于上限就当场砍到上限再往下走。第二层只为最终入选的 P 写块，绝不允许先超额写完几块、再到第三层发现超限回头删——那几块是白写的，而且第三层只核对、不改决定。
@@ -970,12 +970,12 @@ E. 选段
    - 优先选择突出玩家主角或主要角色的画面，看点是他们的表情、状态、行动与关系，不要求他们每张都同框；不以有无档案或是否有名字给候选加减分。
    - 先确定本图要突出的主体与核心互动，再决定谁入镜。在不损失这些内容的前提下，优先不带无关在场者的构图；必要的无名互动对象照常保留，不为少一个人裁断核心动作。人群同样不因正文提到就必须入画，若人群本身承载核心互动则保留。
    - 按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度排序，并遵守任务协议给出的最少～最多数量：下限大于 0 时从较次但仍可见的候选中补足；达到下限后只继续选择足够强且彼此明显不同的画面，不要用同一事件的相邻动作或不同镜头凑近上限。
-   - 给每张入选图选定 P编号：让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置。最后写出选定的 P 列表。
-   - **先把候选列出来，再打分，最后才定 P 列表**（本节是「不写推演过程」的唯一例外）：
-     · 列：把目标正文切成瞬间，写 3～6 行「P编号｜谁｜在做什么｜画面里看得见什么」。正文短就全列。这一步不下结论。
-     · 扫：谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位、身体有没有不受控的反应。带动这类锚点的候选先记下来，它们最短、最容易被漏。
-     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
-     · 评：每个候选按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度排出高下，把最强的排到前面。
+   - 给每张入选图选定 P编号：让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置（多图时禁止选紧挨着的前后两句话如 P5 与 P6，至少隔开 2 句以上正文）。最后写出选定的 P 列表。
+   - **先把候选列出来，再打分，最后才定 P 列表**（本节用紧凑单行记法，合写在一两行内以节省思考行数）：
+     · 列：把目标正文切成 3～6 个候选瞬间，用紧凑单行写出「P编号(谁·在做什么·画面里看得见什么)」。正文短就全列。这一步不下结论。
+     · 扫：戏剧张力锚点（推门踏入新空间、隔物/高低差对峙、亮出关键道具、动作爆发前摇或定格余韵）与身体锚点（谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位、身体有没有不受控的反应）。带任一锚点的候选先记下来，它们最短、最容易被漏。
+     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted、across table），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
+     · 评：每个候选按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度用紧凑记法（如 P4[张4+信4+画5+锚2=15]）排出高下，把最强的排到前面。
      · 筛：把人物名字换成随便一个路人，若这张图仍能套进几十段别的剧情（站在窗边、坐着聊天、正常走路、抬头看天），它就是废图——划掉。「只有这一刻、只有这两个人、只有这段关系才成立」的才留下。
    - 一格分镜必须同时有主体（谁）、动作或张力（在做什么、正要做）、可见的关系或情绪（看谁、忍什么、让谁看见）。三者缺一个就划掉这个候选。
    - 数量在这里就要卡死：写出 P 列表之前先数一遍，多于上限就当场砍到上限再往下走。第二层只为最终入选的 P 写块，绝不允许先超额写完几块、再到第三层发现超限回头删——那几块是白写的，而且第三层只核对、不改决定。
@@ -1090,8 +1090,8 @@ The story text is prose, not a shot list. It will never state camera, lighting, 
 
 1. Pictorial language (camera, composition, lighting, color, depth of field, mood) must be supplied by you, in Base.
    Give every image a shot distance (close-up / upper body / medium shot / full body / wide shot), a light source and time of day (soft sunlight, candlelight, moonlight, backlighting, golden hour), and a color mood (warm colors, cold colors, muted colors, high contrast). The story not stating them is not a reason to omit them; without them the result is a bland headshot.
-   - Write exactly one shot distance. close-up / upper body / medium shot / full body / wide shot conflict with each other, and writing two (medium shot, upper body) leaves the model unsure where to crop.
-   - The shot distance must contain this image's core contact point. When the core action happens below the torso (a knee pressing, a foot stepping, sitting on a lap, lower-body contact on a bed), do not use close-up or upper body — those crop the contact out of frame. Use medium shot or full body, or a local close-up that frames the contact point completely.
+   - Write exactly one shot distance (close-up / portrait / lower body / upper body / cowboy shot / medium shot / full body / wide shot). close-up / upper body / medium shot / full body / wide shot conflict with each other, and writing two (medium shot, upper body) leaves the model unsure where to crop.
+   - The shot distance must contain this image's core contact point. When the core action happens below the torso (a knee pressing, a foot stepping, sitting on a lap, lower-body contact on a bed), do not use close-up or upper body — those crop the contact out of frame. Use cowboy shot / medium shot or full body, or a local close-up / lower body that frames the contact point completely.
    - Keep body tags consistent with the shot distance. Having chosen upper body or close-up, do not then write shoes, socks, skirt length, legs, or full-body poses in any Character Prompt: tagging a body part that is outside the frame makes the model force it back in.
 
 2. Period and worldview (costume system, architecture, objects, environmental style) must be decided first and then made concrete.

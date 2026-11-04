@@ -51,3 +51,45 @@ export function duplicatePositionNote(positions: string[]): string {
 直接从 <thinking> 开始，不要解释。
 </position_retry>`;
 }
+
+/**
+ * 检查是否把两张图放在了紧挨着的前后两句话（如 P5 与 P6）上。
+ *
+ * 仅在正文句子总数充裕（positionCount >= max(8, images.length * 4)）时生效：
+ * 短楼层本来就没几句话，允许相邻；长楼层（如 10～30 句）里选 P5 和 P6，
+ * 几乎必然是同一自然段同一动作的前后半句，插出来两张图紧贴在一起且画面雷同。
+ */
+export function adjacentPositions(
+  images: PositionPlan[],
+  positionCount: number,
+): Array<[string, string]> {
+  if (images.length < 2) return [];
+  if (positionCount < Math.max(8, images.length * 4)) return [];
+  const nums: number[] = [];
+  for (const image of images) {
+    const m = /^P(\d+)$/i.exec(String(image.position ?? '').trim());
+    if (!m) continue;
+    const n = Number.parseInt(m[1], 10);
+    if (Number.isFinite(n) && !nums.includes(n)) nums.push(n);
+  }
+  nums.sort((a, b) => a - b);
+  const pairs: Array<[string, string]> = [];
+  for (let i = 0; i < nums.length - 1; i++) {
+    if (nums[i + 1] - nums[i] === 1) {
+      pairs.push([`P${nums[i]}`, `P${nums[i + 1]}`]);
+    }
+  }
+  return pairs;
+}
+
+/**
+ * 「两张图挤在相邻两句话」时追加给模型的补救指令。
+ */
+export function adjacentPositionNote(pairs: Array<[string, string]>): string {
+  const list = pairs.map(([a, b]) => `${a} 与 ${b}`).join('、');
+  return `<position_retry>
+上一版把多张图放在了紧挨着的前后两句话上（${list}）。由于 P 编号是按单句切分的，相邻两句属于同一个自然段里的同一个瞬间，连放两张会导致插图紧贴且画面雷同。
+改法：张数不变，把其中一张改选到本楼另一处独立的剧情节点（如前段的场景建立/对峙、中段的动作转折、或后段的情绪高潮/余韵），让两张图之间至少隔开 2 句以上正文，并相应更新那张图的画面概括与 tag。
+直接从 <thinking> 开始，不要解释。
+</position_retry>`;
+}

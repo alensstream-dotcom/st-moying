@@ -30,6 +30,8 @@ export interface ShotAdvice {
   points: string[];
   /** 一句话理由。 */
   reason: string;
+  /** 是否仅由伴随神态/手部描写触发(无强解剖焦点且无同句中远景动作)。 */
+  softOnly?: boolean;
 }
 
 interface PointRule {
@@ -38,6 +40,14 @@ interface PointRule {
   angle: string;
   reason: string;
   pattern: RegExp;
+  /**
+   * 伴随描写标记:
+   * - false/未设(强焦点):解剖部位或亲密接触(如阴蒂/乳首/乳房/吻/瞳孔),任何时候都优先锁近景;
+   * - true(伴随焦点):日常高频神态/手部词(眼神/视线/嘴角/脸颊/泪/手指/握住)。
+   *   当句中只有它时仍建议特写;但若同句已出现全身/中景大动作或空间调度词(如站在/走进/对峙/跪/掀裙),
+   *   则它是大动作下的伴随细节,不强行把全景/中景压成大头特写。
+   */
+  soft?: boolean;
 }
 
 /**
@@ -73,8 +83,16 @@ const POINT_RULES: readonly PointRule[] = [
     distance: 'close',
     tags: 'close-up',
     angle: '',
+    reason: '正文的看点是唇齿/耳畔/瞳孔微距细节,该用特写',
+    pattern: /瞳孔|睫毛|吻|亲吻|舔唇|咬唇|耳垂|耳廓/,
+  },
+  {
+    distance: 'close',
+    tags: 'close-up',
+    angle: '',
     reason: '正文的看点是表情/眼神/唇,该用特写',
-    pattern: /眼神|视线|瞳孔|睫毛|嘴角|唇|吻|舔唇|咬唇|耳垂|耳廓|脸颊|脸红|泪/,
+    pattern: /眼神|视线|嘴角|唇|脸颊|脸红|泪/,
+    soft: true,
   },
   {
     distance: 'close',
@@ -82,6 +100,7 @@ const POINT_RULES: readonly PointRule[] = [
     angle: '',
     reason: '正文的看点是手部接触,该把接触点框成特写',
     pattern: /手指|指尖|指腹|握住|抓住手腕|抚摸|摩挲|十指|掌心|手背/,
+    soft: true,
   },
   {
     distance: 'mid',
@@ -95,7 +114,7 @@ const POINT_RULES: readonly PointRule[] = [
     tags: 'full body',
     angle: '',
     reason: '正文的看点是整体姿态或两人的位置关系',
-    pattern: /站起|走进|转身|退后|扑倒|摔倒|全身|身影|挡在|对峙|隔着|房间里|走廊|人群/,
+    pattern: /站起|站在|伫立|走进|奔跑|转身|退后|扑倒|摔倒|全身|身影|背影|并肩|挡在|对峙|隔着|房间里|走廊|庭院|大厅|街头|城门|人群/,
   },
 ];
 
@@ -104,15 +123,18 @@ const DISTANCE_RANK: Record<ShotDistance, number> = { close: 0, upper: 1, mid: 2
 
 /** 画面实际使用的景别 → 距离档(识别不出返回 null)。 */
 const TAG_DISTANCE: ReadonlyArray<[RegExp, ShotDistance]> = [
-  [/(?:extreme[-_ ]?close[-_ ]?up|close[-_ ]?up)/i, 'close'],
+  [/(?:extreme[-_ ]?close[-_ ]?up|close[-_ ]?up|\bportrait\b|lower[-_ ]?body)/i, 'close'],
   [/(?:upper[-_ ]?body|from[-_ ]?chest[-_ ]?up|head[-_ ]?out[-_ ]?of[-_ ]?frame|half[-_ ]?body)/i, 'upper'],
   [/(?:cowboy[-_ ]?shot|medium[-_ ]?shot|from[-_ ]?waist[-_ ]?up)/i, 'mid'],
   [/(?:full[-_ ]?body|wide[-_ ]?shot|very[-_ ]?wide|feet[-_ ]?out[-_ ]?of[-_ ]?frame)/i, 'far'],
 ];
 
 /** 一张图实际用的景别档;没写景别词返回 null(那是 shotCheck 的另一条事)。 */
-export function tagDistance(tag: string): ShotDistance | null {
-  const hay = tag ?? '';
+export function tagDistance(
+  tag: string,
+  characterTags: readonly string[] = [],
+): ShotDistance | null {
+  const hay = [tag ?? '', ...characterTags].join(', ');
   for (const [pattern, distance] of TAG_DISTANCE) {
     if (pattern.test(hay)) return distance;
   }
@@ -122,27 +144,44 @@ export function tagDistance(tag: string): ShotDistance | null {
 /**
  * 从**这一句正文**读出该收多近。
  *
- * 有多条规则同时命中时取最近的那一档:一句里既写胸又写腰,看点在胸。
- * 一句都没命中返回 null(说明这句只有动作/对白,景别交给模型)。
+ * - 若命中强焦点规则(解剖部位/亲密接触/中远景主体动作),优先在强焦点规则中取最近一档;
+ *   但当句中存在强近景/上半身焦点(close/upper)时,直接锁定该近景焦点;
+ *   当句中无强近景焦点、只有中远景大动作(mid/far)与伴随神态/手部词(soft)共存时,
+ *   以中远景主体动作为准,避免「握住剑柄站在城门前对峙」被「握住/眼神」误压成大头特写。
+ * - 若只命中伴随描写词(soft),则该神态/手部即本句唯一看点,照常建议 close-up。
  */
 export function recommendShot(text: string): ShotAdvice | null {
   const body = (text ?? '').trim();
   if (!body) return null;
-  const points: string[] = [];
-  let best: PointRule | null = null;
+  const matched: Array<{ rule: PointRule; word: string }> = [];
   for (const rule of POINT_RULES) {
     const match = body.match(rule.pattern);
     if (!match) continue;
-    points.push(match[0]);
-    if (!best || DISTANCE_RANK[rule.distance] < DISTANCE_RANK[best.distance]) best = rule;
+    matched.push({ rule, word: match[0] });
   }
-  if (!best) return null;
+  if (!matched.length) return null;
+
+  const hardMatches = matched.filter(m => !m.rule.soft);
+  const pool = hardMatches.length > 0 ? hardMatches : matched;
+  let best = pool[0].rule;
+  for (const { rule } of pool) {
+    if (DISTANCE_RANK[rule.distance] < DISTANCE_RANK[best.distance]) {
+      best = rule;
+    }
+  }
+
+  const orderedPoints = [
+    ...pool.map(m => m.word),
+    ...matched.filter(m => !pool.includes(m)).map(m => m.word),
+  ];
+
   return {
     distance: best.distance,
     tags: best.tags,
     angle: best.angle,
-    points: [...new Set(points)].slice(0, 3),
+    points: [...new Set(orderedPoints)].slice(0, 3),
     reason: best.reason,
+    softOnly: hardMatches.length === 0,
   };
 }
 
@@ -166,13 +205,31 @@ export interface DistanceGap {
  *
  * 留一档余量:建议 upper 而实际 cowboy shot 不算错——很多胸前的动作确实需要
  * 露出腰胯才能交代清楚;但建议 upper 而实际 full body 就一定是远景废片。
+ *
+ * 跨句视野补偿(prevText):规则 3 要求选在「画面所需事实刚刚完整成立的句子 P(k)」,
+ * 若 P(k) 只写了伴随神态(softOnly,如「她眼眶泛红」),而前一句 P(k-1) 刚建立了中远景动作
+ * (如「两人并肩站在漫天风雪的庭院中央」),则允许沿用前一句的中远景跨度,不误判为景别过远。
  */
-export function diagnoseDistance(text: string, tag: string): DistanceGap | null {
+export function diagnoseDistance(
+  text: string,
+  tag: string,
+  characterTags: readonly string[] = [],
+  prevText = '',
+): DistanceGap | null {
   const advice = recommendShot(text);
   if (!advice) return null;
-  const actual = tagDistance(tag);
+  const actual = tagDistance(tag, characterTags);
   if (!actual) return null;
-  if (DISTANCE_RANK[actual] <= DISTANCE_RANK[advice.distance] + 1) return null;
+
+  let allowedRank = DISTANCE_RANK[advice.distance] + 1;
+  if (advice.softOnly && prevText.trim()) {
+    const prevAdvice = recommendShot(prevText);
+    if (prevAdvice && !prevAdvice.softOnly && DISTANCE_RANK[prevAdvice.distance] >= DISTANCE_RANK.mid) {
+      allowedRank = Math.max(allowedRank, DISTANCE_RANK[prevAdvice.distance] + 1);
+    }
+  }
+
+  if (DISTANCE_RANK[actual] <= allowedRank) return null;
   return {
     points: advice.points,
     suggest: advice.tags,
