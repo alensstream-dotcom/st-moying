@@ -41,11 +41,11 @@ interface PointRule {
   reason: string;
   pattern: RegExp;
   /**
-   * 伴随描写标记:
-   * - false/未设(强焦点):解剖部位或亲密接触(如阴蒂/乳首/乳房/吻/瞳孔),任何时候都优先锁近景;
-   * - true(伴随焦点):日常高频神态/手部词(眼神/视线/嘴角/脸颊/泪/手指/握住)。
-   *   当句中只有它时仍建议特写;但若同句已出现全身/中景大动作或空间调度词(如站在/走进/对峙/跪/掀裙),
-   *   则它是大动作下的伴随细节,不强行把全景/中景压成大头特写。
+   * 伴随神态标记:
+   * - false/未设(强焦点):敏感部位、亲密抚摸接触或胸腰臀腿曲线焦点,任何时候都优先锁定对应景别;
+   * - true(伴随神态):单纯的眼神/视线/脸红/嘴角描写。
+   *   当句中只有它时建议 close-up 特写女主表情;若同句同时写有腰臀腿/跪姿/跨坐/掀裙(mid)且无更近接触点,
+   *   则建议 cowboy shot 以同时容纳女主的腰臀腿曲线与绯红神态,并照常拦截 full body 远景。
    */
   soft?: boolean;
 }
@@ -53,68 +53,60 @@ interface PointRule {
 /**
  * 判据表,从近到远优先匹配,先命中者生效。
  *
- * 每一行都是「正文写到这个部位时,远景一定看不清」的硬情况。
- * 只认正文里真会出现的具体名词,不认「亲密」「暧昧」这种形容。
+ * 每一行都是「正文写到女主的这个部位或亲密接触时,远景一定看不清」的硬情况。
+ * 只认正文里真会出现的具体身体部位与接触词。
  */
 const POINT_RULES: readonly PointRule[] = [
   {
     distance: 'close',
     tags: 'lower body',
     angle: 'from below',
-    reason: '正文写到下体/插入点,远景只剩一个点',
-    // 阴蒂、蜜穴、私处、穴口、内裤被拨开、插入处、交合处、精液
-    pattern: /阴蒂|阴核|阴唇|蜜穴|小穴|穴口|私处|下体|股间|胯间|内裤被|被拨开|插入|抽送|交合|结合处|精液|爱液|淫水|潮吹/,
+    reason: '正文写到下体/插入点/足部特写,远景只剩一个点',
+    // 阴蒂、蜜穴、私处、穴口、内裤被拨开、插入处、交合处、精液、足交/脚趾/足弓
+    pattern: /阴蒂|阴核|阴唇|蜜穴|小穴|穴口|私处|下体|股间|胯间|内裤被|被拨开|插入|抽送|交合|结合处|精液|爱液|淫水|潮吹|足交|舔足|足弓|脚趾|脚心|足底/,
   },
   {
     distance: 'close',
     tags: 'close-up',
     angle: 'from above',
-    reason: '正文写到乳头/乳首,远景看不清',
-    pattern: /乳头|乳首|乳尖|含住|吸吮|舔弄|咬住|舌尖/,
+    reason: '正文写到乳头/乳首/口舌接触,远景看不清',
+    pattern: /乳头|乳首|乳尖|含住|吸吮|舔弄|咬住|舌尖|深喉|口交/,
   },
   {
     distance: 'upper',
     tags: 'upper body',
     angle: 'from front',
-    reason: '正文的看点是胸口/乳沟,该用上半身景别',
-    pattern: /乳房|胸部|胸脯|乳沟|双乳|乳肉|胸口|衣领|锁骨/,
+    reason: '正文的看点是胸口/乳沟/锁骨颈肩,该用上半身景别',
+    pattern: /乳房|胸部|胸脯|乳沟|双乳|乳肉|胸口|衣领|锁骨|后颈|颈侧|耳根|香肩|腋下/,
   },
   {
     distance: 'close',
     tags: 'close-up',
     angle: '',
-    reason: '正文的看点是唇齿/耳畔/瞳孔微距细节,该用特写',
-    pattern: /瞳孔|睫毛|吻|亲吻|舔唇|咬唇|耳垂|耳廓/,
+    reason: '正文的看点是唇齿亲吻/耳垂/瞳孔微距细节,该用特写',
+    pattern: /瞳孔|睫毛|唇|吻|亲吻|舔唇|咬唇|耳垂|耳廓/,
   },
   {
     distance: 'close',
     tags: 'close-up',
     angle: '',
-    reason: '正文的看点是表情/眼神/唇,该用特写',
-    pattern: /眼神|视线|嘴角|唇|脸颊|脸红|泪/,
-    soft: true,
+    reason: '正文的看点是手部抚摸/束缚接触,该把接触点框成特写或近景',
+    pattern: /手指|指尖|指腹|握住|抓住手腕|抚摸|摩挲|揉捏|十指|掌心|手背/,
   },
   {
     distance: 'close',
     tags: 'close-up',
     angle: '',
-    reason: '正文的看点是手部接触,该把接触点框成特写',
-    pattern: /手指|指尖|指腹|握住|抓住手腕|抚摸|摩挲|十指|掌心|手背/,
+    reason: '正文的看点是女主表情/眼神/潮红,该用特写',
+    pattern: /眼神|视线|嘴角|脸颊|脸红|潮红|泪/,
     soft: true,
   },
   {
     distance: 'mid',
     tags: 'cowboy shot',
     angle: '',
-    reason: '正文的看点在腰胯/大腿,该用腰以上景别',
-    pattern: /腰肢|腰线|纤腰|臀|翘臀|大腿|腿根|膝盖|跪|跨坐|掀裙|裙摆/,
-  },
-  {
-    distance: 'far',
-    tags: 'full body',
-    angle: '',
-    reason: '正文的看点是整体姿态或两人的位置关系',
-    pattern: /站起|站在|伫立|走进|奔跑|转身|退后|扑倒|摔倒|全身|身影|背影|并肩|挡在|对峙|隔着|房间里|走廊|庭院|大厅|街头|城门|人群/,
+    reason: '正文的看点在腰臀/大腿/跪姿或掀裙曲线,该用七分身(cowboy shot)收近,禁止全身远景',
+    pattern: /腰肢|腰线|纤腰|小腹|肚脐|臀|翘臀|臀缝|大腿|腿根|腿间|膝盖|跪|跨坐|掀裙|裙摆|丝袜|脚踝/,
   },
 ];
 
@@ -221,11 +213,12 @@ export function diagnoseDistance(
   const actual = tagDistance(tag, characterTags);
   if (!actual) return null;
 
-  let allowedRank = DISTANCE_RANK[advice.distance] + 1;
+  // close 允许到 upper(rank 1);upper 与 mid 最高允许到 mid(cowboy shot,rank 2),一律拦截 full body(rank 3)。
+  let allowedRank = Math.min(DISTANCE_RANK.mid, DISTANCE_RANK[advice.distance] + 1);
   if (advice.softOnly && prevText.trim()) {
     const prevAdvice = recommendShot(prevText);
-    if (prevAdvice && !prevAdvice.softOnly && DISTANCE_RANK[prevAdvice.distance] >= DISTANCE_RANK.mid) {
-      allowedRank = Math.max(allowedRank, DISTANCE_RANK[prevAdvice.distance] + 1);
+    if (prevAdvice && !prevAdvice.softOnly && DISTANCE_RANK[prevAdvice.distance] === DISTANCE_RANK.mid) {
+      allowedRank = DISTANCE_RANK.mid;
     }
   }
 

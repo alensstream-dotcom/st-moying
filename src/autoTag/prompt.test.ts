@@ -1471,4 +1471,12 @@ describe('思考块预算上限', () => {
     expect(one).toContain('最多 20 行');
     expect(three).toContain('最多 36 行');
   });
+
+  it('针对 NAI V4.5 / V5 强化女主绝对主体与男主角色块局部无脸降权', async () => {
+    const all = (await buildAutoTagMessages(context(), 1, mk(2), null)).map(m => m.content).join('\n');
+    expect(all).toContain('boy, faceless male');
+    expect(all).toContain('严禁给男主编造发色、瞳色与正脸表情');
+    expect(all).toContain('显式情欲与体位接触锚点（最高优）');
+    expect(all).toContain('前戏半脱/诱惑姿态 → 核心体位推进 → 敏感点特写/高潮余韵');
+  });
 });

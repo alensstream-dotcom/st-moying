@@ -765,8 +765,8 @@ E. 选段
    - 给每张入选图选定 P编号：让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置（多图时禁止选紧挨着的前后两句话如 P5 与 P6，至少隔开 2 句以上正文）。最后写出选定的 P 列表。
    - **先把候选列出来，再打分，最后才定 P 列表**（本节用紧凑单行记法，合写在一两行内以节省思考行数）：
      · 列：把目标正文切成 3～6 个候选瞬间，用紧凑单行写出「P编号(谁·在做什么·画面里看得见什么)」。正文短就全列。这一步不下结论。
-     · 扫：戏剧张力锚点（推门踏入新空间、隔物/高低差对峙、亮出关键道具、动作爆发前摇或定格余韵）与身体锚点（谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位、身体有没有不受控的反应）。带任一锚点的候选先记下来，它们最短、最容易被漏。
-     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted、across table），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
+     · 扫：显式情欲锚点（体位进入或切换、乳首/阴蒂/穴口等敏感点接触、潮红/流涎/弓腰等失控反应）与软色情身体锚点（谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位或半脱、身体有没有不受控的反应）。带任一锚点的候选先记下来，它们最具张力、也最容易被漏。
+     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted、straddling），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
      · 评：每个候选按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度用紧凑记法（如 P4[张4+信4+画5+锚2=15]）排出高下，把最强的排到前面。
      · 筛：把人物名字换成随便一个路人，若这张图仍能套进几十段别的剧情（站在窗边、坐着聊天、正常走路、抬头看天），它就是废图——划掉。「只有这一刻、只有这两个人、只有这段关系才成立」的才留下。
    - 一格分镜必须同时有主体（谁）、动作或张力（在做什么、正要做）、可见的关系或情绪（看谁、忍什么、让谁看见）。三者缺一个就划掉这个候选。
@@ -862,8 +862,8 @@ E. 选段
    - 给每张入选图选定 P编号：让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置（多图时禁止选紧挨着的前后两句话如 P5 与 P6，至少隔开 2 句以上正文）。最后写出选定的 P 列表。
    - **先把候选列出来，再打分，最后才定 P 列表**（本节用紧凑单行记法，合写在一两行内以节省思考行数）：
      · 列：把目标正文切成 3～6 个候选瞬间，用紧凑单行写出「P编号(谁·在做什么·画面里看得见什么)」。正文短就全列。这一步不下结论。
-     · 扫：戏剧张力锚点（推门踏入新空间、隔物/高低差对峙、亮出关键道具、动作爆发前摇或定格余韵）与身体锚点（谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位、身体有没有不受控的反应）。带任一锚点的候选先记下来，它们最短、最容易被漏。
-     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted、across table），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
+     · 扫：显式情欲锚点（体位进入或切换、乳首/阴蒂/穴口等敏感点接触、潮红/流涎/弓腰等失控反应）与软色情身体锚点（谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位或半脱、身体有没有不受控的反应）。带任一锚点的候选先记下来，它们最具张力、也最容易被漏。
+     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted、straddling），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
      · 评：每个候选按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度用紧凑记法（如 P4[张4+信4+画5+锚2=15]）排出高下，把最强的排到前面。
      · 筛：把人物名字换成随便一个路人，若这张图仍能套进几十段别的剧情（站在窗边、坐着聊天、正常走路、抬头看天），它就是废图——划掉。「只有这一刻、只有这两个人、只有这段关系才成立」的才留下。
    - 一格分镜必须同时有主体（谁）、动作或张力（在做什么、正要做）、可见的关系或情绪（看谁、忍什么、让谁看见）。三者缺一个就划掉这个候选。
@@ -967,14 +967,14 @@ D. 时代与世界观（一次判断，全楼通用）
 
 E. 选段
    - 候选必须是一个可见瞬间，有明确主体、动作或视觉状态和场景。纯对话只有在伴随值得画的表情、肢体动作、人物关系或环境变化时才保留；只跳过没有视觉变化的对话、纯心理和过渡。
-   - 优先选择突出玩家主角或主要角色的画面，看点是他们的表情、状态、行动与关系，不要求他们每张都同框；不以有无档案或是否有名字给候选加减分。
+   - 优先选择突出玩家主角或主要角色的画面（画面主体永远是女性主角，玩家男主不单独出镜、只以无脸/局部身位配合女主互动），看点是她们的表情、状态、身体反应、行动与关系，不要求每张都同框；不以有无档案或是否有名字给候选加减分。
    - 先确定本图要突出的主体与核心互动，再决定谁入镜。在不损失这些内容的前提下，优先不带无关在场者的构图；必要的无名互动对象照常保留，不为少一个人裁断核心动作。人群同样不因正文提到就必须入画，若人群本身承载核心互动则保留。
    - 按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度排序，并遵守任务协议给出的最少～最多数量：下限大于 0 时从较次但仍可见的候选中补足；达到下限后只继续选择足够强且彼此明显不同的画面，不要用同一事件的相邻动作或不同镜头凑近上限。
    - 给每张入选图选定 P编号：让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置（多图时禁止选紧挨着的前后两句话如 P5 与 P6，至少隔开 2 句以上正文）。最后写出选定的 P 列表。
    - **先把候选列出来，再打分，最后才定 P 列表**（本节用紧凑单行记法，合写在一两行内以节省思考行数）：
      · 列：把目标正文切成 3～6 个候选瞬间，用紧凑单行写出「P编号(谁·在做什么·画面里看得见什么)」。正文短就全列。这一步不下结论。
-     · 扫：戏剧张力锚点（推门踏入新空间、隔物/高低差对峙、亮出关键道具、动作爆发前摇或定格余韵）与身体锚点（谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位、身体有没有不受控的反应）。带任一锚点的候选先记下来，它们最短、最容易被漏。
-     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted、across table），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
+     · 扫：显式情欲锚点（体位进入或切换、乳首/阴蒂/穴口等敏感点接触、潮红/流涎/弓腰等失控反应）与软色情身体锚点（谁的视线落在别人身上哪个部位、什么物件的落点值得拍、距离被谁压缩、衣物被什么外力移位或半脱、身体有没有不受控的反应）。带任一锚点的候选先记下来，它们最具张力、也最容易被漏。
+     · 词：描述身体与接触尽量用英文 tag 短词（hand on waist、brush on <部位>、skirt lifted、straddling），不写中文长句。中文露骨长句是渠道输出过滤最先斩断的部分，<thinking> 里短一点，正稿就更容易一次说完。
      · 评：每个候选按视觉明确度、剧情重要度、动作完整度、与其他候选的差异度用紧凑记法（如 P4[张4+信4+画5+锚2=15]）排出高下，把最强的排到前面。
      · 筛：把人物名字换成随便一个路人，若这张图仍能套进几十段别的剧情（站在窗边、坐着聊天、正常走路、抬头看天），它就是废图——划掉。「只有这一刻、只有这两个人、只有这段关系才成立」的才留下。
    - 一格分镜必须同时有主体（谁）、动作或张力（在做什么、正要做）、可见的关系或情绪（看谁、忍什么、让谁看见）。三者缺一个就划掉这个候选。
@@ -994,7 +994,7 @@ V5 的一张图 = 一个 Base 块 + 每个本图可见的个体角色各一块�
   size：<portrait / landscape>
 
 ■ P<编号>｜<角色名或正文指称>（每个本图可见的个体角色各写一块；【一次性】角色用正文的指称原词作块名）
-  固定外貌：<【已建档】【本次建档】照抄库中/刚建档的字段（含 age 与骨架词）；【一次性】按世界观一次性补全，至少含性别、年龄档、发色发型、瞳色。1girl/1boy 一律转成 girl/boy>
+  固定外貌：<【已建档】【本次建档】照抄库中/刚建档的字段（含 age 与骨架词）；【一次性】按世界观一次性补全，至少含性别、年龄档、发色发型、瞳色；玩家男主或仅露局部的男方写 boy, faceless male 加局部施力部位（pov hands / muscular arm / torso / lower body / penis），不编发色瞳色与正脸。1girl/1boy 一律转成 girl/boy>
   可见服装：<本景别看得见的部件，逐件写全>
   服装状态：<穿着 / 半脱到哪一步（off shoulder、pulled aside、breasts out、clothes around waist、skirt lifted）/ 已脱落（on the floor、hanging on one arm）>
   表情：<一个标准 danbooru 词>
@@ -1055,7 +1055,7 @@ export const DEFAULT_NAI_V5_SPEC = `[NovelAI 4.5/V5 Prompt Specification]
 Narrative framing and rating fidelity (this section takes priority over generic beautification):
 - Do not automatically reclassify adult story moments into SFW portraits. Determine the intended scene from the actual text first. If it is clearly a consensual adult intimate/NSFW event, keep its defining action, visible state of dress, contact, facial response and spatial relationship instead of substituting harmless small talk or a fully clothed pose. Do not add adult content when the text does not call for it. Do not sexualize minors or age-ambiguous characters.
 - Choose the single decisive instant anchored to this image's position. Do not combine the next paragraph's action with a previous position. Favor in-progress events over generic aftermath poses.
-- The female protagonist is usually the primary visual focus, not an excuse to show every nearby character. For a solitary emotion/thought beat with a visible gesture or expression, frame her alone. For heroine-centered interaction, the male player may be only a hand, forearm, cropped shoulder or a slim foreground edge, with the heroine's reaction and event contact unobscured. Only include the full male body if required by the text's core action; prevent balanced couple photographs by default.
+- The female protagonist is usually the primary visual focus, not an excuse to show every nearby character. For a solitary emotion/thought beat with a visible gesture or expression, frame her alone. For heroine-centered interaction, the male player may be only a hand, forearm, cropped shoulder or a slim foreground edge (using boy, faceless male plus local active parts such as pov hands, muscular arm, torso, lower body, or penis in his Character Prompt without inventing male hair/eye color or a full face), with the heroine's reaction and event contact unobscured. Only include the full male body if required by the text's core action; prevent balanced couple photographs by default.
 - Do not force any male player body part into a purely solo scene. If a male limb is the only visible interaction anchor, do not imply a large male full-body presence in Base or the individual character prompt; describe only the visible portion when a character prompt is warranted.
 - Current-scene gaze and emotion override personality clichés; do not fill missing context with a habitual smile, blush, half-closed eyes or flirtatious look. Maintain all current outfit changes without redressing the character for an aesthetically safer image.
 - One picture should have one strong compositional center. In Base use scene, camera, shared contact and environment; in each character block use that individual's accurate visible attributes and actions. Preserve the same content boundaries in {{#nl}}English nl{{/nl}}{{^nl}}English tags{{/nl}}.

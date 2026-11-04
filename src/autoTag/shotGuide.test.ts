@@ -62,33 +62,43 @@ describe('shotGuide 景别判据', () => {
     expect(distanceLabel('far')).toBe('全景');
   });
 
-  it('中远景大动作伴随眼神/握住等日常词时,不被一刀切压成大头特写', () => {
-    const s1 = '她避开他的眼神,转身走进雨幕中的古老庭院';
-    expect(recommendShot(s1)?.distance).toBe('far');
-    expect(diagnoseDistance(s1, '1girl, full body, from behind, rain, courtyard')).toBeNull();
-
-    const s2 = '他握住剑柄,独自站在宏伟的城门前与千军万马对峙';
-    expect(recommendShot(s2)?.distance).toBe('far');
-    expect(diagnoseDistance(s2, '1boy, wide shot, from below, castle gate')).toBeNull();
-
-    const s3 = '她双膝跪在榻上,脸颊泛红地仰头望他';
-    expect(recommendShot(s3)?.distance).toBe('mid');
-    expect(diagnoseDistance(s3, '1girl, cowboy shot, kneeling, from above')).toBeNull();
+  it('腰臀大腿/跪姿/掀裙等曲线看点建议 cowboy shot,并主动拦截 full body 远景', () => {
+    const s1 = '她双膝跪在榻上,自己掀开裙摆露出大腿根,脸颊泛红地仰头望你';
+    expect(recommendShot(s1)?.distance).toBe('mid');
+    // 允许 cowboy shot 拍全跪姿大腿与绯红脸颊
+    expect(diagnoseDistance(s1, '1girl, cowboy shot, kneeling, lifting skirt, from above')).toBeNull();
+    // 严禁退化成 full body 远景
+    expect(diagnoseDistance(s1, '1girl, full body, kneeling')?.suggest).toBe('cowboy shot');
   });
 
-  it('强解剖焦点与全身词同句时,依然优先保证强近景特写不退化', () => {
-    const line = '她站在镜前,他的指腹碾过她的阴蒂';
+  it('抚摸/摩挲/抓住手腕/唇/眼神等亲密细节即使带走廊/站在等词也绝不放宽成全身远景', () => {
+    const s1 = '她站在走廊窗边,他的指腹摩挲着她泛红的脸颊';
+    expect(recommendShot(s1)?.distance).toBe('close');
+    expect(diagnoseDistance(s1, '1girl, 1boy, full body')).not.toBeNull();
+    expect(diagnoseDistance(s1, '1girl, 1boy, cowboy shot')).not.toBeNull();
+    expect(diagnoseDistance(s1, '1girl, 1boy, close-up, caressing cheek')).toBeNull();
+
+    const s2 = '她站在桌前,眼眶泛红,嘴角轻轻抿紧';
+    expect(recommendShot(s2)?.distance).toBe('close');
+    expect(diagnoseDistance(s2, '1girl, full body')).not.toBeNull();
+  });
+
+  it('强解剖焦点(阴蒂/乳首/足交/锁骨)与跪姿/全身词同句时,始终锁定更近特写', () => {
+    const line = '她双膝跪在镜前,他的指腹碾过她的阴蒂';
     expect(recommendShot(line)?.distance).toBe('close');
+    expect(diagnoseDistance(line, '1girl, 1boy, cowboy shot')).not.toBeNull();
     expect(diagnoseDistance(line, '1girl, 1boy, full body')).not.toBeNull();
+
+    const footLine = '她抬起白皙的足弓与脚趾踩在他胯间';
+    expect(recommendShot(footLine)?.distance).toBe('close');
+    expect(diagnoseDistance(footLine, '1girl, 1boy, full body')).not.toBeNull();
   });
 
-  it('跨句选位 P(k-1) 建立全身/中景动作、P(k) 写伴随神态时,允许拍入前一句的完整动作', () => {
-    const prev = '两人并肩站在悬崖边迎着海风';
-    const curr = '她眼眶泛红,嘴角轻轻抿紧';
-    // 单看 curr 是 softOnly close,但结合 prev 的 far 动作,拍 full body / cowboy shot 不应误杀
-    expect(diagnoseDistance(curr, '1girl, 1boy, full body, cliff', undefined, prev)).toBeNull();
-    // 若无前句中远景支撑,单句纯表情拍成全身依然会提醒拉近
-    expect(diagnoseDistance(curr, '1girl, full body')).not.toBeNull();
+  it('跨句选位 P(k-1) 建立跪姿/掀裙(mid)、P(k) 写女主潮红眼神时,允许用 cowboy shot 拍全但仍拦截 full body', () => {
+    const prev = '她跨坐在他腰间,裙摆滑到大腿根';
+    const curr = '她脸颊潮红,眼神迷离地望着你';
+    expect(diagnoseDistance(curr, '1girl, 1boy, cowboy shot, straddling', undefined, prev)).toBeNull();
+    expect(diagnoseDistance(curr, '1girl, 1boy, full body, straddling', undefined, prev)).not.toBeNull();
   });
 
   it('支持识别 portrait / lower body 及 V5 characterTags 中的景别', () => {
