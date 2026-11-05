@@ -688,27 +688,49 @@ export async function generateNaiImage(
   };
   // 只把「发请求 + 解包」包进重试:上面拼参数、读 vibe 数据的活是一次性的,
   // 重跑它们既白费功夫,也会把 vibe 缺编码的 toastr 警告重复弹出来。
+  const NAI_ATTEMPT_TIMEOUT_MS = 120_000;
   const result = await runNaiWithRetry(
     async () => {
-      const resp = await fetch(naiEndpoint(nai.url, 'generate-image'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${nai.key.trim()}`,
-        },
-        body: JSON.stringify(body),
-        signal,
-      });
-      if (!resp.ok) throw await naiHttpError(resp, 'NAI 生图失败');
+      const attemptCtrl = new AbortController();
+      let timedOut = false;
+      const onOuterAbort = () => attemptCtrl.abort(signal?.reason);
+      if (signal) {
+        if (signal.aborted) throw signal.reason ?? new DOMException('已取消', 'AbortError');
+        signal.addEventListener('abort', onOuterAbort, { once: true });
+      }
+      const timer = setTimeout(() => {
+        timedOut = true;
+        attemptCtrl.abort();
+      }, NAI_ATTEMPT_TIMEOUT_MS);
+      try {
+        const resp = await fetch(naiEndpoint(nai.url, 'generate-image'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${nai.key.trim()}`,
+          },
+          body: JSON.stringify(body),
+          signal: attemptCtrl.signal,
+        });
+        if (!resp.ok) throw await naiHttpError(resp, 'NAI 生图失败');
 
-      const { base64, filename } = unzipNaiImage(await resp.arrayBuffer());
-      const format = filename.split('.').pop()?.toLowerCase() || 'png';
-      return {
-        url: `data:image/${format === 'jpg' ? 'jpeg' : format};base64,${base64}`,
-        filename: `nai-${Date.now()}.${format}`,
-        format,
-        revoke() {},
-      };
+        const { base64, filename } = unzipNaiImage(await resp.arrayBuffer());
+        const format = filename.split('.').pop()?.toLowerCase() || 'png';
+        return {
+          url: `data:image/${format === 'jpg' ? 'jpeg' : format};base64,${base64}`,
+          filename: `nai-${Date.now()}.${format}`,
+          format,
+          revoke() {},
+        };
+      } catch (err) {
+        if (timedOut && !signal?.aborted) {
+          throw new NaiError('NAI 生图请求超时(120s)，可能是手机后台网络连接中断', 504);
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onOuterAbort);
+      }
     },
     { signal, onRetry: opts.onRetry },
   );

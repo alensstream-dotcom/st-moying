@@ -32,6 +32,10 @@ vi.mock('@/floor/storage', async importOriginal => {
 import {
   _resetBackgroundGenForTest,
   backgroundQueueState,
+  cancelBackgroundFloorJobs,
+  clearPreclaimedBackgroundSlots,
+  isBackgroundJobQueued,
+  preclaimBackgroundSlots,
   resumePending,
   runBackgroundGenerations,
   type BackgroundJob,
@@ -204,5 +208,59 @@ describe('backgroundGen', () => {
     await resumePending();
     expect(backgroundQueueState().count).toBe(0);
     expect(generateImageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks preclaimed and queued multi-slot jobs in isBackgroundJobQueued and does not inflate attempts on yield', async () => {
+    const fullTag0 = makeFullTag('1girl, slot0');
+    const fullTag1 = makeFullTag('1girl, slot1');
+    const job0 = makeJob({ seq: 0, tag: fullTag0, prompt: '1girl, slot0' });
+    const job1 = makeJob({ seq: 1, tag: fullTag1, prompt: '1girl, slot1' });
+
+    getContextMock.mockReturnValue({
+      getCurrentChatId: () => 'chat-1',
+      chat: [{}, {}, { mes: `${fullTag0}\n${fullTag1}`, swipe_id: 0, extra: {} }],
+    });
+
+    preclaimBackgroundSlots('chat-1', 2, 0, [0, 1]);
+    expect(isBackgroundJobQueued('chat-1', 2, 0, 0)).toBe(true);
+    expect(isBackgroundJobQueued('chat-1', 2, 0, 1)).toBe(true);
+    clearPreclaimedBackgroundSlots('chat-1', 2);
+    expect(isBackgroundJobQueued('chat-1', 2, 0, 0)).toBe(false);
+
+    let resolveFirst!: () => void;
+    const firstGate = new Promise<void>(r => {
+      resolveFirst = r;
+    });
+
+    generateImageMock.mockImplementationOnce(async () => {
+      expect(isBackgroundJobQueued('chat-1', 2, 0, 0)).toBe(true);
+      await firstGate;
+      expect(isBackgroundJobQueued('chat-1', 2, 0, 1)).toBe(true);
+      return {
+        result: { url: 'data:image/png;base64,AAAA', format: 'png', revoke: vi.fn() },
+        meta: {},
+      };
+    });
+    generateImageMock.mockResolvedValueOnce({
+      result: { url: 'data:image/png;base64,BBBB', format: 'png', revoke: vi.fn() },
+      meta: {},
+    });
+    saveImageResultMock.mockResolvedValue({ generationId: 'g1', path: '/user/images/1.png' });
+
+    const p0 = runBackgroundGenerations([job0]);
+    const p1 = runBackgroundGenerations([job1]);
+    expect(backgroundQueueState().count).toBe(1);
+
+    resolveFirst();
+    await Promise.all([p0, p1]);
+    expect(generateImageMock).toHaveBeenCalledTimes(2);
+    expect(backgroundQueueState().count).toBe(0);
+  });
+
+  it('cancelBackgroundFloorJobs clears queued and preclaimed jobs for that floor', () => {
+    preclaimBackgroundSlots('chat-1', 2, 0, [0, 1]);
+    expect(isBackgroundJobQueued('chat-1', 2, 0, 0)).toBe(true);
+    cancelBackgroundFloorJobs('chat-1', 2);
+    expect(isBackgroundJobQueued('chat-1', 2, 0, 0)).toBe(false);
   });
 });

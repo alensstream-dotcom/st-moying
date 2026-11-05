@@ -27,16 +27,26 @@ export const ARTIST_PREVIEW_FOLDER = '墨影_画师串';
 async function postImage(
   endpoint: string,
   body: Record<string, unknown>,
+  timeoutMs = 45_000,
 ): Promise<{ ok: boolean; status: number; text: string }> {
   const ctx = getContext();
   if (!ctx) throw new ImageStoreError('SillyTavern 上下文不可用');
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: ctx.getRequestHeaders(),
-    body: JSON.stringify(body),
-  });
-  const text = await response.text().catch(() => '');
-  return { ok: response.ok, status: response.status, text };
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const fetchPromise = fetch(endpoint, {
+      method: 'POST',
+      headers: ctx.getRequestHeaders(),
+      body: JSON.stringify(body),
+    });
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new ImageStoreError(`图片请求超时 (${endpoint})`)), timeoutMs);
+    });
+    const response = await Promise.race([fetchPromise, timeoutPromise]);
+    const text = await response.text().catch(() => '');
+    return { ok: response.ok, status: response.status, text };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
 }
 
 /**

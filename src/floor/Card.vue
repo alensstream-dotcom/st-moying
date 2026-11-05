@@ -8,6 +8,7 @@ import Icon from '@/components/Icon.vue';
 import { confirmDialog } from '@/components/confirm';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { consumeAutoGenerate, shouldAutoGenerate } from '@/floor/autoGenerate';
+import { isBackgroundJobQueued } from '@/floor/backgroundGen';
 import { isCollapsed, setCollapsed } from '@/floor/collapseState';
 import { imageDownloadFileName, saveImageFile } from '@/floor/download';
 import {
@@ -452,16 +453,22 @@ onMounted(() => {
   // (本组件没有单测,留在这儿锁不住),口径见 floor/autoGenerate.ts。
   // 未配置后端时不跑(卡片维持 pending,显示配置引导);标记同样已消费掉。
   if (!props.chatId) return;
+  if (isBackgroundJobQueued(props.chatId, props.messageId, props.swipeId, props.seq)) {
+    consumeAutoGenerate(props.chatId, props.messageId, props.swipeId, props.seq);
+    return;
+  }
   const mode = consumeAutoGenerate(props.chatId, props.messageId, props.swipeId, props.seq);
   if (!mode) {
     // 标记已被摘走 = 后台出图接手了。但后台那一侧也可能被跳过(僵尸记录、切过聊天、
     // 启动期后端还没就绪),那样这一张就永远停在待生成、只能手动点一下 —— 而它通常
     // 正好是本楼的第一张,因为它是第一个挂载、第一个被摘标记的。
     // 给一次迟到的兜底:稍后再看，若这个槽位既没有图也没有在途任务，就自己跑。
+    if (!settings.autoTag.autoGenerate) return;
     window.setTimeout(() => {
       if (props.chatId !== (getContext()?.getCurrentChatId?.() ?? '')) return;
       if (shownEntry.value) return;
       if (hasActiveGen(key.value)) return;
+      if (isBackgroundJobQueued(props.chatId, props.messageId, props.swipeId, props.seq)) return;
       if (!configured.value) return;
       console.debug(`[墨影] 兜底出图：第 ${props.messageId} 楼第 ${props.seq + 1} 张（未被后台接手）`);
       void generate();

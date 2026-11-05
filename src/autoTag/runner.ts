@@ -77,7 +77,12 @@ import {
   consumeAutoGenerate,
   markForAutoGenerate,
 } from '@/floor/autoGenerate';
-import { runBackgroundGenerations } from '@/floor/backgroundGen';
+import {
+  cancelBackgroundFloorJobs,
+  clearPreclaimedBackgroundSlots,
+  preclaimBackgroundSlots,
+  runBackgroundGenerations,
+} from '@/floor/backgroundGen';
 import { applyMessageText, type ApplyMessageResult } from '@/st/messageEdit';
 import { getContext, isAiStoryMessage, type STMessage } from '@/st/context';
 import {
@@ -845,13 +850,20 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 不受 autoTag.autoGenerate 开关约束,一律 force 出图。
     const markSwipeId = message.swipe_id ?? 0;
     const marked = plan.images.length > 0 && (settings.autoTag.autoGenerate || !!slot);
+    if (!slot && opts.replace) {
+      cancelBackgroundFloorJobs(chatId, floor);
+    }
     if (marked) {
       if (slot) {
         markForAutoGenerate(chatId, floor, markSwipeId, slot.seq, 'force');
+        preclaimBackgroundSlots(chatId, floor, markSwipeId, [slot.seq]);
       } else {
+        const seqs: number[] = [];
         for (let seq = 0; seq < plan.images.length; seq++) {
           markForAutoGenerate(chatId, floor, markSwipeId, seq);
+          seqs.push(seq);
         }
+        preclaimBackgroundSlots(chatId, floor, markSwipeId, seqs);
       }
     }
     // 正文在 buildNext 里基于「落盘那一刻的真实正文」现算:分析期间别的插件对正文的修改
@@ -972,6 +984,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     }
     // 撤销标记只撤自己那一枚:clearAutoGenerateForFloor 会连累同楼其它槽位的待消费标记。
     if (marked) {
+      clearPreclaimedBackgroundSlots(chatId, floor);
       if (slot) consumeAutoGenerate(chatId, floor, markSwipeId, slot.seq);
       else clearAutoGenerateForFloor(chatId, floor);
     }
@@ -987,6 +1000,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     processed.delete(identity);
     // 异常发生在挂标记之后时(如保存失败回滚),撤销本楼标记,不留残留。
     // 单槽只撤自己那一枚:clearAutoGenerateForFloor 会连累同楼其它槽位的待消费标记。
+    clearPreclaimedBackgroundSlots(chatId, floor);
     if (slot) consumeAutoGenerate(chatId, floor, swipeId ?? 0, slot.seq);
     else clearAutoGenerateForFloor(chatId, floor);
     if (controller.signal.aborted) return;

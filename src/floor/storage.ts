@@ -325,7 +325,12 @@ export async function prepareImageForStorage(result: ComfyImageResult): Promise<
       const original = await response.blob();
       // 本就是 JPG(webp 等不可再压)时直接跳过重编码，避免二次有损
       if (result.format !== 'jpg' && result.format !== 'jpeg') {
-        const jpeg = await reencodeAsJpeg(original);
+        const jpeg = await Promise.race([
+          reencodeAsJpeg(original),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('JPG 转码超时(后台 GPU 挂起)')), 5000),
+          ),
+        ]);
         return { base64: await blobToBase64(jpeg), format: 'jpg' };
       }
       return { base64: await blobToBase64(original), format: result.format };

@@ -29,7 +29,7 @@ import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import type { Orientation } from '@/backends/size';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { consumeAutoGenerate } from '@/floor/autoGenerate';
-import { beginGen, clearGen, failGen, getGenRecord, hasActiveGen, setGenPhase, setGenRetry, setQueueAhead, slotKey } from '@/floor/genState';
+import { beginGen, clearGen, failGen, getGenRecord, hasActiveGen, pruneGenSlots, setGenPhase, setGenRetry, setQueueAhead, slotKey } from '@/floor/genState';
 import { hydrateMessage } from '@/floor/hydrate';
 import { isImageMissing } from '@/floor/missingImages';
 import { historyEntries, promptHash, readStore, saveImageResult } from '@/floor/storage';
@@ -70,6 +70,8 @@ let pending: PendingEntry[] = [];
 let loaded = false;
 let running = false;
 let resumeBound = false;
+let activeJobKey: string | null = null;
+const preclaimedKeys = new Set<string>();
 
 function readPending(): PendingEntry[] {
   if (loaded) return pending;
@@ -106,12 +108,16 @@ function writePending(): void {
   }
 }
 
-function enqueue(job: BackgroundJob, lastError: string): void {
+const YIELD_NOTE = '等待后台批次让位';
+
+function enqueue(job: BackgroundJob, lastError: string, bumpAttempt = true): void {
   readPending();
   const key = jobKey(job);
   const existing = pending.find(item => jobKey(item.job) === key);
   if (existing) {
-    existing.attempts += 1;
+    const wasYieldPlaceholder = existing.lastError === YIELD_NOTE && existing.attempts === 0;
+    existing.job = job;
+    if (bumpAttempt && !wasYieldPlaceholder) existing.attempts += 1;
     existing.lastError = lastError;
     existing.at = Date.now();
   } else {
@@ -270,52 +276,112 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
 const activeBatch: BackgroundJob[] = [];
 
 export function isBackgroundGenRunning(): boolean {
-  return running || activeBatch.length > 0;
+  return running || activeBatch.length > 0 || preclaimedKeys.size > 0;
+}
+
+/**
+ * 在写回消息触发 DOM 水合前预先声明本楼槽位将由 backgroundGen 接管，
+ * 防止 applyMessageText 期间挂载的 Card.vue 抢跑并脱离后台持久化队列。
+ */
+export function preclaimBackgroundSlots(
+  chatId: string,
+  messageId: number,
+  swipeId: number,
+  seqs: number[],
+): void {
+  for (const seq of seqs) {
+    preclaimedKeys.add(`${chatId}|${messageId}|${swipeId}|${seq}`);
+  }
+}
+
+export function clearPreclaimedBackgroundSlots(chatId: string, messageId: number): void {
+  const prefix = `${chatId}|${messageId}|`;
+  for (const key of Array.from(preclaimedKeys)) {
+    if (key.startsWith(prefix)) preclaimedKeys.delete(key);
+  }
+}
+
+/**
+ * 整楼重绘/重写 tag 时清理该楼旧的排队项与在途请求，防旧请求卡死并发闸门。
+ */
+export function cancelBackgroundFloorJobs(chatId: string, messageId: number): void {
+  clearPreclaimedBackgroundSlots(chatId, messageId);
+  for (let i = activeBatch.length - 1; i >= 0; i--) {
+    if (activeBatch[i].chatId === chatId && activeBatch[i].messageId === messageId) {
+      activeBatch.splice(i, 1);
+    }
+  }
+  readPending();
+  const next = pending.filter(
+    item => !(item.job.chatId === chatId && item.job.messageId === messageId),
+  );
+  if (next.length !== pending.length) {
+    pending = next;
+    writePending();
+  }
+  const swipeId = getContext()?.chat?.[messageId]?.swipe_id ?? 0;
+  pruneGenSlots(chatId, messageId, swipeId, 0);
+}
+
+/**
+ * 判断某个槽位是否已由后台出图模块接管（预声明、在内存队列、正在跑或待续跑）。
+ */
+export function isBackgroundJobQueued(
+  chatId: string,
+  messageId: number,
+  swipeId: number,
+  seq: number,
+): boolean {
+  const k = `${chatId}|${messageId}|${swipeId}|${seq}`;
+  if (preclaimedKeys.has(k) || activeJobKey === k) return true;
+  if (activeBatch.some(item => jobKey(item) === k)) return true;
+  if (running && readPending().some(item => jobKey(item.job) === k && item.attempts < MAX_RESUME)) {
+    return true;
+  }
+  return false;
 }
 
 /**
  * 依次跑一批任务（不并发：NAI 的闸门在 generateImage 里，但后台场景不值得抢）。
- * 每个任务先抢标记：抢不到说明前台卡片已经在跑，直接让位。
+ * 同步登记进 activeBatch 并持久化到 pending，无论前台或手机切后台都能无缝连续出图。
  */
 export async function runBackgroundGenerations(jobs: BackgroundJob[]): Promise<void> {
   if (!jobs.length) return;
   bindResumeListener();
-  // 让出一小段:先让前台卡片挂载、先决定它跑不跑。但在手机后台(document.hidden)时前台卡片根本不挂载,无需白等 300ms。
-  const isHidden = typeof document !== 'undefined' && (document.hidden || document.visibilityState === 'hidden');
-  if (!isHidden) {
-    await new Promise<void>(resolve => {
-      setTimeout(resolve, 300);
-    });
-  }
   for (const job of jobs) {
-    consumeAutoGenerate(job.chatId, job.messageId, job.swipeId, job.seq);
     const k = jobKey(job);
+    preclaimedKeys.delete(k);
+    consumeAutoGenerate(job.chatId, job.messageId, job.swipeId, job.seq);
     if (!activeBatch.some(item => jobKey(item) === k)) {
       activeBatch.push(job);
     }
   }
   if (running) {
-    // 已有后台批次在跑:新任务已经并入 activeBatch 内存队列,当前循环会紧接着跑完它!
-    // 同时写入 pending 持久化防进程被杀,绝不能像旧版那样 enqueue 后直接停工傻等 visibilitychange!
-    for (const job of jobs) enqueue(job, '等待后台批次让位');
+    for (const job of jobs) enqueue({ ...job, tag: resolveFullTag(job) }, YIELD_NOTE, false);
     return;
   }
   running = true;
   try {
     while (activeBatch.length > 0) {
       const job = activeBatch.shift()!;
-      const outcome = await runOne(job);
-      if (outcome !== 'ok') {
-        console.info(
-          `[墨影] 后台出图:第 ${job.messageId} 楼第 ${job.seq + 1} 张 → ${outcome}`,
-        );
+      const k = jobKey(job);
+      activeJobKey = k;
+      try {
+        const outcome = await runOne(job);
+        if (outcome !== 'ok') {
+          console.info(
+            `[墨影] 后台出图:第 ${job.messageId} 楼第 ${job.seq + 1} 张 → ${outcome}`,
+          );
+        }
+      } finally {
+        if (activeJobKey === k) activeJobKey = null;
       }
     }
   } finally {
     running = false;
-    // 如果持久化队列里还有等待项,自动接力续跑(即使在手机后台也不停下)
-    if (readPending().some(item => item.attempts < MAX_RESUME && chatMatches(item.job.chatId))) {
-      setTimeout(() => { void resumePending(); }, 120);
+    // 如果在跑期间有通过 YIELD_NOTE 入队的等待项,自动接力续跑
+    if (readPending().some(item => item.lastError === YIELD_NOTE && item.attempts < MAX_RESUME && chatMatches(item.job.chatId))) {
+      setTimeout(() => { void resumePending(); }, 100);
     }
   }
 }
@@ -348,10 +414,15 @@ export async function resumePending(): Promise<void> {
       if (!entry || entry.attempts >= MAX_RESUME) continue;
       // 续跑前同样抢标记:标记若还在,说明前台从没接手过,这次由我们兜住
       consumeAutoGenerate(job.chatId, job.messageId, job.swipeId, job.seq);
-      const outcome = await runOne(job);
-      if (outcome === 'skipped') {
-        const key = slotKey(job.chatId, job.messageId, job.swipeId, job.seq);
-        if (!hasActiveGen(key)) dropPending(k);
+      activeJobKey = k;
+      try {
+        const outcome = await runOne(job);
+        if (outcome === 'skipped') {
+          const key = slotKey(job.chatId, job.messageId, job.swipeId, job.seq);
+          if (!hasActiveGen(key)) dropPending(k);
+        }
+      } finally {
+        if (activeJobKey === k) activeJobKey = null;
       }
     }
   } finally {
@@ -376,6 +447,8 @@ export function _resetBackgroundGenForTest(): void {
   pending = [];
   loaded = false;
   running = false;
+  activeJobKey = null;
+  preclaimedKeys.clear();
   activeBatch.length = 0;
   try {
     localStorage.removeItem(PENDING_KEY);
