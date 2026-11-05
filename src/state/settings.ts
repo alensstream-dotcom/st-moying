@@ -208,6 +208,14 @@ export interface NaiArtistPreset {
   /** 绑定的负面提示词;空串 = 跟随渠道级 undesiredContent。 */
   negative: string;
   /**
+   * 配套的生图配置预设 id（见 GenPreset）。
+   *
+   * 设为非空时，在「提示词」区切换到这条画师串会自动把「默认参数」切到对应的 GenPreset
+   * （模型 NAI 4.5 / NAI 5、采样器、步数、Scale 等整套随之切换）；
+   * 允许多个画师串绑定同一套参数预设（例如 10 条 V4.5 画师串共用一套「NAI 4.5 常用」参数）。
+   */
+  genPresetId?: string;
+  /**
    * 预览图路径(/api/images/upload 落在 user/images/墨影_画师串/ 的相对路径)。
    * 可选:老数据没有此键;空 = 管理器卡片显示占位。文件归属随条目:
    * 删条目时按此路径删文件;复制条目不带走(否则两条目共指一个文件,删一边另一边破图)。
@@ -1216,6 +1224,13 @@ function normalizeGenPresets(raw: unknown, fallback: GenPreset[]): GenPreset[] {
     });
   }
   if (!out.length) return fallback;
+  // 老配置只有「默认」+「素材库配图」两套时,自动补齐内置「NAI 4.5 常用」参数预设,方便 V4.5 画师串一键绑定。
+  const builtin45 = fallback.find(preset => preset.id === 'nai-4-5');
+  if (builtin45 && !out.some(preset => preset.id === 'nai-4-5')) {
+    const loreIdx = out.findIndex(preset => preset.forLore);
+    if (loreIdx >= 0) out.splice(loreIdx, 0, { ...builtin45, promptKeys: [...builtin45.promptKeys] });
+    else out.push({ ...builtin45, promptKeys: [...builtin45.promptKeys] });
+  }
   // forLore 全局只能有一套:多出来的按普通预设处理,避免素材库随机挑到两套不同的画法。
   let loreKept = false;
   for (const preset of out) {
@@ -1243,7 +1258,21 @@ function genPresetsDefaults(): GenPreset[] {
     activeArtistId: nai.activeArtistId,
   };
   return [
-    { ...base, id: 'default', name: '默认' },
+    { ...base, id: 'default', name: '默认 (NAI 5)' },
+    {
+      ...base,
+      id: 'nai-4-5',
+      name: 'NAI 4.5 常用',
+      model: 'nai-diffusion-4-5-full',
+      sampler: 'k_euler_ancestral',
+      steps: 28,
+      scale: 5,
+      cfgRescale: 0.2,
+      noiseSchedule: 'karras',
+      varietyBoost: true,
+      naturalLanguage: true,
+      activeArtistId: '',
+    },
     {
       ...base,
       id: 'lore',
@@ -1839,6 +1868,8 @@ function normalizeArtistPreset(raw: unknown, seq: number): NaiArtistPreset {
     // 存量条目没有这两个键:补空串 = 跟随渠道级,升级后提示词输出零变化
     quality: typeof o.quality === 'string' ? o.quality : '',
     negative: typeof o.negative === 'string' ? o.negative : '',
+    genPresetId:
+      typeof o.genPresetId === 'string' && o.genPresetId.trim() ? o.genPresetId.trim() : undefined,
     // 可选键:非字符串/空串一律视为无预览(不落 undefined 以外的脏数据)
     previewPath:
       typeof o.previewPath === 'string' && o.previewPath ? o.previewPath : undefined,
