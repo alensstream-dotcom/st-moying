@@ -277,7 +277,7 @@ function openEdit(item: ManagerItem) {
   editPrompt.value = item.preset.prompt;
   const direct = item.preset.genPresetId && genPresetById(item.preset.genPresetId)
     ? item.preset.genPresetId
-    : settings.genPresets.find(p => !p.forLore && p.activeArtistId === item.preset.id)?.id ?? '';
+    : '';
   editGenPresetId.value = direct;
 }
 
@@ -290,11 +290,6 @@ function saveEdit() {
   if (!item || item.builtin) return; // 内置只读(按钮已隐藏,双保险)
   item.preset.name = editName.value.trim();
   item.preset.prompt = editPrompt.value;
-  for (const p of settings.genPresets) {
-    if (p.activeArtistId === item.preset.id && p.id !== editGenPresetId.value) {
-      p.activeArtistId = '';
-    }
-  }
   bindArtistGenPreset(item.preset.id, editGenPresetId.value);
   closeEdit();
 }

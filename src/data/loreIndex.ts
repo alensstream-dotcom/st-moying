@@ -570,3 +570,7 @@ export function allWardrobeItems(): WardrobeItem[] {
 export function allPoseItems(): PoseEntry[] {
   return [...POSE_ITEMS, ...customPoses()];
 }
+
+export function allFandomItems(): FandomPreset[] {
+  return [...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2];
+}

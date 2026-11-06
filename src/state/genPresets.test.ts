@@ -88,30 +88,30 @@ describe('genPresets 画师串与生图参数预设联动', () => {
     expect(settings.nai.model).toBe('nai-diffusion-5-full');
   });
 
-  it('切换未绑定的画师串不会在 600ms 防抖后篡改当前参数预设的 activeArtistId', async () => {
+  it('切换画师串不会篡改当前参数预设的内容，手动切换参数预设也不会覆盖当前画师串', async () => {
     vi.useFakeTimers();
     try {
       const def = settings.genPresets.find(p => p.id === 'default')!;
-      def.activeArtistId = 'art-bound';
+      const origSteps = def.steps;
       settings.nai.artistPresets = [
-        { id: 'art-bound', name: '原绑定串', prompt: 'artist:1', quality: '', negative: '' },
         { id: 'art-free', name: '随手试串', prompt: 'artist:2', quality: '', negative: '' },
       ];
-      applyGenPreset('default');
-      expect(settings.nai.activeArtistId).toBe('art-bound');
+      settings.nai.activeArtistId = 'art-free';
 
-      // 用户切到未绑定的画师串
-      selectArtistWithPreset('art-free');
+      // 防抖同步
       vi.advanceTimersByTime(1000);
+      expect(def.steps).toBe(origSteps);
 
-      // 原预设绑定的 activeArtistId 不应被篡改覆盖
-      expect(def.activeArtistId).toBe('art-bound');
+      // 手动切换参数预设不会覆盖画师串
+      switchGenPreset('nai-4-5');
+      expect(settings.nai.activeArtistId).toBe('art-free');
+      expect(settings.nai.model).toBe('nai-diffusion-4-5-full');
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('手动切换到一个未固定画师串的参数预设时，保留当前正在使用的画师串不被清空', () => {
+  it('手动切换参数预设时，保留当前正在使用的画师串不被清空', () => {
     settings.nai.artistPresets = [
       { id: 'art-my', name: '我的画师串', prompt: 'artist:me', quality: '', negative: '' },
     ];

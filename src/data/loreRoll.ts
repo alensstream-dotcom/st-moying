@@ -1,19 +1,26 @@
-import { allPoseItems, allWardrobeItems } from '@/data/loreIndex';
+import { allFandomItems, allPoseItems, allWardrobeItems } from '@/data/loreIndex';
 import { POSE_CATEGORIES } from '@/data/poseBank';
 import { WARDROBE_CATEGORIES } from '@/data/wardrobe';
-import type { NsfwLevel, PoseCategoryId, PoseEntry, WardrobeItem } from '@/data/loreTypes';
+import { guessWardrobeCategory, guessWardrobeSlot } from '@/data/customLore';
+import type {
+  FandomPreset,
+  NsfwLevel,
+  PoseCategoryId,
+  PoseEntry,
+  WardrobeItem,
+  WardrobeSlot,
+} from '@/data/loreTypes';
+
+export type RollKind = 'wardrobe' | 'pose' | 'fandom';
 
 /**
- * 素材 Roll —— 打一个词，随机给你一身「细化过」的搭配。
- *
- * 为什么不是让 LLM 现场编 tag 串：生图模型对没见过的组合很敏感，随手编的词经常
- * 出不来东西（或者出来四不像）。所以这里从**库里已有的、验证过的条目**取骨架，
- * 再叠同类的部件和氛围修饰——出来的串每个词都在库里，画得准；又因为是随机抽取，
- * 同一个词每次都能看到不同款式，看到喜欢的再存进库。
+ * 素材 Roll —— 打一个词（或完全留空直接大抽奖），随机给你一套细化过的搭配/姿势/同人角色。
  *
  * 三层结构：
- *   骨架(1 条) → 同分类部件(0–2 个 tag) → 氛围修饰(2 个) → 机位(1 个)
- * 后两层刻意只用常见的构图/光线词，不碰主体，避免把「JK 制服」roll 成看不出是 JK。
+ *   骨架(1 条) → 部件丰富(0–2 个 tag) → 氛围修饰(2 个) → 机位(1 个)
+ * 当输入留空时，从全库中完全随机抽取，让用户能随时随地「探索新灵感」；
+ * 当输入关键词在库里有收录时，精准按关键词召回骨架；
+ * 当输入的词库里未收录时，自动基于关键词自由构图，绝不报错拦截。
  */
 export interface RollResult {
   /** 建议存进库的名字：关键词 + 随机后缀，避免同名冲突。 */
@@ -27,6 +34,10 @@ export interface RollResult {
   source: string;
   /** 这条 roll 的随机种子，便于 UI 显示或复现。 */
   seed: number;
+  kind: RollKind;
+  /** 匹配到的原始条目 id（同人条目保存预览图时作为索引键） */
+  id?: string;
+  franchise?: string;
 }
 
 type Rng = () => number;
@@ -72,18 +83,104 @@ function splitTags(raw: string): string[] {
     .filter(Boolean);
 }
 
-/** 匹配关键词的库条目：名字、触发词、tag 串任一处包含即算。 */
-function matchItems<T extends { name: string; tags: string; aliases: string[] }>(
+/** 匹配关键词的库条目：名字、触发词、tag 串、分类任一处包含即算。若 keyword 为空，返回全部条目。 */
+function matchItems<T extends { name: string; tags: string; aliases: string[]; category?: string }>(
   items: readonly T[],
   keyword: string,
 ): T[] {
   const kw = keyword.trim().toLowerCase();
-  if (!kw) return [];
-  return items.filter(item => {
-    if (item.name.toLowerCase().includes(kw)) return true;
-    if (item.tags.toLowerCase().includes(kw)) return true;
-    return item.aliases.some(alias => alias.toLowerCase().includes(kw) || kw.includes(alias.toLowerCase()));
-  });
+  if (!kw) return [...items];
+  const scored: { item: T; score: number }[] = [];
+
+  for (const item of items) {
+    let score = 0;
+    const nameLower = item.name.toLowerCase();
+    if (nameLower === kw) {
+      score = Math.max(score, 100);
+    } else if (nameLower.includes(kw)) {
+      score = Math.max(score, 50);
+    }
+
+    for (const alias of item.aliases) {
+      const aLower = alias.toLowerCase();
+      if (aLower === kw) {
+        score = Math.max(score, 100);
+      } else if (aLower.includes(kw)) {
+        score = Math.max(score, 50);
+      } else if (kw.length > 2 && aLower.length >= 2 && kw.includes(aLower)) {
+        score = Math.max(score, 20 + aLower.length);
+      }
+    }
+
+    if (item.category && (item.category.toLowerCase() === kw || item.category.toLowerCase().includes(kw))) {
+      score = Math.max(score, 30);
+    }
+    if (item.tags.toLowerCase().includes(kw)) {
+      score = Math.max(score, 15);
+    }
+
+    if (score > 0) {
+      scored.push({ item, score });
+    }
+  }
+
+  if (!scored.length) return [];
+  const maxScore = Math.max(...scored.map(s => s.score));
+  const topThreshold = maxScore >= 50 ? 50 : maxScore >= 30 ? 30 : 10;
+  return scored.filter(s => s.score >= topThreshold).map(s => s.item);
+}
+
+/** 匹配同人角色条目：名字、作品、别名、发色、瞳色、tag 串任一处包含即算。若 keyword 为空，返回全部条目。 */
+export function matchFandomItems(
+  items: readonly FandomPreset[],
+  keyword: string,
+): FandomPreset[] {
+  const kw = keyword.trim().toLowerCase();
+  if (!kw) return [...items];
+  const scored: { item: FandomPreset; score: number }[] = [];
+
+  for (const item of items) {
+    let score = 0;
+    const nameLower = item.name.toLowerCase();
+    const frLower = item.franchise.toLowerCase();
+
+    if (nameLower === kw) {
+      score = Math.max(score, 100);
+    } else if (nameLower.includes(kw)) {
+      score = Math.max(score, 50);
+    }
+
+    for (const alias of item.aliases) {
+      const aLower = alias.toLowerCase();
+      if (aLower === kw) {
+        score = Math.max(score, 100);
+      } else if (aLower.includes(kw)) {
+        score = Math.max(score, 50);
+      } else if (kw.length > 2 && aLower.length >= 2 && kw.includes(aLower)) {
+        score = Math.max(score, 20 + aLower.length);
+      }
+    }
+
+    if (frLower === kw || frLower.includes(kw) || kw.includes(frLower)) {
+      score = Math.max(score, 30);
+    }
+
+    if (item.tags.toLowerCase().includes(kw)) {
+      score = Math.max(score, 15);
+    }
+    if (item.hair?.toLowerCase().includes(kw) || item.eyes?.toLowerCase().includes(kw)) {
+      score = Math.max(score, 10);
+    }
+
+    if (score > 0) {
+      scored.push({ item, score });
+    }
+  }
+
+  if (!scored.length) return [];
+  const maxScore = Math.max(...scored.map(s => s.score));
+  const topThreshold = maxScore >= 50 ? 50 : maxScore >= 30 ? 30 : 10;
+  return scored.filter(s => s.score >= topThreshold).map(s => s.item);
 }
 
 function uniquePush(target: string[], tags: string[], limit: number): void {
@@ -95,75 +192,202 @@ function uniquePush(target: string[], tags: string[], limit: number): void {
 
 /**
  * 按关键词 roll 一身服装。
- *
- * @returns null = 库里一条都没匹配上（调用方应提示先补库，而不是硬编一串没验证过的 tag）
+ * 关键词为空时，从全库 600+ 套服装中完全随机抽取；
+ * 关键词未命中内置库时，按关键词自由生成灵感搭配，绝不失败拦截。
  */
-export function rollWardrobe(keyword: string, rng: Rng = DEFAULT_RNG): RollResult | null {
-  const pool = matchItems(allWardrobeItems(), keyword);
-  if (!pool.length) return null;
+export function rollWardrobe(keyword: string = '', rng: Rng = DEFAULT_RNG): RollResult | null {
+  const all = allWardrobeItems();
+  const kw = keyword.trim();
+  const pool = kw ? matchItems(all, kw) : all;
   const seed = Math.floor(rng() * 1e9);
-  // 优先从 quality 高的里面抽:低分条目常年是「能用但不惊艳」的那批。
-  const strong = pool.filter(item => (item.quality ?? 3) >= 4);
-  const source: WardrobeItem = pick(strong.length ? strong : pool, rng) as WardrobeItem;
+
+  let source: WardrobeItem;
+  let categoryLabel: string;
+  let isCustom = false;
+
+  if (pool.length) {
+    source = pick(pool, rng) as WardrobeItem;
+    categoryLabel = WARDROBE_CATEGORIES.find(c => c.id === source.category)?.label ?? source.category;
+  } else if (kw) {
+    isCustom = true;
+    const cat = guessWardrobeCategory(kw);
+    const slot = guessWardrobeSlot(kw) as WardrobeSlot;
+    source = {
+      id: `u-roll-${seed}`,
+      name: kw,
+      tags: kw,
+      aliases: [kw],
+      category: cat,
+      slot,
+      nsfw: 1,
+    };
+    categoryLabel = WARDROBE_CATEGORIES.find(c => c.id === cat)?.label ?? '自定义搭配';
+  } else {
+    return null;
+  }
+
   const tags = splitTags(source.tags);
-  // 同分类再补 1–2 个部件:同一类的东西叠上去仍然认得出来，跨类容易打架。
-  const siblings = allWardrobeItems().filter(
-    item => item.category === source.category && item.id !== source.id,
-  );
-  const mate = pick(siblings, rng);
-  if (mate) uniquePush(tags, splitTags(mate.tags).slice(0, 2), tags.length + 2);
+
+  if (!isCustom) {
+    // 同分类再补 1–2 个部件
+    const siblings = all.filter(item => item.category === source.category && item.id !== source.id);
+    const mate = pick(siblings, rng);
+    if (mate) uniquePush(tags, splitTags(mate.tags).slice(0, 2), tags.length + 2);
+
+    // 整套或上装可概率混搭配饰/鞋袜部件
+    if (source.slot === 'full' || source.slot === 'top') {
+      const accessories = all.filter(item => item.slot === 'accessory' || item.slot === 'hosiery');
+      const extraAcc = pick(accessories, rng);
+      if (extraAcc && rng() > 0.4) {
+        uniquePush(tags, splitTags(extraAcc.tags).slice(0, 1), tags.length + 1);
+      }
+    }
+  }
+
   const shot = pick(SHOTS, rng);
   if (shot) tags.push(shot);
   const mood = pick(MOODS, rng);
   if (mood) tags.push(mood);
   const state = pick(STATES, rng);
   if (state) tags.push(state);
-  const label = WARDROBE_CATEGORIES.find(c => c.id === source.category)?.label ?? source.category;
+
   return {
-    name: `${label} · ${keyword.trim() || source.name}`,
+    id: source.id,
+    name: `${categoryLabel} · ${kw || source.name}`,
     tags: tags.join(', '),
-    aliases: [keyword.trim() || source.aliases[0] || source.name],
+    aliases: [kw || source.aliases[0] || source.name],
     category: source.category,
     slot: source.slot,
     nsfw: source.nsfw,
-    source: source.name,
+    source: isCustom ? '自由灵感搭配' : source.name,
     seed,
+    kind: 'wardrobe',
   };
 }
 
-/** 按关键词 roll 一个姿势。姿势多叠一个机位词，比服装更需要一次只给一种拍法。 */
-export function rollPose(keyword: string, rng: Rng = DEFAULT_RNG): RollResult | null {
-  const pool = matchItems(allPoseItems(), keyword);
-  if (!pool.length) return null;
+/**
+ * 按关键词 roll 一个姿势。
+ * 关键词为空时，从全库 200+ 姿势中完全随机抽取。
+ */
+export function rollPose(keyword: string = '', rng: Rng = DEFAULT_RNG): RollResult | null {
+  const all = allPoseItems();
+  const kw = keyword.trim();
+  const pool = kw ? matchItems(all, kw) : all;
   const seed = Math.floor(rng() * 1e9);
-  const source: PoseEntry = pick(pool, rng) as PoseEntry;
+
+  let source: PoseEntry;
+  let categoryLabel: string;
+  let isCustom = false;
+
+  if (pool.length) {
+    source = pick(pool, rng) as PoseEntry;
+    categoryLabel = POSE_CATEGORIES.find(c => c.id === source.category)?.label ?? source.category;
+  } else if (kw) {
+    isCustom = true;
+    source = {
+      id: `up-roll-${seed}`,
+      name: kw,
+      tags: kw,
+      aliases: [kw],
+      category: 'standing',
+      nsfw: 1,
+    };
+    categoryLabel = '自由姿势';
+  } else {
+    return null;
+  }
+
   const tags = splitTags(source.tags);
-  const siblings = allPoseItems().filter(
-    item => item.category === source.category && item.id !== source.id,
-  );
-  const mate = pick(siblings, rng);
-  if (mate) uniquePush(tags, splitTags(mate.tags).slice(0, 1), tags.length + 1);
+  if (!isCustom) {
+    const siblings = all.filter(item => item.category === source.category && item.id !== source.id);
+    const mate = pick(siblings, rng);
+    if (mate) uniquePush(tags, splitTags(mate.tags).slice(0, 1), tags.length + 1);
+  }
   if (source.camera && !tags.includes(source.camera)) tags.push(source.camera);
   const mood = pick(MOODS, rng);
   if (mood) tags.push(mood);
-  const label = POSE_CATEGORIES.find(c => c.id === source.category)?.label ?? source.category;
+
   return {
-    name: `${label} · ${keyword.trim() || source.name}`,
+    id: source.id,
+    name: `${categoryLabel} · ${kw || source.name}`,
     tags: tags.join(', '),
-    aliases: [keyword.trim() || source.aliases[0] || source.name],
+    aliases: [kw || source.aliases[0] || source.name],
     category: source.category,
     slot: 'full',
     nsfw: source.nsfw,
-    source: source.name,
+    source: isCustom ? '自由输入' : source.name,
     seed,
+    kind: 'pose',
   };
 }
 
-/** 当前词在库里能 roll 出多少条候选（给 UI 提示「只有 1 条会一直重复」）。 */
-export function rollPoolSize(keyword: string, kind: 'wardrobe' | 'pose'): number {
-  return kind === 'pose'
-    ? matchItems(allPoseItems(), keyword).length
-    : matchItems(allWardrobeItems(), keyword).length;
+/**
+ * 按关键词（角色名 / 作品名 / 外貌词）roll 一个同人角色。
+ * 关键词为空时，从全库 230+ 同人角色中完全随机抽取。
+ */
+export function rollFandom(keyword: string = '', rng: Rng = DEFAULT_RNG): RollResult | null {
+  const all = allFandomItems();
+  const kw = keyword.trim();
+  const pool = kw ? matchFandomItems(all, kw) : all;
+  const seed = Math.floor(rng() * 1e9);
+
+  let source: FandomPreset;
+  let isCustom = false;
+
+  if (pool.length) {
+    source = pick(pool, rng) as FandomPreset;
+  } else if (kw) {
+    isCustom = true;
+    source = {
+      id: `fx-custom-${seed}`,
+      name: kw,
+      franchise: '自由同人',
+      tags: kw,
+      hair: '',
+      eyes: '',
+      aliases: [kw],
+      nsfw: 1,
+    };
+  } else {
+    return null;
+  }
+
+  const tags = splitTags(source.tags);
+  const shot = pick(
+    ['upper body, looking at viewer', 'cowboy shot, looking at viewer', 'portrait, face focus'],
+    rng,
+  );
+  if (shot) tags.push(shot);
+  const mood = pick(MOODS, rng);
+  if (mood) tags.push(mood);
+
+  const franchiseLabel = source.franchise && source.franchise !== '自由同人' ? ` (${source.franchise})` : '';
+
+  return {
+    id: source.id,
+    name: `${source.name}${franchiseLabel}`,
+    tags: tags.join(', '),
+    aliases: source.aliases,
+    category: source.franchise || 'fandom',
+    slot: 'fandom',
+    nsfw: source.nsfw,
+    source: isCustom ? '自由同人' : `${source.name}${franchiseLabel}`,
+    seed,
+    kind: 'fandom',
+    franchise: source.franchise,
+  };
+}
+
+/** 当前词在库里能 roll 出多少条候选（给 UI 提示）。留空时返回全库总数。 */
+export function rollPoolSize(keyword: string, kind: RollKind): number {
+  const kw = keyword.trim();
+  if (kind === 'pose') {
+    return kw ? matchItems(allPoseItems(), kw).length : allPoseItems().length;
+  }
+  if (kind === 'fandom') {
+    return kw ? matchFandomItems(allFandomItems(), kw).length : allFandomItems().length;
+  }
+  return kw ? matchItems(allWardrobeItems(), kw).length : allWardrobeItems().length;
 }
 
 /** 姿势分类合法性（写库前校验用）。 */

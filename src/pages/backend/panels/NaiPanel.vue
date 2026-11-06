@@ -247,16 +247,11 @@ const activeArtistPresetLink = computed<string>({
     if (cur.genPresetId && settings.genPresets.some(p => p.id === cur.genPresetId)) {
       return cur.genPresetId;
     }
-    const rev = settings.genPresets.find(p => !p.forLore && p.activeArtistId === cur.id);
-    return rev?.id ?? '';
+    return '';
   },
   set: presetId => {
     const cur = artist.value;
     if (!cur || isBuiltinArtist.value) return;
-    // 清掉旧版在 GenPreset 上残留的 1对1 反向绑定，统一收口到画师串正向绑定
-    for (const p of settings.genPresets) {
-      if (p.activeArtistId === cur.id && p.id !== presetId) p.activeArtistId = '';
-    }
     bindArtistGenPreset(cur.id, presetId);
     if (presetId) {
       const target = settings.genPresets.find(p => p.id === presetId);
@@ -401,15 +396,6 @@ function saveCurrentGenPreset() {
     captureIntoGenPreset(genPreset.value.id) ? '已把当前参数存进这套预设' : '这套预设不见了',
   );
 }
-
-/** 这套预设搭配哪个画师串(渠道页的「提示词预设」就是画师串库)。 */
-const genPresetArtist = computed<string>({
-  get: () => genPreset.value.activeArtistId ?? NO_ARTIST,
-  set: artistId => {
-    genPreset.value.activeArtistId = artistId;
-    settings.nai.activeArtistId = artistId;
-  },
-});
 
 /** 换画师串时若它有配套预设（或名称带 4.5/V5 智能匹配），整套切过去；keepArtist 防止反向清空画师串。 */
 watch(
@@ -1460,19 +1446,6 @@ async function removeVibe(vibe: NaiVibe) {
           不会互相覆盖。标了星的那套只给素材库配图用,不动这里的主出图参数。
         </p>
         <p v-if="presetNotice" class="bbi-field-hint">{{ presetNotice }}</p>
-
-        <div class="bbi-select-row">
-          <span class="bbi-field-label">搭配画师串</span>
-          <BbiSelect
-            class="be-select"
-            v-model="genPresetArtist"
-            :options="artistOptions"
-            aria-label="这套预设搭配的画师串"
-          />
-        </div>
-        <p class="bbi-field-hint">
-          选好之后,到上面「提示词」里换到这个画师串,生图配置会自动整套切过来——换一组提示词不用再重新调参数。
-        </p>
 
         <!-- 语义配对紧凑行:双字段行两列、数字参数行四列;说明统一收进行下的一行 hint -->
         <div class="bbi-field">

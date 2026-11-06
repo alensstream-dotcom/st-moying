@@ -3,6 +3,7 @@ import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
 import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
 import { BODY_EXTRA, FACE_EXTRA, FANDOM_EXTRA } from '@/data/faceExtra';
+import { FANDOM_EXTRA_2 } from '@/data/fandomExtra2';
 import { POSE_CATEGORIES } from '@/data/poseBank';
 import { WARDROBE_CATEGORIES } from '@/data/wardrobe';
 import {
@@ -38,7 +39,14 @@ import {
   type ThumbJobState,
   type ThumbTask,
 } from '@/data/loreThumbJob';
-import { rollPose, rollPoolSize, rollWardrobe, type RollResult } from '@/data/loreRoll';
+import {
+  rollFandom,
+  rollPose,
+  rollPoolSize,
+  rollWardrobe,
+  type RollKind,
+  type RollResult,
+} from '@/data/loreRoll';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { openLightbox } from '@/floor/lightbox';
 import { LORE_THUMB_MODELS, settings, type BackendId } from '@/state/settings';
@@ -177,7 +185,7 @@ const faceCards: LoreCard[] = [
     group: 'body',
     groupLabel: '体型',
   })),
-  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA].map(item => ({
+  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2].map(item => ({
     id: item.id,
     name: item.name,
     tags: item.tags,
@@ -626,10 +634,11 @@ function applyPaste() {
 }
 
 /**
- * Roll 素材:打一个词，随机给一套细化过的搭配并出图。
+ * Roll 素材:打一个词（或完全留空大抽奖），随机给一套细化过的搭配/姿势/同人角色并出图。
  * 满意就连图一起存进库，不满意换一个——比手动翻几百条再拼 tag 快得多。
  */
 const rollOpen = ref(false);
+const rollKind = ref<RollKind>('wardrobe');
 const rollKeyword = ref('');
 const rollResult = ref<RollResult | null>(null);
 const rollBusy = ref(false);
@@ -637,8 +646,17 @@ const rollUrl = ref('');
 let rollBlob: Blob | null = null;
 
 const rollPool = computed(() => {
-  if (!rollKeyword.value.trim()) return 0;
-  return rollPoolSize(rollKeyword.value, tab.value === 'pose' ? 'pose' : 'wardrobe');
+  return rollPoolSize(rollKeyword.value, rollKind.value);
+});
+
+const rollPlaceholder = computed(() => {
+  if (rollKind.value === 'fandom') {
+    return '例如：芙宁娜、原神、崩铁、爱莉希雅、鸣潮、绝区零（留空则随机抽选）';
+  }
+  if (rollKind.value === 'pose') {
+    return '例如：后入、骑乘、第一视角、站姿（留空则随机抽选）';
+  }
+  return '例如：jk、黑丝、旗袍、女仆、晚礼服（留空则随机抽选）';
 });
 
 function clearRollResult() {
@@ -650,26 +668,38 @@ function clearRollResult() {
 
 function openRoll() {
   rollOpen.value = true;
+  rollKind.value = tab.value === 'pose' ? 'pose' : tab.value === 'face' ? 'fandom' : 'wardrobe';
   rollKeyword.value = '';
   clearRollResult();
 }
 
-function rollPrompt(result: RollResult, pose: boolean): string {
+function switchRollKind(next: RollKind) {
+  if (rollKind.value === next) return;
+  rollKind.value = next;
+  clearRollResult();
+}
+
+function rollPrompt(result: RollResult, kind: RollKind): string {
   const quality =
     'masterpiece, best quality, very aesthetic, absurdres, simple background, grey background';
-  if (!pose) {
+  if (kind === 'wardrobe') {
     return [quality, '1girl, solo, full body, standing', stripFraming(result.tags)]
       .filter(Boolean)
       .join(', ');
   }
-  const duo = POSE_DUO_CATEGORIES.has(result.category);
-  return [
-    quality,
-    duo
-      ? '1girl, 1boy, faceless male, completely nude, full body'
-      : '1girl, solo, completely nude, full body',
-    stripFraming(result.tags),
-  ]
+  if (kind === 'pose') {
+    const duo = POSE_DUO_CATEGORIES.has(result.category);
+    return [
+      quality,
+      duo
+        ? '1girl, 1boy, faceless male, completely nude, full body'
+        : '1girl, solo, completely nude, full body',
+      stripFraming(result.tags),
+    ]
+      .filter(Boolean)
+      .join(', ');
+  }
+  return [quality, '1girl, solo, looking at viewer', stripFraming(result.tags)]
     .filter(Boolean)
     .join(', ');
 }
@@ -686,27 +716,28 @@ function zoomRoll() {
   const result = rollResult.value;
   openLightbox({
     src: rollUrl.value,
-    prompt: result ? rollPrompt(result, tab.value === 'pose') : '',
+    prompt: result ? rollPrompt(result, rollKind.value) : '',
     filename: result ? result.name : 'roll',
   });
 }
 
 async function doRoll() {
-  const keyword = rollKeyword.value.trim();
-  if (!keyword) {
-    toast('先打一个词，比如 jk、黑丝、旗袍');
-    return;
-  }
   const status = backendStatus(loreBackend());
-
   if (!status.configured) {
     toast(`素材预览固定走 NAI：${status.reason || '先去「渠道」页配好 NAI 接入点'}`);
     return;
   }
-  const pose = tab.value === 'pose';
-  const result = pose ? rollPose(keyword) : rollWardrobe(keyword);
+  const keyword = rollKeyword.value.trim();
+  const kind = rollKind.value;
+  const result =
+    kind === 'fandom'
+      ? rollFandom(keyword)
+      : kind === 'pose'
+        ? rollPose(keyword)
+        : rollWardrobe(keyword);
+
   if (!result) {
-    toast(`库里没有匹配「${keyword}」的${pose ? '姿势' : '服装'}，先补一条再 roll`);
+    toast('未能生成搭配，请尝试换一个词');
     return;
   }
   clearRollResult();
@@ -715,7 +746,7 @@ async function doRoll() {
   try {
     const model = settings.autoTag.lore.thumbModel.trim();
     const output = await generateImage({
-      prompt: rollPrompt(result, pose),
+      prompt: rollPrompt(result, kind),
       backend: loreBackend(),
       genPresetId: lorePresetId(),
       seed: decideSeed(loreBackend()),
@@ -739,7 +770,42 @@ async function adoptRoll() {
     toast('先 roll 出一张图再存');
     return;
   }
-  const pose = tab.value === 'pose';
+  const kind = result.kind;
+
+  if (kind === 'fandom') {
+    if (result.id && !result.id.startsWith('fx-custom-')) {
+      await putThumb(thumbKey('face', result.id), rollBlob, rollPrompt(result, 'fandom'));
+      mountThumb(thumbKey('face', result.id), rollBlob);
+      rollBlob = null;
+      toast(`已为「${result.name}」保存预览图`);
+      rollOpen.value = false;
+      clearRollResult();
+      return;
+    }
+    const saved = addCustomWardrobe({
+      name: result.name,
+      tags: result.tags,
+      aliases: result.aliases.join(', '),
+      nsfw: result.nsfw,
+      note: `roll 自「${result.source}」`,
+      category: 'cosplay',
+      slot: 'full',
+    });
+    if (!saved.ok || !saved.item) {
+      toast(saved.error ?? '保存失败');
+      return;
+    }
+    await putThumb(thumbKey('wardrobe', saved.item.id), rollBlob, rollPrompt(result, 'fandom'));
+    rollBlob = null;
+    bumpLore();
+    thumbChecked.clear();
+    toast('已存进素材库（自定义同人），连带预览图一起');
+    rollOpen.value = false;
+    clearRollResult();
+    return;
+  }
+
+  const isPose = kind === 'pose';
   const common = {
     name: result.name,
     tags: result.tags,
@@ -747,7 +813,7 @@ async function adoptRoll() {
     nsfw: result.nsfw,
     note: `roll 自「${result.source}」`,
   };
-  const saved = pose
+  const saved = isPose
     ? addCustomPose({
         ...common,
         category: result.category as PoseCategoryId,
@@ -761,14 +827,37 @@ async function adoptRoll() {
     toast(saved.error ?? '保存失败');
     return;
   }
-  const kind: ThumbKind = pose ? 'pose' : 'wardrobe';
-  await putThumb(thumbKey(kind, saved.item.id), rollBlob, rollPrompt(result, pose));
+  const thumbKind: ThumbKind = isPose ? 'pose' : 'wardrobe';
+  await putThumb(
+    thumbKey(thumbKind, saved.item.id),
+    rollBlob,
+    rollPrompt(result, isPose ? 'pose' : 'wardrobe'),
+  );
   rollBlob = null;
   bumpLore();
   thumbChecked.clear();
   toast('已存进素材库，连带预览图一起');
   rollOpen.value = false;
   clearRollResult();
+}
+
+function applyRollToChar() {
+  const result = rollResult.value;
+  if (!result) return;
+  const targetField: CharTagField =
+    result.kind === 'fandom' ? 'fandom' : result.kind === 'pose' ? 'extra' : 'outfit';
+  startApply({
+    id: result.id ?? `roll-${result.seed}`,
+    name: result.name,
+    tags: result.tags,
+    aliases: result.aliases,
+    nsfw: result.nsfw,
+    extra: result.source,
+    field: targetField,
+    group: result.category,
+    groupLabel: result.kind === 'fandom' ? '同人角色' : result.kind === 'pose' ? '姿势' : '服装',
+  });
+  rollOpen.value = false;
 }
 
 function openAdd() {
@@ -1358,15 +1447,48 @@ function clearCustom() {
         aria-label="Roll 素材"
       >
         <header class="bbi-modal-head">
-          <span class="bbi-modal-title">Roll 一套搭配</span>
+          <span class="bbi-modal-title">Roll 随机灵感</span>
           <button class="bbi-modal-x" type="button" aria-label="关闭" @click="rollOpen = false">
             <Icon name="close" />
           </button>
         </header>
 
+        <div class="bbi-segmented bbi-lore-roll-kind-seg" role="tablist" aria-label="Roll 类别">
+          <button
+            class="bbi-seg"
+            :class="{ 'is-on': rollKind === 'wardrobe' }"
+            type="button"
+            @click="switchRollKind('wardrobe')"
+          >
+            服装搭配
+          </button>
+          <button
+            class="bbi-seg"
+            :class="{ 'is-on': rollKind === 'pose' }"
+            type="button"
+            @click="switchRollKind('pose')"
+          >
+            姿势构图
+          </button>
+          <button
+            class="bbi-seg"
+            :class="{ 'is-on': rollKind === 'fandom' }"
+            type="button"
+            @click="switchRollKind('fandom')"
+          >
+            同人角色
+          </button>
+        </div>
+
         <p class="bbi-field-hint">
-          打一个词（jk / 黑丝 / 旗袍 / 后入），从库里随机挑一条当骨架，再叠同类部件和光机位，
-          出图给你看。满意就「存进库」，这张图会跟着条目一起留着。
+          {{
+            rollKind === 'fandom'
+              ? '可输入角色名/作品名（如：芙宁娜 / 崩铁 / 鸣潮 / 爱莉希雅），也可直接留空完全随机大抽奖。'
+              : rollKind === 'pose'
+                ? '可输入动作姿势（如：后入 / 骑乘 / 第一视角 / 站姿），也可直接留空完全随机大抽奖。'
+                : '可输入款式风格（如：jk / 黑丝 / 旗袍 / 女仆 / 晚礼服），也可直接留空完全随机大抽奖。'
+          }}
+          出图满意即可「存进库」或直接「套用到角色」。
         </p>
 
         <div class="bbi-lore-roll-row">
@@ -1374,15 +1496,21 @@ function clearCustom() {
             v-model="rollKeyword"
             class="bbi-input"
             type="text"
-            :placeholder="tab === 'pose' ? '例如：后入、骑乘、第一视角' : '例如：jk、黑丝、旗袍'"
+            :placeholder="rollPlaceholder"
             @keydown.enter.prevent="doRoll"
           />
           <button class="bbi-btn bbi-btn-primary" type="button" :disabled="rollBusy" @click="doRoll">
             {{ rollBusy ? '出图中…' : rollResult ? '换一个' : 'Roll' }}
           </button>
         </div>
-        <p v-if="rollKeyword.trim()" class="bbi-field-hint">
-          库里匹配到 {{ rollPool }} 条；只有 1 条时每次都是它，去补几条更耐 roll。
+        <p class="bbi-field-hint">
+          <template v-if="rollKeyword.trim()">
+            <span v-if="rollPool > 0">库里精准匹配到 {{ rollPool }} 条候选。</span>
+            <span v-else>库里暂无完全匹配的条目，将基于「{{ rollKeyword.trim() }}」自由构图生成。</span>
+          </template>
+          <template v-else>
+            全库共有 {{ rollPool }} 条可选条目，直接点击即可完全随机抽取。
+          </template>
         </p>
 
         <figure v-if="rollUrl" class="bbi-lore-roll-figure">
@@ -1393,7 +1521,7 @@ function clearCustom() {
         <template v-if="rollResult">
           <p class="bbi-lore-tags">{{ rollResult.tags }}</p>
           <p class="bbi-field-hint">
-            骨架来自「{{ rollResult.source }}」· 分类 {{ rollResult.category }} · 尺度 {{ rollResult.nsfw }}
+            来源「{{ rollResult.source }}」· {{ rollResult.franchise ? `作品 ${rollResult.franchise} · ` : '' }}分类 {{ rollResult.category }} · 尺度 {{ rollResult.nsfw }}
           </p>
         </template>
 
@@ -1404,7 +1532,15 @@ function clearCustom() {
             :disabled="!rollResult || !rollUrl"
             @click="adoptRoll"
           >
-            存进库（含这张图）
+            存进库（含预览图）
+          </button>
+          <button
+            v-if="rollResult"
+            class="bbi-btn"
+            type="button"
+            @click="applyRollToChar"
+          >
+            <Icon name="characters" /> 套用到角色
           </button>
           <button class="bbi-btn" type="button" @click="rollOpen = false">关闭</button>
         </div>
@@ -1555,6 +1691,10 @@ function clearCustom() {
 
 .bbi-lore-queue-err {
   color: var(--bbi-danger);
+}
+
+.bbi-lore-roll-kind-seg {
+  margin-bottom: 12px;
 }
 
 .bbi-lore-roll-row {

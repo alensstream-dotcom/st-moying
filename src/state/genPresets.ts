@@ -121,7 +121,6 @@ export function snapshotGenPreset(name: string): GenPreset {
     noiseSchedule: nai.noiseSchedule,
     varietyBoost: nai.varietyBoost,
     naturalLanguage: nai.naturalLanguage,
-    activeArtistId: nai.activeArtistId,
   };
 }
 
@@ -142,7 +141,6 @@ export function captureIntoGenPreset(id: string): boolean {
     id: preset.id,
     forLore: preset.forLore,
     promptKeys: [...preset.promptKeys],
-    activeArtistId: preset.activeArtistId,
   });
   return true;
 }
@@ -181,8 +179,7 @@ export function removeGenPreset(id: string): boolean {
  *
  * 只动「画法」相关字段：地址、密钥、接入点、concurrency、vibes 一律不碰——
  * 那些是账号与库，不属于风格配置，换风格换掉密钥是灾难。
- * `keepArtist: true` 时（由「切换画师串自动联动参数预设」触发）不反向改动 `activeArtistId`，
- * 即使手动切参数预设，若该预设没绑特定画师串（`activeArtistId === ''`）也保留当前画师串不被清空。
+ * 画师串的选用由「提示词」区的画师串列表管理，此处不修改画师串。
  */
 export function applyGenPreset(id: string, options?: { keepArtist?: boolean }): boolean {
   const preset = genPresetById(id);
@@ -198,9 +195,6 @@ export function applyGenPreset(id: string, options?: { keepArtist?: boolean }): 
   nai.noiseSchedule = preset.noiseSchedule;
   nai.varietyBoost = preset.varietyBoost;
   nai.naturalLanguage = preset.naturalLanguage;
-  if (!options?.keepArtist && preset.activeArtistId) {
-    nai.activeArtistId = preset.activeArtistId;
-  }
   settings.activeGenPreset = preset.id;
   return true;
 }
@@ -221,7 +215,6 @@ export function applyPresetToNaiConn(conn: NaiSettings, preset: GenPreset): void
   conn.noiseSchedule = preset.noiseSchedule;
   conn.varietyBoost = preset.varietyBoost;
   conn.naturalLanguage = preset.naturalLanguage;
-  conn.activeArtistId = preset.activeArtistId;
 }
 
 /** 提示词项 ↔ 预设的绑定（打开提示词项时自动应用，省掉重复配）。 */
@@ -280,8 +273,7 @@ export function inferPresetForArtistName(name: string): GenPreset | null {
 /**
  * 查找画师串对应的生图配置预设：
  * 1. 优先读画师串自身的 `artist.genPresetId`（正向多对一绑定：多条 4.5 画师串可共用同一套 4.5 参数）；
- * 2. 兼容旧版在 `GenPreset.activeArtistId` 上做的反向绑定；
- * 3. 若均未显式绑定，按画师串名称中的 `4.5 / V5` 字样智能匹配对应模型预设。
+ * 2. 若未显式绑定，按画师串名称中的 `4.5 / V5` 字样智能匹配对应模型预设。
  */
 export function presetForArtist(artistId: string): GenPreset | null {
   if (!artistId) return null;
@@ -290,8 +282,6 @@ export function presetForArtist(artistId: string): GenPreset | null {
     const direct = genPresetById(artist.genPresetId);
     if (direct) return direct;
   }
-  const reverse = settings.genPresets.find(preset => !preset.forLore && preset.activeArtistId === artistId);
-  if (reverse) return reverse;
   if (artist) {
     return inferPresetForArtistName(artist.name);
   }

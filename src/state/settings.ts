@@ -1182,7 +1182,6 @@ export interface GenPreset {
   noiseSchedule: string;
   varietyBoost: boolean;
   naturalLanguage: boolean;
-  activeArtistId: string;
 }
 
 function normalizeGenPresets(raw: unknown, fallback: GenPreset[]): GenPreset[] {
@@ -1220,7 +1219,6 @@ function normalizeGenPresets(raw: unknown, fallback: GenPreset[]): GenPreset[] {
       varietyBoost: typeof preset.varietyBoost === 'boolean' ? preset.varietyBoost : base.varietyBoost,
       naturalLanguage:
         typeof preset.naturalLanguage === 'boolean' ? preset.naturalLanguage : base.naturalLanguage,
-      activeArtistId: typeof preset.activeArtistId === 'string' ? preset.activeArtistId : '',
     });
   }
   if (!out.length) return fallback;
@@ -1255,7 +1253,6 @@ function genPresetsDefaults(): GenPreset[] {
     noiseSchedule: nai.noiseSchedule,
     varietyBoost: nai.varietyBoost,
     naturalLanguage: nai.naturalLanguage,
-    activeArtistId: nai.activeArtistId,
   };
   return [
     { ...base, id: 'default', name: '默认 (NAI 5)' },
@@ -1271,7 +1268,6 @@ function genPresetsDefaults(): GenPreset[] {
       noiseSchedule: 'karras',
       varietyBoost: true,
       naturalLanguage: true,
-      activeArtistId: '',
     },
     {
       ...base,
@@ -1282,7 +1278,6 @@ function genPresetsDefaults(): GenPreset[] {
       model: 'nai-diffusion-4-curated-preview',
       steps: 23,
       scale: 5,
-      activeArtistId: '',
       naturalLanguage: false,
     },
   ];
