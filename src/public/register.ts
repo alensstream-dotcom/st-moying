@@ -1,4 +1,5 @@
 import { watch } from 'vue';
+import { novelReader } from '@/public/novelReader';
 
 import { cancelFloorTags, isFloorTagRunning, requestFloorTags } from '@/autoTag/runner';
 import { isBackgroundGenRunning, resumePending as resumeBackgroundPending } from '@/floor/backgroundGen';
@@ -102,6 +103,7 @@ function createApi(): STBaiBaiImageApi {
   return {
     apiVersion: PUBLIC_API_VERSION,
     pluginVersion: PLUGIN_VERSION,
+    novelReader,
     get capabilities() {
       return clonePublic(capabilities);
     },

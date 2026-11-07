@@ -93,6 +93,7 @@ export async function applyMessageText(
   expectedSwipeId: number | null,
   expectedMessage?: STMessage,
   extraUpdate?: MessageExtraUpdate | MessageExtraUpdate[],
+  options: { render?: boolean } = {},
 ): Promise<ApplyMessageResult> {
   const context = getContext();
   if (!context?.saveChat) return 'unavailable';
@@ -104,7 +105,7 @@ export async function applyMessageText(
   if (currentSwipeId(message) !== expectedSwipeId) return 'swipe-changed';
 
   // 编辑框开着时它才是正文的活口径(用户改了还没确认),落盘基底以它为准
-  const nextText = buildNext(activeEditorText(floor) ?? message.mes);
+  const nextText = buildNext(options.render === false ? message.mes : activeEditorText(floor) ?? message.mes);
   if (nextText === null) return 'build-failed';
 
   const previousText = message.mes;
@@ -131,6 +132,8 @@ export async function applyMessageText(
     }
     throw error;
   }
+
+  if (options.render === false) return 'saved';
 
   await emitMessageEvent(context, context.eventTypes.MESSAGE_EDITED, floor).catch(error => {
     console.warn('[墨影] tag 已保存，但 MESSAGE_EDITED 事件发送失败', error);

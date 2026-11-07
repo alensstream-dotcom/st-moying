@@ -128,7 +128,7 @@ function diagnostic(event: string, payload: unknown = null): void {
  * 手动点击是显式意图,静默 return 在用户那里就等于「按钮点了没反应」——查不出、
  * 也没法反馈。自动路径保持安静(每层楼都弹一次没人受得了),它的去向看诊断日志。
  */
-function abort(
+function reportAbort(
   floor: number,
   reason: string,
   manual: boolean | undefined,
@@ -154,6 +154,8 @@ function textHash(text: string): string {
 }
 
 interface RunOptions {
+  headless?: boolean;
+  onNoImages?: () => void;
   /** 手动触发(楼层按钮):绕过 autoTag.enabled 与 processed 去重;空结果也给出反馈。 */
   manual?: boolean;
   /** 重新生成:先把已有 tag 从正文剔除再分析/注入;旧图片保留在卡片历史里。 */
@@ -251,6 +253,10 @@ function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
 }
 
 async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> {
+  const abort = (...args: Parameters<typeof reportAbort>): void => {
+    reportAbort(...args);
+    if (opts.headless) throw new Error(args[3]);
+  };
   const context = getContext();
   diagnostic('runForFloor:enter', {
     floor,
@@ -724,6 +730,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         `${lastError}${retries > 0 ? `(已自动重试 ${retries} 次)` : ''}`,
         '墨影自动 tag 失败',
       );
+      if (opts.headless) throw new Error(lastError || 'tag 分析未通过校验');
       return;
     }
 
@@ -838,6 +845,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       return;
     }
     // 没有图片、没有角色变化、也没有旧楼层变化要清理时,保持原来的无写入早退。
+    if (!plan.images.length) opts.onNoImages?.();
     if (!plan.images.length && !floorOps.length && !previousDelta) {
       if (opts.manual) toastr.info('模型认为本楼没有值得插图的画面', '墨影');
       else console.debug(`[墨影] 第 ${floor} 楼无需插图`);
@@ -849,7 +857,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 单槽重写是用户在卡片上的显式意图(同提示词编辑弹窗的「应用并重新生成」),
     // 不受 autoTag.autoGenerate 开关约束,一律 force 出图。
     const markSwipeId = message.swipe_id ?? 0;
-    const marked = plan.images.length > 0 && (settings.autoTag.autoGenerate || !!slot);
+    const marked = !opts.headless && plan.images.length > 0 && (settings.autoTag.autoGenerate || !!slot);
     if (!slot && opts.replace) {
       cancelBackgroundFloorJobs(chatId, floor);
     }
@@ -918,6 +926,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               value: buildOutfitStatePayload(nextOutfits, swipeId ?? 0),
             },
           ],
+      { render: !opts.headless },
     );
     if (result === 'saved') {
       // 后台直跑:写盘成功就把这批槽位交给 floor/backgroundGen.ts。
@@ -982,6 +991,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       }
       return;
     }
+    if (opts.headless) throw new Error(ABANDON_REASON[result] || result);
     // 撤销标记只撤自己那一枚:clearAutoGenerateForFloor 会连累同楼其它槽位的待消费标记。
     if (marked) {
       clearPreclaimedBackgroundSlots(chatId, floor);
@@ -1003,6 +1013,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     clearPreclaimedBackgroundSlots(chatId, floor);
     if (slot) consumeAutoGenerate(chatId, floor, swipeId ?? 0, slot.seq);
     else clearAutoGenerateForFloor(chatId, floor);
+    if (opts.headless) throw error;
     if (controller.signal.aborted) return;
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[墨影] 第 ${floor} 楼自动生成 tag 失败`, error);
@@ -1053,6 +1064,16 @@ export async function requestFloorTags(floor: number, opts: { replace?: boolean 
  * 分析基底剔除全部旧 tag(AI 不该把 tag 当正文),强制输出 1 张;本楼其它 tag 与图片
  * 一字不动,旧图留在该槽位历史里。本次 AI 输出的 changes 一律忽略(首次全量分析时已建档)。
  */
+export async function requestNovelFloorTags(floor: number): Promise<{ status: 'tagged' | 'no-images' }> {
+  let noImages = false;
+  await runForFloor(floor, { manual: true, headless: true, onNoImages: () => { noImages = true; } });
+  if (noImages) return { status: 'no-images' };
+  if (!parseImageTags(getContext()?.chat[floor]?.mes || '').length) {
+    throw new Error('本次没有保存有效 tag，未自动重复提交');
+  }
+  return { status: 'tagged' };
+}
+
 export async function requestSlotTag(floor: number, seq: number): Promise<void> {
   await runForFloor(floor, { manual: true, slot: { seq } });
 }

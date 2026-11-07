@@ -425,12 +425,14 @@ export async function saveImageResult(
   seed: number,
   result: ComfyImageResult,
   meta?: GenerationMeta,
+  guard?: () => void,
 ): Promise<BbiImageEntry> {
   const ctx = getContext();
   if (!ctx?.saveChat) throw new Error('SillyTavern 上下文不可用');
   const chatId = ctx.getCurrentChatId();
   if (!chatId) throw new Error('当前聊天不可用');
 
+  guard?.();
   const hash = promptHash(tag);
   const characterName = ctx.chat[messageId]?.name?.trim() || ctx.name2?.trim() || '未命名角色';
   const { path, genId, createdAt } = await uploadImageWithSidecar(
@@ -443,6 +445,7 @@ export async function saveImageResult(
     meta,
   );
 
+  guard?.();
   const entry: BbiImageEntry = {
     generationId: genId,
     path,

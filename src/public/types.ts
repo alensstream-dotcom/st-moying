@@ -237,6 +237,7 @@ export interface PublicChangeNotice {
 export type PublicChangeListener = (notice: PublicChangeNotice) => void;
 
 export interface STBaiBaiImageApi {
+  readonly novelReader: typeof import('./novelReader').novelReader;
   /** 本接口数据结构的版本。第三方按它判兼容(当前恒为 1)。 */
   readonly apiVersion: typeof PUBLIC_API_VERSION;
   /** 墨影插件版本(仅供展示/排查,别解析它做兼容判断)。 */
