@@ -10,6 +10,7 @@ import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { consumeAutoGenerate, shouldAutoGenerate } from '@/floor/autoGenerate';
 import { isBackgroundJobQueued } from '@/floor/backgroundGen';
 import { isCollapsed, setCollapsed } from '@/floor/collapseState';
+import { isNovelSlot } from '@/floor/novelOwnership';
 import { imageDownloadFileName, saveImageFile } from '@/floor/download';
 import {
   beginGen,
@@ -453,6 +454,7 @@ onMounted(() => {
   // (本组件没有单测,留在这儿锁不住),口径见 floor/autoGenerate.ts。
   // 未配置后端时不跑(卡片维持 pending,显示配置引导);标记同样已消费掉。
   if (!props.chatId) return;
+  if (props.chatId === getContext()?.getCurrentChatId?.() && isNovelSlot(getContext()?.chat[props.messageId], props.swipeId, props.seq, hash.value)) return;
   if (isBackgroundJobQueued(props.chatId, props.messageId, props.swipeId, props.seq)) {
     consumeAutoGenerate(props.chatId, props.messageId, props.swipeId, props.seq);
     return;
@@ -466,6 +468,7 @@ onMounted(() => {
     if (!settings.autoTag.autoGenerate) return;
     window.setTimeout(() => {
       if (props.chatId !== (getContext()?.getCurrentChatId?.() ?? '')) return;
+      if (isNovelSlot(getContext()?.chat[props.messageId], props.swipeId, props.seq, hash.value)) return;
       if (shownEntry.value) return;
       if (hasActiveGen(key.value)) return;
       if (isBackgroundJobQueued(props.chatId, props.messageId, props.swipeId, props.seq)) return;

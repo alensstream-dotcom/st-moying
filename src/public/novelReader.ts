@@ -2,6 +2,7 @@ import { requestNovelFloorTags } from '@/autoTag/runner';
 import { clearAutoGenerateForFloor } from '@/floor/autoGenerate';
 import { beginGen, clearGen, failGen, getGenRecord, hasActiveGen, isCurrentGen, setGenPhase, setGenRetry, setQueueAhead, slotKey } from '@/floor/genState';
 import { hydrateMessage } from '@/floor/hydrate';
+import { claimNovelSlots } from '@/floor/novelOwnership';
 import { latestEntry, promptHash, readStore, saveImageResult } from '@/floor/storage';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { settings } from '@/state/settings';
@@ -12,7 +13,9 @@ import { parseImageTagContent, parseImageTags, stripImageTags } from '@/st/image
 /** The batch interface owns no component and never waits for a render frame. */
 const planning = new Map<string, Promise<PlanResult>>();
 const generating = new Map<string, Promise<void>>();
-const dirty = new Set<number>();
+const dirty = new Map<string, { floor: number; chatId: string; assert: () => STMessage }>();
+let refreshing = false;
+let refreshAgain = false;
 
 interface PlanResult { status: 'tagged' | 'no-images'; tagCount: number }
 
@@ -36,14 +39,51 @@ function capture(floor: number) {
   return { ctx, chatId, message, swipe, assert };
 }
 
+function markDirty(floor: number, at: ReturnType<typeof capture>): void {
+  dirty.set(`${at.chatId}|${floor}`, { floor, chatId: at.chatId, assert: at.assert });
+  refresh();
+}
+
 function refresh(): void {
-  if (document.hidden) return;
-  const ctx = getContext();
-  if (!ctx) return;
-  for (const floor of dirty) {
-    try { hydrateMessage(floor, ctx); } catch (e) { console.warn('[柏宝绘] 显示刷新失败，已保存的图片不受影响', e); }
-  }
-  dirty.clear();
+  if (typeof document === 'undefined' || document.hidden) return;
+  if (refreshing) { refreshAgain = true; return; }
+  refreshing = true;
+  // Presentation is deliberately detached from tag/image completion: a suspended
+  // host render must never prevent the next floor's network request.
+  void (async () => {
+    for (const [key, item] of [...dirty]) {
+      const ctx = getContext();
+      if (document.hidden || !ctx) break;
+      if (ctx.getCurrentChatId?.() !== item.chatId) continue;
+      let message: STMessage;
+      try { message = item.assert(); }
+      catch { dirty.delete(key); continue; }
+      const selector = `#chat .mes[mesid="${item.floor}"] .mes_text`;
+      // Keep unmounted floors pending. Hydration alone cannot create tag anchors.
+      if (!document.querySelector(selector)) continue;
+      try {
+        if (typeof ctx.updateMessageBlock !== 'function') {
+          console.warn('[墨影] 正文重渲染接口不可用，保留待刷新楼层', item.floor);
+          continue;
+        }
+        await ctx.updateMessageBlock(item.floor, message);
+        if (document.hidden || getContext()?.getCurrentChatId?.() !== item.chatId) continue;
+        item.assert();
+        const text = document.querySelector(selector);
+        const tags = parseImageTags(message.mes);
+        if (!text || text.querySelectorAll('[data-bbi-slot]').length !== tags.length) {
+          console.warn('[墨影] 正文插图锚点尚未就绪，保留待刷新楼层', item.floor);
+          continue;
+        }
+        hydrateMessage(item.floor, ctx);
+        // A completed image may have dirtied this floor while rendering awaited.
+        if (dirty.get(key) === item) dirty.delete(key);
+      } catch (error) { console.warn('[墨影] 正文刷新失败，图片已保存，将在下次显示时重试', error); }
+    }
+  })().catch(error => console.warn('[墨影] 正文刷新异常', error)).finally(() => {
+    refreshing = false;
+    if (refreshAgain) { refreshAgain = false; refresh(); }
+  });
 }
 
 if (typeof document !== 'undefined') document.addEventListener('visibilitychange', refresh);
@@ -70,6 +110,10 @@ async function planFloor(floor: number): Promise<PlanResult> {
   // Reuse persisted tags after stop/reload. Image failures must never invoke the LLM again.
   if (tags.length) {
     tags.forEach(tag => { if (!parseImageTagContent(tag).tag.trim()) throw new Error('已有 tag 无有效提示词，请先手动修正'); });
+    clearAutoGenerateForFloor(at.chatId, floor);
+    claimNovelSlots(at.message, at.swipe, tags);
+    await at.ctx.saveChat();
+    markDirty(floor, at);
     return { status: 'tagged', tagCount: tags.length };
   }
   const sourceHash = promptHash(stripImageTags(at.message.mes));
@@ -81,9 +125,10 @@ async function planFloor(floor: number): Promise<PlanResult> {
     const savedTags = parseImageTags(current.mes);
     if (result.status === 'tagged' && !savedTags.length) throw new Error('tag 未保存，已停止本楼任务');
     savedTags.forEach(tag => { if (!parseImageTagContent(tag).tag.trim()) throw new Error('生成的 tag 没有有效提示词'); });
+    claimNovelSlots(current, at.swipe, savedTags);
     current.extra = { ...current.extra, bbiNovelPlan: { v: 1, status: result.status, sourceHash, tagCount: savedTags.length } };
     await at.ctx.saveChat();
-    dirty.add(floor);
+    markDirty(floor, at);
     return { status: result.status, tagCount: savedTags.length };
   })();
   planning.set(key, task);
@@ -132,7 +177,7 @@ function runSlot(floor: number, seq: number, rawTag: string): Promise<void> {
       await saveImageResult(floor, at.swipe, seq, rawTag, seed, output.result, output.meta, assert);
       if (historyId !== null) safeHistory(() => finishImage(historyId));
       clearGen(slot, token);
-      dirty.add(floor);
+      markDirty(floor, at);
     } catch (error) {
       if (historyId !== null) safeHistory(() => failImage(historyId, error instanceof Error ? error.message : String(error), signal.aborted));
       failGen(slot, token, error instanceof Error ? error.message : String(error));
@@ -152,9 +197,11 @@ async function generateFloor(floor: number) {
   if (!tags.length) throw new Error('本楼没有已保存的 tag，请先生成 tag');
   // Prevent a later Card.onMounted from consuming an old auto-generation flag.
   clearAutoGenerateForFloor(at.chatId, floor);
+  claimNovelSlots(at.message, at.swipe, tags);
   const results = await Promise.allSettled(tags.map((tag, seq) => runSlot(floor, seq, tag)));
   const failures = results.flatMap((result, seq) => result.status === 'rejected' ? [{ seq, reason: result.reason instanceof Error ? result.reason.message : String(result.reason) }] : []);
   at.assert();
+  markDirty(floor, at);
   return { status: failures.length ? 'failed' as const : 'ready' as const, failures, ...floorStatus(floor) };
 }
 
