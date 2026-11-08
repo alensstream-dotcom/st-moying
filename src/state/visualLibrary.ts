@@ -135,4 +135,8 @@ export function saveWorldProfile(world: WorldVisualProfile): void {
   if (ctx.chatMetadata[WORLD_KEY] && !ctx.chatMetadata[`${WORLD_KEY}_backup`]) ctx.chatMetadata[`${WORLD_KEY}_backup`] = cloneVisual(ctx.chatMetadata[WORLD_KEY]);
   ctx.chatMetadata[WORLD_KEY] = { ...cloneVisual(world), provenance: 'user' }; ctx.saveMetadataDebounced?.();
 }
-export function visualConfigurationRevision(): string { return JSON.stringify([worldProfile(), latestMaterials()]); }
+export function visualConfigurationRevision(): string {
+  // Learned per-floor state is output, not an edit to user configuration.
+  // A parallel floor finishing must not invalidate this floor's LLM response.
+  return JSON.stringify([getContext()?.chatMetadata?.[WORLD_KEY] ?? null, latestMaterials()]);
+}

@@ -403,6 +403,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // parse 校验,只改一处会自相矛盾。
     const promptOptions = slot
       ? { ...settings.autoTag, minImages: 1, maxImages: 1 }
+      : opts.headless ? { ...settings.autoTag, minImages: Math.max(1, settings.autoTag.minImages), maxImages: Math.max(1, settings.autoTag.maxImages) }
       : settings.autoTag;
     // 协议形态开跑时快照一次:写协议、验收与收尾同一份,用户中途拨开关也不会前后不一
     const profile = autoTagProfile();
@@ -433,6 +434,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       role: 'user',
       content: `${SCENE_PROTOCOL}\n当前版本化人物/穿搭状态（只读）：\n${JSON.stringify(sceneBefore)}\n世界视觉档案：${JSON.stringify(world)}\n同名人物必须在 images.characters 中提供 characterId 或 work。默认世界服装仅补空白，剧情明确的现代穿越者/换装是例外，不可用默认规则覆盖。`,
     });
+    if (opts.headless) messages.push({ role: 'system', content: '小说逐节配图任务：当前楼层是用户明确选择的一个独立小说节，必须为本节至少选择一幅有效画面。与前节人物、场景、服装或姿势相似不是跳过本节的理由；可以保持剧情事实并调整取景。不要由于相邻楼层去重规则返回 images=[]。仍必须使用本节的 P 编号，不能给其他楼层选图。' });
     // 失败重试:请求异常与「返回无法解析/校验不通过」都视为可重试的异常(后者常见于模型没遵守协议);
     // 中止信号立即收手,不消耗重试。parseImagePlan 对坏输出抛错,「无画面」则是正常返回空数组。
     // 解析/校验放进 validate 回调:不过则请求历史如实记为失败(而非「HTTP 拿到文本」的绿色成功),
@@ -830,6 +832,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 正文在 buildNext 里基于「落盘那一刻的真实正文」现算:分析期间别的插件对正文的修改
     // (翻译/润色/追加状态栏/改写句子)全部保留,tag 按叙事行重新定位后照常注入。
     let rebaseNote = '';
+    let staleReason = '';
     // 真正落进正文的那批插入项(重定位后的),供写盘成功后转交后台出图。
     let writtenImages: ImageInsertion[] = [];
     // 全量写入同时落两笔:角色增量与本楼的服装账本。账本按「本楼实际写出的画面」冻结,
@@ -840,11 +843,14 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       floor,
       currentText => {
         // Include the entire preceding transcript: an edit/swipe upstream also invalidates this response.
-        if (controller.signal.aborted || transcriptRevision(getContext()?.chat ?? [], floor, currentText) !== sceneRevision
-          || confirmationRevision() !== manualRevision || visualConfigurationRevision() !== visualRevision
-          || stateHash(JSON.stringify(getContext()?.characters?.[Number(getContext()?.characterId)] ?? null)) !== cardRevision
-          || JSON.stringify(autoTagProfile()) !== JSON.stringify(profile)
-          || stateHash(JSON.stringify(charTagsBeforeFloor(0))) !== seedRevision) return null;
+        staleReason = controller.signal.aborted ? '本楼分析任务已取消或被另一个请求替代'
+          : transcriptRevision(getContext()?.chat ?? [], floor, currentText) !== sceneRevision ? '本楼或此前楼层的正文、swipe、剧情状态在分析期间发生变化'
+          : confirmationRevision() !== manualRevision ? '人物人工确认或手动视觉状态在分析期间发生变化'
+          : visualConfigurationRevision() !== visualRevision ? '用户世界配置或素材库在分析期间发生变化'
+          : stateHash(JSON.stringify(getContext()?.characters?.[Number(getContext()?.characterId)] ?? null)) !== cardRevision ? '角色卡在分析期间发生变化'
+          : JSON.stringify(autoTagProfile()) !== JSON.stringify(profile) ? '生图后端或提示词模式在分析期间发生变化'
+          : stateHash(JSON.stringify(charTagsBeforeFloor(0))) !== seedRevision ? '人物基线档案在分析期间发生变化' : '';
+        if (staleReason) return null;
         // 单槽重写:只替换第 seq 条 tag,正文与其它 tag 一字不动,也不需要位置重定位。
         // 模型返回的 position 在这里刻意不参与——画面钉死在原位,它只负责重写内容。
         // 开跑时快照的原文对不上 = 期间被用户/别的流程改过,放弃覆盖(同提示词编辑弹窗)。
@@ -957,7 +963,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       }
       return;
     }
-    if (opts.headless) throw new Error(ABANDON_REASON[result] || result);
+    if (opts.headless) throw new Error(staleReason || ABANDON_REASON[result] || result);
     // 撤销标记只撤自己那一枚:clearAutoGenerateForFloor 会连累同楼其它槽位的待消费标记。
     if (marked) {
       clearPreclaimedBackgroundSlots(chatId, floor);
