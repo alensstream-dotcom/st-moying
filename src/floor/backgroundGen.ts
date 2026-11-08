@@ -238,6 +238,7 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
     const { result, meta } = await generateImage(
       {
         prompt: job.prompt,
+        storyFrame: { floor: job.messageId, tag: fullTag },
         nl: job.nl,
         negative: job.negative,
         characters: job.characters,

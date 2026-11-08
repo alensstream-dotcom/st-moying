@@ -1,3 +1,6 @@
+import { costumeConflicts, removeUnbackedCostume, type CostumeContext } from '@/autoTag/costumeContext';
+import { readClothingFloor, clothingRevision, enforceClothing } from '@/autoTag/outfitTimeline';
+import { getContext } from '@/st/context';
 import { currentIdentityFacts, enforceKnownMaleIdentity, isMaleIdentity } from '@/state/characterIdentity';
 /**
  * 「一次出图」的共用中段 —— 楼层卡片与公开接口的唯一生成入口。
@@ -26,7 +29,7 @@ import { currentIdentityFacts, enforceKnownMaleIdentity, isMaleIdentity } from '
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { comfySimpleParams, composeNegative, composePositive, validateSimpleConfig, type SimpleGenValues } from '@/backends/comfyTemplates';
 import { generateComfyImage, randomSeed, type ComfyImageResult } from '@/backends/comfyui';
-import { generateNaiImage, naiRandomSeed, naiSupportsCharacterPrompts } from '@/backends/nai';
+import { generateNaiImage, naiRandomSeed, naiSupportsCharacterPrompts, naiArtistPrompt, naiQualityTags } from '@/backends/nai';
 import { effectiveOrientation, parseSize, pickSize, type Orientation } from '@/backends/size';
 import { acquireNaiSlot } from '@/floor/genQueue';
 import type { GenerationMeta } from '@/generationMeta';
@@ -37,6 +40,8 @@ import { enforceAppearance } from '@/autoTag/appearanceLock';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
+  /** Exact saved story frame; omitted for free-form APIs and material previews. */
+  storyFrame?: { floor: number; tag: string };
   /** 正向 danbooru 短 tag。 */
   prompt: string;
   /** 自然语言部分(可空)。 */
@@ -226,6 +231,20 @@ export async function generateImage(
     appearanceNotes.push(...enforceKnownMaleIdentity(image, allCharacterRecords(), identityFacts, status.supportsCharacters));
     input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
   }
+  let costumeContext: CostumeContext | undefined;
+  if (input.storyFrame) {
+    const chat = getContext()?.chat ?? [], floor = input.storyFrame.floor;
+    const saved = readClothingFloor(chat[floor], clothingRevision(chat, floor));
+    const frame = saved?.frames.find(f => f.tag === input.storyFrame!.tag);
+    if (frame?.costume) {
+      costumeContext = frame.costume;
+      const state = new Map(frame.entries.map(e => [e.name, e]));
+      const image = { position: '', sourceLine: frame.sourceLine, charOffset: frame.charOffset, tag: input.prompt, nl: input.nl ?? '', negative: input.negative ?? '', size: input.size ?? 'portrait' as const, characters: (input.characters ?? []).map(c => ({ ...c })) };
+      appearanceNotes.push(...removeUnbackedCostume(image, state, frame.costume));
+      enforceClothing(image, state, !!input.nl || image.characters.some(c => !!c.nl), status.supportsCharacters);
+      input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
+    }
+  }
   const characters = input.characters ?? [];
   // 支持与否由后端说了算:ComfyUI 恒不支持;NAI 看模型是否 4.5/V5
   const charactersApplied = characters.length > 0 && status.supportsCharacters;
@@ -249,6 +268,8 @@ export async function generateImage(
       const preset = input.genPresetId ? genPresetById(input.genPresetId) : null;
       if (preset) applyPresetToNaiConn(naiConn, preset);
       if (input.naiModel) naiConn.model = input.naiModel as typeof naiConn.model;
+      const configConflicts = costumeConflicts([naiArtistPrompt(naiConn), naiQualityTags(naiConn)].join(', '), costumeContext);
+      if (configConflicts.length) appearanceNotes.push('当前 NAI 配方/质量词含与剧情服饰背景冲突的服装词（' + configConflicts.join(', ') + '），已保留用户配置；若仍出现现代服装，请检查该配方');
       const output = await generateNaiImage(
         naiConn,
         // characters 原样透传:不支持的模型由 buildNaiParameters 自己滤掉(同一口径

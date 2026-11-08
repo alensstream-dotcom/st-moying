@@ -38,6 +38,7 @@ export interface ImageInsertion {
 }
 
 export interface ImagePlan {
+  costumeContexts?: unknown;
   identities?: IdentityClaim[];
   outfitChanges?: ClothingChange[];
   images: ImageInsertion[];
@@ -247,6 +248,7 @@ export function parseImagePlan(
   return {
     images: limitedImages,
     changes: parseChanges(parsed.changes, positions, segmentById),
+    costumeContexts: parsed.costumeContexts,
     outfitChanges: parseClothingChanges(parsed.outfitChanges, segments),
     identities: parseIdentityClaims(parsed.identities),
   };

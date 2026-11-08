@@ -1,3 +1,4 @@
+import { costumeConflicts, explicitCostumeEvidence, costumeBefore, resolveCostumeFloor, costumeAt, prepareCostumeRepairs, repairCostumeState, removeUnbackedCostume, type CostumeRequest } from './costumeContext';
 import { IDENTITY_PROTOCOL, IDENTITY_EXTRA_KEY, assessIdentityClaims, currentIdentityFacts, eligibleIdentityEntries, enforceKnownMaleIdentity, identityContextHash, identityFactFor, isMaleIdentity, identityManualRevision, identityStoryHash, mayCreateHeroine, mergeIdentityFacts, type IdentitySources } from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
 import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
@@ -423,6 +424,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       ? new Map(savedWardrobe.frames[slot.seq].entries.map(e => [e.name, e]))
       : slot && slotRawTag ? savedImageClothing({ ...parseImageTagContent(slotRawTag), position: '', sourceLine: 0, charOffset: 0 }, wardrobe) : null;
     const outfitBlock = clothingBlock(slotWardrobe ?? wardrobe);
+    const costumeRequest: CostumeRequest = { inherited: costumeBefore(context.chat, floor) };
     const messages = await buildAutoTagMessages(
       context,
       floor,
@@ -435,7 +437,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       loreSeed,
       charReuse,
       outfitBlock,
+      costumeRequest,
     );
+    costumeRequest.story = source;
     const channel = getTagGenChannel();
     messages.push({ role: 'system', content: CLOTHING_PROTOCOL });
     messages.push({ role: 'system', content: IDENTITY_PROTOCOL + '\n已核实身份（旧绘图档案不是性别证据）：' + JSON.stringify(knownIdentities) });
@@ -786,11 +790,27 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
 
     plan.images.sort((a,b) => a.sourceLine - b.sourceLine || a.charOffset - b.charOffset);
     const activeEntries = applyCharTagOps(safeEntries, floorOps, floor, lockedNames);
-    const accepted = acceptClothingChanges(plan.outfitChanges ?? [], source, wardrobe, activeEntries);
+    const costumeNotes: string[] = [];
+    const costume = slot && savedWardrobe?.costume ? savedWardrobe.costume : resolveCostumeFloor(plan.costumeContexts, costumeRequest, preparedTarget.segments, costumeNotes);
+    for (const change of plan.outfitChanges ?? []) if (change.operation === 'init' && !change.evidence) {
+      change.evidence = explicitCostumeEvidence(change.name, change.pieces.map(p => p.design).join(', '), costumeAt(costume, change.sourceLine, change.charOffset), source, change.sourceLine, change.charOffset);
+    }
+    const accepted = acceptClothingChanges(slot ? [] : plan.outfitChanges ?? [], source, wardrobe, activeEntries);
+    const costumeRepairs = await prepareCostumeRepairs(slotWardrobe ?? wardrobe, accepted.changes, plan.images, costume, costumeRequest.setting ?? '', controller.signal, source);
+    if (controller.signal.aborted) return;
+    // Repair a request-local copy; historical floors stay intact. States and garment IDs never change.
+    repairCostumeState(wardrobe, costume.initial, costumeRepairs);
+    for (const record of wardrobe.values()) for (const p of record.pieces) if (!p.costume && !['unknown','mixed'].includes(costume.initial.era) && !costumeConflicts(p.design, costume.initial).length) p.costume = { ...costume.initial };
+    for (const c of accepted.changes) {
+      if (c.operation === 'patch') continue;
+      for (const p of c.pieces) { p.evidence = c.evidence; p.costume = { ...costumeAt(costume, c.sourceLine, c.charOffset) }; }
+      const eventState = new Map([[c.name, { name: c.name, outfitId: '', pieces: c.pieces, source: c.evidence }]]);
+      repairCostumeState(eventState, costumeAt(costume, c.sourceLine, c.charOffset), costumeRepairs);
+    }
     const scope = `${chatId}|${floor}|${swipeId ?? 0}|${expectedStory}`;
     const frames: ClothingFloor['frames'] = [];
     const completion: ClothingState = new Map();
-    const visualNotes: string[] = [...accepted.rejected, ...appearanceChangeNotes];
+    const visualNotes: string[] = [...accepted.rejected, ...appearanceChangeNotes, ...costumeNotes, ...costumeRepairs.notes];
     // @占位符按正文位置替换：变化前图片用旧档，变化位置及之后用新档。
     const unknownNames = new Set<string>();
     for (const image of plan.images) {
@@ -854,10 +874,18 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       visualNotes.push(...enforceKnownMaleIdentity(image, libraryAtStart, planIdentities, profile.naiCharPrompts));
       const at = slotWardrobe ?? clothingAt(wardrobe, accepted.changes, scope, image.sourceLine, image.charOffset);
       for (const [name, entry] of completion) if (!at.has(name)) at.set(name, entry);
+      const frameCostume = slot && savedWardrobe?.frames[slot.seq]?.costume || costumeAt(costume, image.sourceLine, image.charOffset);
       initialiseClothingFromImage(image, at);
+      for (const record of at.values()) if (/旧版记录/.test(record.source) && !wardrobe.has(record.name)) {
+        const evidence = explicitCostumeEvidence(record.name, record.pieces.map(p => p.design).join(', '), frameCostume, source, image.sourceLine, image.charOffset);
+        if (evidence) { record.source = evidence; for (const p of record.pieces) p.evidence = evidence; }
+      }
+      repairCostumeState(at, frameCostume, costumeRepairs);
+      for (const record of at.values()) for (const p of record.pieces) if (!p.costume) p.costume = { ...frameCostume };
+      visualNotes.push(...removeUnbackedCostume(image, at, frameCostume));
       for (const [name, entry] of at) if (!wardrobe.has(name) && !accepted.changes.some(c => c.name === name)) completion.set(name, entry);
       enforceClothing(image, at, profile.nl, profile.naiCharPrompts);
-      frames.push({ tag: serializeImageTag(image), sourceLine: image.sourceLine, charOffset: image.charOffset, entries: [...at.values()] });
+      frames.push({ tag: serializeImageTag(image), sourceLine: image.sourceLine, charOffset: image.charOffset, entries: [...at.values()], costume: frameCostume });
     }
     if (unknownNames.size) {
       // 模型认为这是角色、却没给它建档 —— 该角色在图里将完全没有外貌。
@@ -874,7 +902,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     }
     // 没有图片、没有角色变化、也没有旧楼层变化要清理时,保持原来的无写入早退。
     if (!plan.images.length) opts.onNoImages?.();
-    if (!plan.images.length && !floorOps.length && !accepted.changes.length && !assessedIdentities.length && !previousDelta) {
+    if (!plan.images.length && !floorOps.length && !accepted.changes.length && !assessedIdentities.length && !costume.events.length && costume.initial.era === 'unknown' && !previousDelta) {
       if (opts.manual) toastr.info('模型认为本楼没有值得插图的画面', '墨影');
       else console.debug(`[墨影] 第 ${floor} 楼无需插图`);
       return;
@@ -912,9 +940,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 注意:applyMessageText 的实参在进入 buildNext 之前就会求值,因此账本必须用 plan.images 计算!
     const finalWardrobe = clothingAt(wardrobe, accepted.changes, scope);
     for (const [name, entry] of completion) if (!finalWardrobe.has(name)) finalWardrobe.set(name, entry);
+    repairCostumeState(finalWardrobe, costume.final, costumeRepairs);
     const previousWardrobe = message.extra?.[BBI_OUTFIT_EXTRA_KEY] as Partial<ClothingFloor> | undefined;
     const nextWardrobe: ClothingFloor = { v: 2, swipe: swipeId ?? 0, sourceHash: expectedStory, upstreamHash: wardrobeRevision,
-      start: [...wardrobe.values()], entries: [...finalWardrobe.values()], changes: accepted.changes, rejected: visualNotes, frames,
+      costume, start: [...wardrobe.values()], entries: [...finalWardrobe.values()], changes: accepted.changes, rejected: visualNotes, frames,
       legacyBackup: previousWardrobe?.v === 2 ? previousWardrobe.legacyBackup : previousWardrobe };
     const rewrittenWardrobe = slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
       ? { ...savedWardrobe, frames: savedWardrobe.frames.map((frame, index) => index === slot.seq && plan.images[0] ? { ...frame, tag: serializeImageTag(plan.images[0]) } : frame) } : null;

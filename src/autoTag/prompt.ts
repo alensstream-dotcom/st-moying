@@ -1,3 +1,4 @@
+import { prepareCostumeRequest, costumeBlock, COSTUME_PROTOCOL, type CostumeRequest } from './costumeContext';
 import type { ChatMsg } from '@/api/client';
 import { templateSupportsNegative } from '@/backends/comfyTemplates';
 import { getWorkflowPlaceholders } from '@/backends/comfyui';
@@ -227,6 +228,7 @@ export async function buildAutoTagMessages(
    * 没有这一块时,当前楼只要没写衣着,模型就每层从零挑一套,衣服自然乱飘。
    */
   outfitStateBlock?: string,
+  costumeRequest: CostumeRequest = {},
 ): Promise<ChatMsg[]> {
   const target = context.chat[targetFloor];
   const preparedTarget =
@@ -252,6 +254,8 @@ export async function buildAutoTagMessages(
     Promise.resolve(fetchCharCard(context)),
     Promise.resolve(fetchUserPersona(context)),
   ]);
+
+  prepareCostumeRequest(costumeRequest, [charCard, persona, worldInfo].filter(Boolean).join('\n'), preparedTarget.segments.map(segment => segment.text).join('\n'), [charCard, persona].filter(Boolean).join('\n'));
 
   // 自然语言模式(profile.nl):ComfyUI 当前工作流或 NAI 渠道开启了「生成自然语言」。
   // 开启后协议变为 tag/nl 两键——自然语言是配合短 tag 用的,不是替代。
@@ -302,7 +306,7 @@ export async function buildAutoTagMessages(
   if (nlOn && !naiCharPromptsOn) sampleImage.nl = sampleNl;
   if (negativeOn) sampleImage.negative = 'extra people, duplicate character';
   sampleImage.size = profile.lockedSize ?? 'portrait';
-  const outputShape = JSON.stringify({ images: [sampleImage], changes: [], outfitChanges: [], identities: [] });
+  const outputShape = JSON.stringify({ images: [sampleImage], changes: [], outfitChanges: [], costumeContexts: [], identities: [] });
   // NAI 两种写法共用的尾段:角色块的取舍与 Base / 角色的分工不随自然语言开关变
   const naiCharacterRuleTail =
     'This includes visible characters who have no library profile: a one-off unnamed individual gets a Character Prompt too, keyed by the term the story uses for them. Anonymous crowds visible in the frame remain in Base. Character tag uses girl/boy without a numeric count and contains that character appearance, outfit, and action. Do not include quality tags, negative tags, or XML.';
@@ -531,6 +535,7 @@ ${characterRule}
   // 后端书写规范(ComfyUI/NAI)压在固定协议之前;无适用规范时不占消息位。
   if (spec) messages.push({ role: 'system', content: spec });
   messages.push({ role: 'system', content: fixedContract });
+  messages.push({ role: 'system', content: COSTUME_PROTOCOL + '\n' + costumeBlock(costumeRequest.seed!) });
   // 思维链:压在任务协议之后,要求模型先在 <thinking> 里过检查点再输出 JSON。
   // 解析端(protocol.ts)会先剥掉 think 块再取 JSON,二者配套;按后端取对应的那一份。
   const thinking = backendThinkingPrompt(options, nlOn, naiCharPromptsOn, options.maxImages);
@@ -542,6 +547,7 @@ ${characterRule}
   const loreBlock =
     lore?.enabled && (lore.wardrobeLimit > 0 || lore.poseLimit > 0 || lore.faces)
       ? buildLoreBlock(previous ? `${preparedTarget.promptText}\n${previous.slice(-1500)}` : preparedTarget.promptText, {
+          costume: costumeRequest.seed,
           maxNsfw: lore.maxNsfw,
           wardrobeLimit: lore.wardrobeLimit,
           poseLimit: lore.poseLimit,

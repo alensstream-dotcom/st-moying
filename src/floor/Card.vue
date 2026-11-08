@@ -304,7 +304,7 @@ async function generate(fresh = false): Promise<void> {
     );
     // 闸门、后端分派都在 generateImage 里(公开接口走同一条路,见 generate.ts);
     // 本组件只把进度回调接到自己的槽位运行态上。
-    const { result, meta } = await generateImage({ ...job, seed }, signal, {
+    const { result, meta } = await generateImage({ ...job, seed, storyFrame: { floor: job.messageId, tag: job.tag } }, signal, {
       onStart: () => setGenPhase(slot, token, 'generating'),
       onQueue: ahead => setQueueAhead(slot, token, ahead),
       onRetry: retry => setGenRetry(slot, token, retry),

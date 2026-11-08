@@ -1,3 +1,4 @@
+import { compatibleCostumeMaterial, type CostumeContext } from '@/autoTag/costumeContext';
 /**
  * 素材库召回层(loreIndex):把「正文 + 设置」压成一段能直接塞进 prompt 的候选清单。
  *
@@ -43,6 +44,7 @@ import type {
 } from '@/data/loreTypes';
 
 export interface LoreOptions {
+  costume?: CostumeContext;
   /** 允许出现的最高 NSFW 档;默认 3。 */
   maxNsfw?: NsfwLevel;
   /** 服装候选条数上限,默认 8。 */
@@ -392,7 +394,7 @@ export function collectLoreCandidates(text: string, options: LoreOptions = {}): 
   const body = (text ?? '').trim();
   if (!body) return { wardrobe: [], poses: [], faces: [] };
   return {
-    wardrobe: pickDiverse(allWardrobeItems(), body, item => item.category, {
+    wardrobe: pickDiverse(allWardrobeItems().filter(item => compatibleCostumeMaterial(item, options.costume)), body, item => item.category, {
       limit: options.wardrobeLimit ?? 8,
       maxNsfw: options.maxNsfw,
       vibes: options.vibes,

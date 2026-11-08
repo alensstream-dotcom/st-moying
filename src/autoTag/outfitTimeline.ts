@@ -1,3 +1,4 @@
+import type { CostumeContext, CostumeFloor } from './costumeContext';
 import type { TargetSegment } from './clean';
 import type { ImageInsertion } from './protocol';
 import { extractGarment, readOutfitState, readWear, BBI_OUTFIT_EXTRA_KEY } from './outfitState';
@@ -7,20 +8,24 @@ import type { STMessage } from '@/st/context';
 import { parseImageTagContent, parseImageTags, stripImageTags } from '@/st/imageTagRegex';
 
 export interface ClothingPiece {
+  /** Verified source for the garment, preserved across state-only patches. */
+  evidence?: string;
+  costume?: CostumeContext;
   id: string;
   design: string;
   state: Record<string, string>;
 }
-export interface ClothingRecord { name: string; outfitId: string; pieces: ClothingPiece[]; source: string }
+export interface ClothingRecord { manual?: boolean; name: string; outfitId: string; pieces: ClothingPiece[]; source: string }
 export interface ClothingChange {
   name: string; position: string; sourceLine: number; charOffset: number;
   operation: 'init' | 'change' | 'patch' | 'add'; evidence: string; pieces: ClothingPiece[];
 }
 export interface ClothingFloor {
   legacyBackup?: unknown;
+  costume?: CostumeFloor;
   v: 2; swipe: number; sourceHash: string; upstreamHash: string;
   start: ClothingRecord[]; entries: ClothingRecord[]; changes: ClothingChange[]; rejected: string[];
-  frames: Array<{ tag: string; sourceLine: number; charOffset: number; entries: ClothingRecord[] }>;
+  frames: Array<{ tag: string; sourceLine: number; charOffset: number; entries: ClothingRecord[]; costume?: CostumeContext }>;
 }
 export type ClothingState = Map<string, ClothingRecord>;
 export const CLOTHING_PROTOCOL = `服装连续性补充协议（本节替代“根据图片提示词反推账本”）：
@@ -61,7 +66,7 @@ export function narrativeHash(value: string): string {
 function contribution(message: STMessage): string {
   const raw = message.extra?.[BBI_OUTFIT_EXTRA_KEY] as Partial<ClothingFloor> | undefined;
   return JSON.stringify([narrativeHash(message.mes), message.swipe_id ?? 0,
-    raw?.v === 2 ? [raw.changes, raw.entries] : readOutfitState(message)?.entries ?? null]);
+    raw?.v === 2 ? (raw.costume ? [raw.changes, raw.entries, raw.costume] : [raw.changes, raw.entries]) : readOutfitState(message)?.entries ?? null]);
 }
 export function clothingRevision(chat: STMessage[], beforeFloor: number): string {
   let hash = '';
@@ -81,7 +86,7 @@ function legacyRecord(name: string, design: string, wear: string, state: string)
 }
 export function clothingBefore(chat: STMessage[], beforeFloor: number, entries: CharTagEntry[]): ClothingState {
   const state: ClothingState = new Map();
-  for (const e of entries) if (e.fields.outfit.trim()) state.set(e.name, legacyRecord(e.name, e.fields.outfit, 'worn', ''));
+  for (const e of entries) if (e.fields.outfit.trim()) state.set(e.name, { ...legacyRecord(e.name, e.fields.outfit, 'worn', ''), manual: e.source === 'manual' && (!e.history.some(h => h.field === 'outfit') || [...e.history].reverse().find(h => h.field === 'outfit')?.floor === -1) });
   let hash = '';
   for (let floor = 0; floor < Math.min(beforeFloor, chat.length); floor++) {
     const message = chat[floor], raw = message.extra?.[BBI_OUTFIT_EXTRA_KEY] as { v?: number } | undefined;
@@ -155,10 +160,10 @@ function applyOne(state: ClothingState, c: ClothingChange, scope: string): void 
   if (c.operation === 'patch') {
     for (const p of c.pieces) { const piece = old?.pieces.find(g => g.id === p.id); if (piece) Object.assign(piece.state, p.state); }
   } else if (c.operation === 'add' && old) {
-    old.pieces.push(...copy(c.pieces).map(p => ({ ...p, state: { location: 'worn', ...p.state } })));
+    old.pieces.push(...copy(c.pieces).map(p => ({ ...p, evidence: c.evidence, state: { location: 'worn', ...p.state } })));
   } else if (c.operation === 'change' || !old) {
     state.set(c.name, { name: c.name, outfitId: `outfit_${continuityHash(scope + c.name + c.position + JSON.stringify(c.pieces))}`,
-      pieces: copy(c.pieces).map(p => ({ ...p, state: { location: 'worn', ...p.state } })), source: c.evidence || '首次视觉补全（非剧情事实）' });
+      pieces: copy(c.pieces).map(p => ({ ...p, evidence: c.evidence, state: { location: 'worn', ...p.state } })), source: c.evidence || '首次视觉补全（非剧情事实）' });
   }
 }
 export function clothingAt(before: ClothingState, changes: ClothingChange[], scope: string, line = Infinity, offset = Infinity): ClothingState {
@@ -173,7 +178,9 @@ export function clothingTrace(message: STMessage | undefined, rawTag: string): s
   const floor = readClothingFloor(message), frame = floor?.frames.find(f => f.tag === rawTag);
   if (!floor || !frame) return [];
   const cast = parseImageTagContent(rawTag).characters.map(c => c.name);
-  return [...frame.entries.filter(e => cast.includes(e.name)).map(e => `${e.name} · ${e.outfitId} · ${e.pieces.map(p => `${p.design || p.id} [${Object.entries(p.state).map(([k,v]) => `${k}=${v}`).join(', ')}]`).join('；')}`),
+  const eraLabels = { ancient: '古代', modern: '现代', future: '未来', mixed: '混合时代', unknown: '未确定' };
+  const cultureLabels = { chinese: '中国古风/仙侠', japanese: '日式', western: '西式', other: '其他文化', unknown: '文化未确定' };
+  return [...(frame.costume ? [`服饰背景：${eraLabels[frame.costume.era]} / ${cultureLabels[frame.costume.culture]} · ${frame.costume.evidence || '沿用前文'}`] : []), ...frame.entries.filter(e => cast.includes(e.name)).map(e => `${e.name} · ${e.outfitId} · ${e.pieces.map(p => `${p.design || p.id} [${Object.entries(p.state).map(([k,v]) => `${k}=${v}`).join(', ')}]`).join('；')}`),
     ...floor.rejected.map(r => `状态处理：${r}`)];
 }
 /** One-time compatibility completion only when the LLM omitted a first outfit.
@@ -195,7 +202,7 @@ export function savedImageClothing(image: ImageInsertion, before: ClothingState)
   }
   return state;
 }
-const CLOTHING_WORD = /\b(?:dress|shirt|skirt|pants|trousers|shorts|jeans|jacket|blazer|coat|suit|bra|panties|underwear|lingerie|stockings|thighhighs|pantyhose|tights|socks|shoes|boots|heels|uniform|serafuku|hanfu|kimono|robe|collar|sleeves?|clothes|clothing|outfit|sash|belt|ribbon|cloak|cape|gloves|swimsuit|bikini|apron|corset|hoodie|sweater|cardigan|blouse|tunic)\b/i;
+const CLOTHING_WORD = /\b(?:dress|shirt|skirt|pants|trousers|shorts|jeans|jacket|blazer|coat|suit|bra|panties|underwear|lingerie|stockings|thighhighs|pantyhose|tights|socks|shoes|boots|heels|uniform|serafuku|hanfu|kimono|robe|collar|sleeves?|clothes|clothing|outfit|sash|belt|ribbon|cloak|cape|gloves|swimsuit|bikini|apron|corset|hoodie|sweater|cardigan|blouse|tunic|ruqun|hakama|yukata|obi|geta|miko|qipao|cheongsam|necktie|bow tie|sneakers|loafers|baseball cap|dudou|chest wrap|underpants|undergarment)\b/i;
 const WEAR_WORD = /\b(?:nude|naked|topless|bottomless|fully clothed|off shoulder|breasts out|undressed)\b/i;
 const CLOTHING_ACTION = /\b(?:holding|grabbing|pulling|lifting|tugging|unbuttoning|taking off|removing)\b/i;
 export function isClothingDescription(value: string): boolean {
@@ -207,10 +214,10 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
   for (const p of record.pieces) {
     const s = p.state, location = s.location;
     const both = /\b(?:dress|robe|uniform|jumpsuit|bodysuit|no clothes)\b/i.test(p.design);
-    const upper = both || /\b(?:shirt|blouse|bra|jacket|blazer|coat|sweater|top|camisole|corset|tunic)\b/i.test(p.design);
-    const lower = both || /\b(?:skirt|pants|trousers|shorts|jeans|panties|underwear)\b/i.test(p.design);
+    const upper = both || /\b(?:shirt|blouse|bra|jacket|blazer|coat|sweater|top|camisole|corset|tunic|dudou|chest wrap)\b/i.test(p.design);
+    const lower = both || /\b(?:skirt|pants|trousers|shorts|jeans|panties|underwear|underpants)\b/i.test(p.design);
     if (['removed','floor','chair','held'].includes(location)) {
-      upperRemoved ||= both || /\b(?:shirt|blouse|bra|sweater|top|camisole|corset|tunic)\b/i.test(p.design); lowerRemoved ||= lower;
+      upperRemoved ||= both || /\b(?:shirt|blouse|bra|sweater|top|camisole|corset|tunic|dudou|chest wrap)\b/i.test(p.design); lowerRemoved ||= lower;
       if (p.id === 'legacy') { if (s.legacy) tags.push(s.legacy); continue; }
       if (location !== 'removed') sentences.push(`The ${p.design} is ${location === 'held' ? 'held, not worn' : `on the ${location}, not worn`}.`);
       continue;
