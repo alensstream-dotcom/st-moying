@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import VisualStudio from '@/pages/characters/VisualStudio.vue';
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
 import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
@@ -1016,6 +1017,7 @@ function clearCustom() {
       <span class="bbi-lore-count">{{ allCards.length }} 条</span>
     </div>
     <hr class="bbi-rule" />
+    <VisualStudio />
     <p class="bbi-page-intro">
       自动 tag 时按正文命中挑候选的就是这里的条目。服装与面相可以直接套到角色管理里的人物身上，写进他的固定字段，之后每次出图都带这一串。
     </p>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import BbiTextarea from '@/components/BbiTextarea.vue';
-import VisualStudio from './VisualStudio.vue';
+
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
 import Collapsible from '@/components/Collapsible.vue';
@@ -340,7 +340,7 @@ function sourceLabel(entry: CharTagEntry): string {
     <p class="bbi-field-hint">
       已命名的出镜人物使用独立形象记录和段落穿搭状态。下面的原有外貌库仍可编辑；绘图性别词不作为身份依据。
     </p>
-    <VisualStudio />
+    <p class="bbi-field-hint">世界视觉档案、中文同人/服装 roll、素材绑定与定妆统一在「素材库」顶部操作。</p>
     <Collapsible title="人物身份与当前穿搭（女主筛选 / 全部人物索引）" :open="false">
       <button class="bbi-btn" @click="indexMode = indexMode === 'heroine' ? 'all' : 'heroine'">{{ indexMode === 'heroine' ? '查看全部人物' : '只看女主' }}</button>
       <button class="bbi-btn" @click="refreshSceneStore">刷新状态</button>

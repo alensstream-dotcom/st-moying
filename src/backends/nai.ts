@@ -360,7 +360,7 @@ export function naiUndesiredContent(nai: NaiSettings): string {
  * NAI3(读 input)与 NAI4/4.5(读 v4_prompt)拿到不同的提示词,且只在 NAI3 上暴露。
  */
 export function globalStyleOnly(value: string): string {
-  return value.split(',').map(t => t.trim()).filter(t => t && !/\b(?:hair|eyes|face|bangs|ponytail|breasts|hanfu|robe|dress|uniform|shirt|jacket)\b/i.test(t)
+  return value.split(',').map(t => t.trim()).filter(t => t && !/\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|bob cut|ahoge|breasts|hips|thighs|hanfu|robe|dress|uniform|shirt|jacket|skirt|stockings|panties|bra|sleeves|clothes|clothing|outfit)\b/i.test(t)
     && !/^\d+(?:girls?|boys?)$/i.test(t)).join(', ');
 }
 export function fullPositivePrompt(nai: NaiSettings, prompt: string, nl = '', managedCharacters = false): string {

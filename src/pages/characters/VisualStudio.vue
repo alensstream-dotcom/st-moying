@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref, watch, onUnmounted } from 'vue';
+import { getThumb } from '@/data/loreThumbs';
 import Collapsible from '@/components/Collapsible.vue';
 import BbiTextarea from '@/components/BbiTextarea.vue';
 import { createVisualDesign, drawVisualPreview, freezeVisualReference, recompileFloorVisuals } from '@/autoTag/visualActions';
@@ -16,12 +17,13 @@ import { activeNaiEndpoint, settings } from '@/state/settings';
 import { capabilityOverride, resolveNaiCapabilities, saveCapabilityOverride } from '@/backends/capabilities';
 
 const world = ref(worldProfile());
-const eraOptions = [{ value: 'auto', label: '自动/未知' }, { value: 'xianxia', label: '仙侠' }, { value: 'historical', label: '古风' }, { value: 'modern', label: '现代' }, { value: 'scifi', label: '科幻' }];
+const eraOptions = [{ value: 'auto', label: '自动/未知' }, { value: 'xianxia', label: '仙侠' }, { value: 'historical', label: '古风' }, { value: 'modern', label: '现代' }, { value: 'modern_retro', label: '复古现代' }, { value: 'western_fantasy', label: '西幻' }, { value: 'scifi', label: '科幻' }];
+const followWorld = ref(false);
 const query = ref(''), kind = ref<VisualMaterial['kind']>('outfit'), work = ref('*');
 const materials = computed(() => latestMaterials());
-const results = computed(() => searchMaterials(materials.value, { query: query.value, kind: kind.value, setting: kind.value === 'character' ? 'auto' : world.value.setting, work: work.value === '*' ? undefined : work.value }));
+const results = computed(() => searchMaterials(materials.value, { query: query.value, kind: kind.value, setting: followWorld.value && kind.value !== 'character' ? world.value.setting : 'auto', work: work.value === '*' ? undefined : work.value }));
 const works = computed(() => [...new Set(materials.value.filter(m => m.kind === 'character').map(m => m.work))]);
-const exclusions = computed(() => materialExclusions(materials.value, { kind: kind.value, setting: kind.value === 'character' ? 'auto' : world.value.setting, work: work.value === '*' ? undefined : work.value }));
+const exclusions = computed(() => materialExclusions(materials.value, { kind: kind.value, setting: followWorld.value && kind.value !== 'character' ? world.value.setting : 'auto', work: work.value === '*' ? undefined : work.value }));
 const candidate = ref<VisualMaterial | null>(null), materialSeed = ref(0), imageSeed = ref<number>(), json = ref(''), transfer = ref('');
 const busy = ref(false), feedback = ref('');
 const floor = ref(Math.max(0, (getContext()?.chat.length ?? 1) - 1)), line = ref(0);
@@ -48,7 +50,18 @@ watch(chosenCharacter, c => {
   appearanceDraft.value = JSON.stringify(c?.baseAppearance ?? {}, null, 2);
   garmentDraft.value = JSON.stringify(c?.outfit?.garments ?? [], null, 2);
 });
-watch(candidate, value => { json.value = value ? JSON.stringify(value, null, 2) : ''; vibeId.value = value?.vibe?.id ?? ''; });
+const cachedPreview = ref('');
+let previewRequest = 0;
+watch(candidate, async value => {
+  json.value = value ? JSON.stringify(value, null, 2) : ''; vibeId.value = value?.vibe?.id ?? '';
+  const request = ++previewRequest;
+  if (cachedPreview.value) URL.revokeObjectURL(cachedPreview.value);
+  cachedPreview.value = '';
+  if (!value?.previewKey || value.previewPath) return;
+  const record = await getThumb(value.previewKey);
+  if (request === previewRequest && record) cachedPreview.value = URL.createObjectURL(record.blob);
+});
+onUnmounted(() => { previewRequest++; if (cachedPreview.value) URL.revokeObjectURL(cachedPreview.value); });
 async function run(action: () => unknown | Promise<unknown>) {
   if (busy.value) return; busy.value = true; feedback.value = '';
   try { await action(); } catch (error) { feedback.value = error instanceof Error ? error.message : String(error); }
@@ -56,7 +69,7 @@ async function run(action: () => unknown | Promise<unknown>) {
 }
 function roll(next = false) {
   if (next) materialSeed.value++;
-  candidate.value = rollMaterial(materials.value, { query: query.value, kind: kind.value, setting: kind.value === 'character' ? 'auto' : world.value.setting, work: work.value === '*' ? undefined : work.value }, materialSeed.value) ?? null;
+  candidate.value = rollMaterial(materials.value, { query: query.value, kind: kind.value, setting: followWorld.value && kind.value !== 'character' ? world.value.setting : 'auto', work: work.value === '*' ? undefined : work.value }, materialSeed.value) ?? null;
   feedback.value = candidate.value ? '已选择库内素材；尚未应用到剧情人物' : '没有符合条件的素材，或同名角色需要先选择作品；未编造标签/图片';
 }
 async function draw() {
@@ -141,6 +154,8 @@ function download() {
         <button class="bbi-btn" @click="run(async () => { candidate = await createVisualDesign(query, kind, world.setting); feedback = '新款结构已生成，标签未验证；可真实生图预览'; })">创作新款</button>
         <span class="bbi-field-hint">款式种子 {{ materialSeed }} · 图片种子 {{ imageSeed ?? '未生图' }}</span>
       </div>
+      <label class="bbi-visual-check"><input v-model="followWorld" type="checkbox" />库内抽样只看符合当前世界的服装（未标时代的旧素材需手动选择）</label>
+      <p class="bbi-field-hint">已接入原素材库的服装、同人与已有预览。中文名先查库；无图片的条目可生成预览，不会冒充网络图库。收藏不会改变剧情，应用会创建版本绑定。</p>
       <details>
         <summary>匹配结果与来源（{{ results.length }}）</summary>
         <p v-if="!results.length" class="bbi-field-hint">未命中：检查世界、类型和作品过滤，或导入素材。</p>
@@ -149,7 +164,7 @@ function download() {
       </details>
       <div v-if="candidate" class="bbi-visual-candidate">
         <strong>{{ candidate.name }} · {{ candidate.variant }} · v{{ candidate.version }}</strong>
-        <img v-if="candidate.previewPath" :src="candidate.previewPath" alt="素材真实预览" @error="feedback = '预览不存在或无法加载；没有替换成虚构图片'" />
+        <img v-if="candidate.previewPath || cachedPreview" :src="candidate.previewPath || cachedPreview" alt="素材真实预览" @error="feedback = '预览不存在或无法加载；没有替换成虚构图片'" />
         <p v-else class="bbi-field-hint">此素材暂无预览图片。</p>
         <p class="bbi-field-hint">来源：{{ candidate.source }} · {{ candidate.verified ? '用户已确认标签' : '标签尚未验证' }}</p>
         <BbiTextarea :model-value="candidate.tags || candidate.garments.map(g => g.design).join(', ') || Object.values(candidate.appearance).join(', ')" readonly :rows="3" />

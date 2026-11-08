@@ -27,6 +27,8 @@ export interface VisualMaterial {
   style: string;
   tags: string;
   previewPath: string;
+  /** Existing IndexedDB preview; no fabricated URL or copied image. */
+  previewKey?: string;
   source: string;
   verified: boolean;
   createdAt: number;

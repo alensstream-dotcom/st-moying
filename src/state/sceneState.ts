@@ -262,6 +262,10 @@ export function applySceneEvents(input: SceneState, events: SceneEvent[], scope:
       if (!event.garments?.length || event.garments.some(g => !g.design) || new Set(event.garments.map(g => g.id)).size !== event.garments.length) {
         state.warnings.push(`${event.name}: invalid outfit change`); continue;
       }
+      if (character.outfit && !/换上|换了|换成|换衣|更衣|穿上|穿好|穿回|重新穿|披上|套上|换装|change[ds]? (?:into|clothes|outfit)|put(?:s)? on|dress(?:es|ed)? in|redress/i.test(event.evidence)) {
+        state.warnings.push(`${event.name}: 没有明确换装/重新穿戴事件，已保留原款式和穿脱状态；局部变化应使用 patch`);
+        continue;
+      }
       character.outfit = {
         outfitInstanceId: `outfit_${stateHash(`${character.characterId}\0${revision}\0${floor}\0${index}`)}`,
         design: event.garments.map(g => g.design).join(', '), garments: clone(event.garments), provenance: event.evidence,
@@ -327,6 +331,10 @@ export function restoreVisualSeeds(state: SceneState, designs: SceneCharacter[])
     const character = state.characters.find(c => c.characterId === design.characterId) ?? resolveSceneCharacter(state, design.name, design.work || undefined);
     if (!character) { state.characters.push(cloneVisual(design)); continue; }
     for (const [field, value] of Object.entries(design.baseAppearance)) if (!character.baseAppearance[field]) character.baseAppearance[field] = value;
+    for (const binding of design.visualBindings ?? []) {
+      if (binding.scope !== 'appearance' && binding.scope !== 'style') continue;
+      if (!character.visualBindings?.some(b => b.scope === binding.scope || b.scope === 'all')) (character.visualBindings ??= []).push(cloneVisual(binding));
+    }
     if (!character.outfit && design.outfit) {
       character.outfit = cloneVisual(design.outfit); character.visualBindings = cloneVisual(design.visualBindings ?? []);
     }

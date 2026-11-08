@@ -6,11 +6,11 @@ export const cloneVisual = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 export const defaultWorld = (): WorldVisualProfile => ({ v: 1, setting: 'auto', wardrobeDefaults: '', visualStyle: '', characterStylingDefaults: '', forbiddenByDefault: [], provenance: 'user' });
 export function inferWorld(source: string): VisualSetting {
   if (/仙侠|仙俠|修仙|修真|宗门|宗門|灵根|靈根|xianxia|cultivation/i.test(source)) return 'xianxia';
-  if (/古风|古風|古代|武侠|武俠|江湖|historical|wuxia|traditional|oriental/i.test(source)) return 'historical';
+  if (/古风|古風|古代|武侠|武俠|江湖|汉服|漢服|historical|wuxia|hanfu|traditional|oriental/i.test(source)) return 'historical';
   if (/赛博|賽博|星际|星際|科幻|cyberpunk|science fiction|scifi/i.test(source)) return 'scifi';
   if (/西幻|魔法|剑与魔法|western fantasy|dnd|rpg|magic/i.test(source)) return 'western_fantasy';
   if (/80年代|70年代|90年代|复古|retro|nostalgic|vintage/i.test(source)) return 'modern_retro';
-  if (/现代|現代|都市|校园|校園|modern/i.test(source)) return 'modern';
+  if (/现代|現代|都市|校园|校園|校服|modern|school uniform|serafuku|jeans|hoodie/i.test(source)) return 'modern';
   return 'auto';
 }
 export function normalizeVisualName(value: string): string {
@@ -88,6 +88,17 @@ export function applyVisualBinding(character: SceneCharacter, binding: VisualBin
 }
 export function fillWorldDefaults(state: SceneState, world: WorldVisualProfile, materials: VisualMaterial[], floor: number, line = 0): void {
   for (const character of state.characters) {
+    // Only an unambiguous name/alias match may establish automatic fandom identity.
+    // Visual resemblance alone must never replace an existing character's face.
+    if (!character.visualBindings?.some(b => b.scope === 'appearance' || b.scope === 'all') && !character.baseAppearance.fandom) {
+      const matches = materials.filter(m => m.kind === 'character' && (!character.work || m.work === character.work)
+        && [m.name, ...m.aliases].some(name => [character.name, ...character.aliases].some(alias => normalizeVisualName(name) === normalizeVisualName(alias))));
+      if (matches.length === 1) {
+        const binding = createBinding(matches[0], 'appearance', floor, line, 0, '人物姓名/别名唯一命中原素材库，保留已确认外貌字段');
+        binding.resolved.appearance = { ...binding.resolved.appearance, ...character.baseAppearance };
+        applyVisualBinding(character, binding, 'preserve');
+      } else if (matches.length > 1) state.warnings.push(`${character.name}: 同人素材存在多个作品/造型，请在素材库选择后绑定`);
+    }
     if (world.characterStylingDefaults && !character.baseAppearance.extra) character.baseAppearance.extra = world.characterStylingDefaults;
     if (character.outfit || world.setting === 'auto') continue;
     const seed = parseInt(stateHash(character.characterId).slice(0, 7), 16);

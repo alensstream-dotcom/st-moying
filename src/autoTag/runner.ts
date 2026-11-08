@@ -787,7 +787,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     });
     const sceneDelta: SceneDelta = { v: 1, revision: sceneRevision, ...checkedEvents, frames: [] };
     sceneDelta.world = cloneVisual(world);
-    const priorOutfits = new Set(sceneBefore.characters.filter(c => c.outfit).map(c => c.characterId));
+    const priorDesigns = new Map(sceneBefore.characters.map(c => [c.characterId, JSON.stringify([c.baseAppearance, c.outfit, c.visualBindings])]));
     if (unlockedOps.length !== effectiveOps.length) sceneDelta.rejected.push('传统 changes.set/重复建档已拦截；请使用有证据的 sceneEvents');
     // First-time design completion is kept separate from story identity facts.
     for (const op of floorOps) {
@@ -799,7 +799,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     }
     if (previousDelta?.swipe === (swipeId ?? 0)) restoreVisualSeeds(sceneBefore, previousDelta.scene?.designSeeds ?? []);
     fillWorldDefaults(sceneBefore, world, latestMaterials(), floor);
-    sceneDelta.designSeeds = cloneVisual(sceneBefore.characters.filter(c => c.outfit && !priorOutfits.has(c.characterId)));
+    sceneDelta.designSeeds = cloneVisual(sceneBefore.characters.filter(c => priorDesigns.get(c.characterId) !== JSON.stringify([c.baseAppearance, c.outfit, c.visualBindings])));
     sceneDelta.events = withIntroductionDefaults(sceneBefore, sceneDelta.events, world, latestMaterials(), chatId, sceneRevision, floor,
       previousDelta?.scene?.revision === sceneRevision ? previousDelta.scene.events : []);
     const eventsForFrame = [...sceneDelta.events, ...(manualEvents()[floor] ?? [])];

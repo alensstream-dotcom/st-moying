@@ -3,6 +3,9 @@ import { getContext } from '@/st/context';
 import { stateHash } from './sceneState';
 import { BUILTIN_VISUAL_MATERIALS, cloneVisual, defaultWorld, inferWorld } from './visualDesign';
 import type { VisualMaterial, WorldVisualProfile } from './visualTypes';
+import { loreVisualMaterials } from './loreVisualBridge';
+
+const SETTINGS = ['auto', 'xianxia', 'historical', 'modern', 'modern_retro', 'scifi', 'western_fantasy'];
 
 const KEY = 'bbi_visual_materials_v1';
 const WORLD_KEY = 'bbi_world_visual_v1';
@@ -31,11 +34,12 @@ export function normalizeMaterial(raw: unknown): VisualMaterial | null {
     id: string(item.id) || `material_${stateHash(JSON.stringify([item.name, item.work, item.variant, Date.now()]))}`,
     version: Number.isInteger(item.version) && Number(item.version) > 0 ? Number(item.version) : 1,
     kind: item.kind as VisualMaterial['kind'], name: string(item.name), aliases: Array.isArray(item.aliases) ? item.aliases.map(string).filter(Boolean) : [],
-    work: string(item.work), variant: string(item.variant), settings: Array.isArray(item.settings) ? item.settings.filter((v): v is WorldVisualProfile['setting'] => ['auto', 'xianxia', 'historical', 'modern', 'scifi'].includes(String(v))) : [],
+    work: string(item.work), variant: string(item.variant), settings: Array.isArray(item.settings) ? item.settings.filter((v): v is WorldVisualProfile['setting'] => SETTINGS.includes(String(v))) : [],
     categories: Array.isArray(item.categories) ? item.categories.map(string).filter(Boolean) : [], appearance, garments,
     style: string(item.style), tags: string(item.tags), previewPath: safePreviewPath(item.previewPath), source: string(item.source), verified: item.verified === true,
     createdAt: Number(item.createdAt) || Date.now(), updatedAt: Number(item.updatedAt) || Date.now(),
   };
+  if (typeof item.previewKey === 'string' && /^(?:wardrobe|face):[\w-]+$/.test(item.previewKey)) material.previewKey = item.previewKey;
   if ([material.name, ...material.aliases, ...Object.values(material.appearance), ...material.garments.map(g => g.design), material.style, material.tags]
     .some(s => /<\/?(?:bbi_image|tag|nl|negative|characters|size)\b/i.test(s))) return null;
   if (item.vibe && typeof item.vibe === 'object') {
@@ -54,7 +58,7 @@ export function hydrateVisualLibrary(): void {
   if (visualLibrary.records.length !== raw.records.length) visualLibrary.error = '部分素材损坏：原始数据已保留，请导出备份修复后再写入';
 }
 export function latestMaterials(): VisualMaterial[] {
-  const result = new Map(BUILTIN_VISUAL_MATERIALS.map(m => [m.id, cloneVisual(m)]));
+  const result = new Map([...BUILTIN_VISUAL_MATERIALS, ...loreVisualMaterials()].map(m => [m.id, cloneVisual(m)]));
   for (const material of visualLibrary.records) if (!result.has(material.id) || result.get(material.id)!.version <= material.version) result.set(material.id, material);
   return [...result.values()];
 }
@@ -96,7 +100,7 @@ export function exportMaterials(): string { return JSON.stringify({ v: 1, record
 export function worldProfile(): WorldVisualProfile {
   const ctx = getContext(), raw = ctx?.chatMetadata?.[WORLD_KEY] as Partial<WorldVisualProfile> | undefined;
   const world = { ...defaultWorld(), ...raw };
-  if (!['auto', 'xianxia', 'historical', 'modern', 'scifi'].includes(world.setting)) world.setting = 'auto';
+  if (!SETTINGS.includes(world.setting)) world.setting = 'auto';
   if (!Array.isArray(world.forbiddenByDefault)) world.forbiddenByDefault = [];
   if (world.setting === 'auto') {
     const card = ctx?.characters?.[Number(ctx.characterId)];
