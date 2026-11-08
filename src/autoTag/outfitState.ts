@@ -221,7 +221,7 @@ export function readWear(tag: string): { wear: WearLevel; state: string } {
     }
     return { wear: 'off', state: off[0] };
   }
-  if (UNDERWEAR_ONLY_RE.test(hay)) return { wear: 'partial', state: 'underwear only' };
+  // Underwear mentioned underneath a complete outfit does not imply partial undressing.
   return { wear: 'worn', state: '' };
 }
 

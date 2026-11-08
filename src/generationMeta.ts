@@ -78,6 +78,7 @@ export interface GenerationParams {
 
 /** 随图落盘的完整出图元信息。 */
 export interface GenerationMeta {
+  continuity?: string[];
   backend: 'nai' | 'comfyui';
   /** NAI 模型名 / ComfyUI 工作流预设名。vibe 编码按模型分组，必须一起记。 */
   model: string;
@@ -152,5 +153,6 @@ export function formatGenerationMeta(meta: GenerationMeta): string {
   if (typeof p.shift === 'number') sampling.push(`Shift ${round(p.shift)}`);
   if (sampling.length) lines.push(`采样: ${sampling.join(' · ')}`);
 
+  if (meta.continuity?.length) lines.push('人物/服装状态：', ...meta.continuity);
   return lines.join('\n');
 }

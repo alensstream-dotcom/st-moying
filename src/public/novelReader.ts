@@ -1,4 +1,5 @@
 import { requestNovelFloorTags } from '@/autoTag/runner';
+import { clothingTrace } from '@/autoTag/outfitTimeline';
 import { clearAutoGenerateForFloor } from '@/floor/autoGenerate';
 import { beginGen, clearGen, failGen, getGenRecord, hasActiveGen, isCurrentGen, setGenPhase, setGenRetry, setQueueAhead, slotKey } from '@/floor/genState';
 import { hydrateMessage } from '@/floor/hydrate';
@@ -174,6 +175,7 @@ function runSlot(floor: number, seq: number, rawTag: string): Promise<void> {
         onRetry: retry => setGenRetry(slot, token, retry),
       });
       assert();
+      output.meta.continuity = [...(output.meta.continuity ?? []), ...clothingTrace(at.assert(), rawTag)];
       await saveImageResult(floor, at.swipe, seq, rawTag, seed, output.result, output.meta, assert);
       if (historyId !== null) safeHistory(() => finishImage(historyId));
       clearGen(slot, token);

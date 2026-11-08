@@ -1,5 +1,6 @@
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import type { TargetSegment } from '@/autoTag/clean';
+import { parseClothingChanges, type ClothingChange } from './outfitTimeline';
 import { FORBIDDEN_SUBTAG, serializeImageTag } from '@/st/imageTagRegex';
 import {
   CHAR_TAG_FIELDS,
@@ -36,6 +37,7 @@ export interface ImageInsertion {
 }
 
 export interface ImagePlan {
+  outfitChanges?: ClothingChange[];
   images: ImageInsertion[];
   /** AI 报告的角色库变更(建档/字段更新);调用方负责落库。 */
   changes: CharChange[];
@@ -43,6 +45,8 @@ export interface ImagePlan {
 
 /** AI 输出的单条角色变更(宽松形状;解析后字段全部合法才保留)。 */
 export interface CharChange {
+  evidence?: string;
+  charOffset?: number;
   name: string;
   /** 'new' = 建档;其余为字段名/整串/自然语言。 */
   field: CharTagHistoryField;
@@ -240,7 +244,8 @@ export function parseImagePlan(
   }
   return {
     images: limitedImages,
-    changes: parseChanges(parsed.changes, positions),
+    changes: parseChanges(parsed.changes, positions, segmentById),
+    outfitChanges: parseClothingChanges(parsed.outfitChanges, segments),
   };
 }
 
@@ -282,7 +287,7 @@ function parseNewFields(raw: Record<string, unknown>): string | null {
   return JSON.stringify(fields);
 }
 
-function parseChanges(raw: unknown, positions: Map<string, number>): CharChange[] {
+function parseChanges(raw: unknown, positions: Map<string, number>, segments?: Map<string, TargetSegment>): CharChange[] {
   if (!Array.isArray(raw)) return [];
   const out: CharChange[] = [];
   for (const item of raw) {
@@ -309,7 +314,9 @@ function parseChanges(raw: unknown, positions: Map<string, number>): CharChange[
     const nl = typeof o.nl === 'string' ? o.nl.trim() : '';
     const reason = typeof o.reason === 'string' ? o.reason.trim() : '';
     if (!value && !nl) continue;
-    out.push({ name, field, value, nl: nl || undefined, reason, position, sourceLine });
+    out.push({ name, field, value, nl: nl || undefined, reason, position, sourceLine,
+      charOffset: segments?.get(position)?.charOffset ?? 0,
+      evidence: typeof o.evidence === 'string' ? o.evidence.trim().slice(0, 1600) : undefined });
   }
   return out;
 }

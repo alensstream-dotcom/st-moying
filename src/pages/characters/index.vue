@@ -518,6 +518,7 @@ function sourceLabel(entry: CharTagEntry): string {
           </div>
         </div>
         <span class="bbi-field-hint">只写固定基础特征;服装、表情、动作不入库,每次按剧情生成。</span>
+        <p v-if="draft.fields.fandom.trim() && draftSource === 'manual'" class="bbi-field-hint">手动同人形象已锁定：生图以此同人 tag 为准，AI 不再修改人物档案；原来的发色、瞳色、体型和自然语言记录保留但不混入同人形象。服装与穿脱状态继续按剧情继承。清空同人字段可恢复普通人物模式。</p>
 
         <label class="bbi-modal-field">
           <span class="bbi-modal-label">整串模式(可选)</span>

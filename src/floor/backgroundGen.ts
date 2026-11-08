@@ -36,6 +36,7 @@ import { historyEntries, promptHash, readStore, saveImageResult } from '@/floor/
 import { activeComfyPreset, settings } from '@/state/settings';
 import { beginImage, failImage, finishImage } from '@/state/history';
 import { getContext } from '@/st/context';
+import { clothingTrace } from '@/autoTag/outfitTimeline';
 import { parseImageTags, serializeImageTag } from '@/st/imageTagRegex';
 
 /** 一个待生成槽位的全部输入。与 ImageTagContent 同形,外加楼层坐标。 */
@@ -250,6 +251,7 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
         onRetry: retry => setGenRetry(key, handle.token, retry),
       },
     );
+    meta.continuity = [...(meta.continuity ?? []), ...clothingTrace(getContext()?.chat[job.messageId], fullTag)];
     await saveImageResult(job.messageId, job.swipeId, job.seq, fullTag, seed, result, meta);
     result.revoke();
     if (historyId !== null) safeHistory(() => finishImage(historyId));

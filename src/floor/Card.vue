@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { cancelFloorTags } from '@/autoTag/runner';
+import { clothingTrace } from '@/autoTag/outfitTimeline';
 import { effectiveOrientation, type Orientation } from '@/backends/size';
 import Icon from '@/components/Icon.vue';
 import { confirmDialog } from '@/components/confirm';
@@ -308,6 +309,7 @@ async function generate(fresh = false): Promise<void> {
       onQueue: ahead => setQueueAhead(slot, token, ahead),
       onRetry: retry => setGenRetry(slot, token, retry),
     });
+    meta.continuity = [...(meta.continuity ?? []), ...clothingTrace(getContext()?.chat[job.messageId], job.tag)];
     // 图已经拿到手:此时若发现本任务已被取代(取消后重绘 / reconcile),不要落盘,
     // 否则会把旧提示词的结果写进 extra,并触发一次多余的重水合打断新任务。
     if (!isCurrentGen(slot, token)) {

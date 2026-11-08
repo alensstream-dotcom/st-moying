@@ -31,6 +31,8 @@ import { acquireNaiSlot } from '@/floor/genQueue';
 import type { GenerationMeta } from '@/generationMeta';
 import { activeComfyPreset, activeNaiEndpoint, activeOrientationLock, effectiveComfyConn, effectiveNai, settings, type BackendId } from '@/state/settings';
 import { applyPresetToNaiConn, genPresetById } from '@/state/genPresets';
+import { charTagLib, isManualFandom } from '@/state/charTags';
+import { enforceAppearance } from '@/autoTag/appearanceLock';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
@@ -207,6 +209,15 @@ export async function generateImage(
   if (!status.configured) throw new Error(status.reason || '出图后端未配置');
 
   const isNai = status.backend === 'nai';
+  const manualFandoms = charTagLib.entries.filter(e => isManualFandom(e) && input.characters?.some(c => c.name === e.name));
+  let appearanceNotes: string[] = [];
+  if (manualFandoms.length && input.characters?.length) {
+    const image = { position: '', sourceLine: 0, charOffset: 0, tag: input.prompt, nl: input.nl ?? '', negative: input.negative ?? '',
+      size: input.size ?? 'portrait' as const, characters: input.characters.map(c => ({ ...c })) };
+    appearanceNotes = enforceAppearance(image, manualFandoms, !!input.nl || image.characters.some(c => !!c.nl), status.supportsCharacters);
+    appearanceNotes.push(...manualFandoms.map(e => `锁定同人：${e.name} → ${e.fields.fandom}`));
+    input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
+  }
   const characters = input.characters ?? [];
   // 支持与否由后端说了算:ComfyUI 恒不支持;NAI 看模型是否 4.5/V5
   const charactersApplied = characters.length > 0 && status.supportsCharacters;
@@ -283,6 +294,7 @@ export async function generateImage(
 
     // 退避文案到此为止:图已拿到,落盘还要一会儿,不该继续显示「稍后重试」
     progress.onRetry?.(null);
+    if (appearanceNotes.length) meta.continuity = [...(meta.continuity ?? []), ...appearanceNotes];
     return { result, seed: input.seed, size, backend: status.backend, charactersApplied, meta };
   } finally {
     release?.();

@@ -563,6 +563,8 @@ function applyTo(name: string, card: LoreCard | null) {
       : card.tags;
   const next: CharTagEntry = {
     ...target,
+    source: 'manual',
+    desc: '',
     fields: { ...target.fields, [field]: merged },
   };
   const ok = upsertCharTag(next, name, { recordChanges: true });

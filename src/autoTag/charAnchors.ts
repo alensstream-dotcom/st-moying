@@ -3,6 +3,7 @@ import {
   CHAR_TAG_FIELD_LABELS,
   CHAR_TAG_FIELDS,
   applyCharTagOps,
+  isManualFandom,
   type CharTagAutoOp,
   type CharTagEntry,
   type CharTagField,
@@ -38,11 +39,13 @@ import { getTagGenChannel } from '@/state/settings';
 export function formatEntryForPrompt(entry: CharTagEntry, locked = false): string {
   const parts: string[] = [];
   for (const f of CHAR_TAG_FIELDS) {
+    if (isManualFandom(entry) && !['fandom', 'sex', 'outfit'].includes(f)) continue;
     const v = entry.fields[f]?.trim();
     if (v) parts.push(`${CHAR_TAG_FIELD_LABELS[f]}=${v}`);
   }
   if (!parts.length && entry.raw.trim()) parts.push(`tag=${entry.raw.trim()}`);
-  if (entry.nl.trim()) parts.push(`nl=${entry.nl.trim()}`);
+  if (entry.nl.trim() && !isManualFandom(entry)) parts.push(`nl=${entry.nl.trim()}`);
+  if (isManualFandom(entry)) parts.push('用户指定同人形象：保持同人身份，不按正文补写另一套脸/发色/瞳色，服装仍由剧情账本管理');
   return `- ${entry.name}${locked ? ' [locked]' : ''}: ${parts.join(', ') || '(未记录字段)'}`;
 }
 
@@ -243,6 +246,7 @@ export function applyCharRefs(
 export interface PositionedCharOp {
   op: CharTagAutoOp;
   sourceLine: number;
+  charOffset?: number;
 }
 
 /**
@@ -260,9 +264,10 @@ export function applyPositionedCharRefs(
   sourceLine: number,
   mode: 'tag' | 'nl' = 'tag',
   locked?: ReadonlySet<string>,
+  charOffset = Infinity,
 ): { text: string; unknown: string[] } {
   const activeOps = ops
-    .filter(item => item.op.kind === 'new' || item.sourceLine <= sourceLine)
+    .filter(item => item.op.kind === 'new' || item.sourceLine < sourceLine || item.sourceLine === sourceLine && (item.charOffset ?? 0) <= charOffset)
     .map(item => item.op);
   return applyCharRefs(text, applyCharTagOps(entries, activeOps, -1, locked), mode);
 }

@@ -245,7 +245,13 @@ function mergedSeedEntries(): CharTagEntry[] {
 
 /** 当前生效的锁定名集(全局 ⊖ 本聊天基线)。 */
 export function lockedCharTagNames(): ReadonlySet<string> {
-  return computeLockedCharTagNames(baseEntries, globalCharTagSource());
+  return new Set([...computeLockedCharTagNames(baseEntries, globalCharTagSource()),
+    ...mergedSeedEntries().filter(isManualFandom).map(e => e.name)]);
+}
+
+/** Manual fandom replacement is an appearance choice, never an AI inference. */
+export function isManualFandom(entry: Pick<CharTagEntry, 'source' | 'fields'>): boolean {
+  return entry.source === 'manual' && !!entry.fields.fandom.trim();
 }
 
 export function emptyCharFields(): Record<CharTagField, string> {

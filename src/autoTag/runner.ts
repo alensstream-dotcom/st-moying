@@ -21,18 +21,10 @@ import {
   normalizePlanCharacters,
   resolveCanonicalCharName,
 } from '@/autoTag/charReuse';
-import {
-  BBI_OUTFIT_EXTRA_KEY,
-  buildOutfitStateBlock,
-  buildOutfitStatePayload,
-  diagnoseGarment,
-  diagnoseOutfit,
-  latestOutfitStates,
-  nextOutfitState,
-  outfitRetryNote,
-  seedOutfitStates,
-  type OutfitGap,
-} from '@/autoTag/outfitState';
+import { BBI_OUTFIT_EXTRA_KEY } from '@/autoTag/outfitState';
+import { CLOTHING_PROTOCOL, acceptClothingChanges, clothingAt, clothingBefore, clothingBlock, clothingRevision, enforceClothing, initialiseClothingFromImage,
+  narrativeHash, readClothingFloor, savedImageClothing, type ClothingFloor, type ClothingState } from '@/autoTag/outfitTimeline';
+import { enforceAppearance } from '@/autoTag/appearanceLock';
 import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
 import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
@@ -60,6 +52,7 @@ import {
   BBI_CHAR_EXTRA_KEY,
   CHAR_TAG_FIELDS,
   charTagsBeforeFloor,
+  applyCharTagOps,
   createCharTagNewOp,
   createCharTagSetOp,
   emptyCharFields,
@@ -205,9 +198,16 @@ const FANDOM_GUARD_FIELDS: ReadonlySet<string> = new Set(['hair', 'eyes', 'skin'
  */
 const MALE_SEX_RE = /^(?:1boy|boy|male|man|men|masculine|♂)/i;
 
-function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
+function planChangeOps(plan: ImagePlan, source: string, notes: string[]): PositionedCharOp[] {
   const ops: PositionedCharOp[] = [];
   for (const change of plan.changes) {
+    if (change.field !== 'new') {
+      const lines = source.replace(/\r\n?/g, '\n').split('\n');
+      const preceding = [...lines.slice(0, change.sourceLine), (lines[change.sourceLine] ?? '').slice(0, change.charOffset || undefined)].join('\n');
+      if (!change.evidence || !preceding.includes(change.evidence) || !change.evidence.includes(change.name)) { notes.push(`${change.name}: 未采纳 ${change.field} 变更，缺少有效原文证据`); continue; }
+      const action = /染|剪|剃|长大|长高|成长|变身|变成|变为|留下.{0,6}疤|受伤|恢复|治愈|永久|dye|cut|shav|grow|transform|scar|heal|permanent/i;
+      if (!action.test(change.evidence) || change.field === 'fandom' || change.field === 'sex' || change.field === 'outfit') { notes.push(`${change.name}: 未采纳 ${change.field} 变更，不能自动重写身份或把当前穿搭写进外貌库`); continue; }
+    }
     let op: CharTagAutoOp | null = null;
     if (change.field === 'new') {
       // value 可能是结构化字段的 JSON 串(protocol.ts 拼),也可能是整串 tag 文本
@@ -230,6 +230,7 @@ function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
       // age 一律归一到规范词:模型会把正文的「刚毕业的大学生」原样抄进来,
       // 不归一的后果是这个角色每张图年龄都不一样。
       if (fields?.age) fields.age = normalizeCharAge(fields.age);
+      if (fields) fields.outfit = ''; // AI current outfits belong only to the clothing timeline.
       op = createCharTagNewOp(
         {
           name: change.name,
@@ -247,9 +248,9 @@ function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
       const next = change.field === 'age' ? normalizeCharAge(change.value) : change.value;
       op = createCharTagSetOp(change.name, change.field, next, change.reason);
     }
-    if (op) ops.push({ op, sourceLine: change.sourceLine });
+    if (op) ops.push({ op, sourceLine: change.sourceLine, charOffset: change.charOffset });
   }
-  return ops.sort((left, right) => left.sourceLine - right.sourceLine);
+  return ops.sort((left, right) => left.sourceLine - right.sourceLine || (left.charOffset ?? 0) - (right.charOffset ?? 0));
 }
 
 async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> {
@@ -380,6 +381,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 单槽重写:库文本要包含本楼已落档的增量(首次全量分析建的档),否则 AI 会把
     // 已建档角色当新人重写。charTagsBeforeFloor(floor + 1) 正好含本楼(swipe 匹配时生效)。
     const entriesBefore = slot ? charTagsBeforeFloor(floor + 1) : charTagsBeforeFloor(floor);
+    const expectedLibrary = JSON.stringify(entriesBefore);
     // 锁定名(全局库 ⊖ 本聊天基线):AI 的 changes 对这些名字一律无效,库文本里带 [locked] 标记
     const lockedNames = lockedCharTagNames();
     // 纯本地渲染:建档由主请求在同一次输出里完成(changes 的 field="new")
@@ -408,8 +410,14 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 有了这份账本它才有一个「已经发生的事实」可以继承。单槽重写也要用同一份。
     // 账本只记变化,所以还要拿档案里的固定着装垫底——角色第一次出图时账本是空的,
     // 那正是衣服最容易开始乱飘的时候。
-    const outfitStates = seedOutfitStates(latestOutfitStates(context.chat, floor), entriesBefore);
-    const outfitBlock = buildOutfitStateBlock(outfitStates);
+    const wardrobe = clothingBefore(context.chat, floor, entriesBefore);
+    const wardrobeRevision = clothingRevision(context.chat, floor);
+    const expectedStory = narrativeHash(rawSource);
+    const savedWardrobe = readClothingFloor(message, wardrobeRevision);
+    const slotWardrobe = slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
+      ? new Map(savedWardrobe.frames[slot.seq].entries.map(e => [e.name, e]))
+      : slot && slotRawTag ? savedImageClothing({ ...parseImageTagContent(slotRawTag), position: '', sourceLine: 0, charOffset: 0 }, wardrobe) : null;
+    const outfitBlock = clothingBlock(slotWardrobe ?? wardrobe);
     const messages = await buildAutoTagMessages(
       context,
       floor,
@@ -424,6 +432,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       outfitBlock,
     );
     const channel = getTagGenChannel();
+    messages.push({ role: 'system', content: CLOTHING_PROTOCOL });
     // 失败重试:请求异常与「返回无法解析/校验不通过」都视为可重试的异常(后者常见于模型没遵守协议);
     // 中止信号立即收手,不消耗重试。parseImagePlan 对坏输出抛错,「无画面」则是正常返回空数组。
     // 解析/校验放进 validate 回调:不过则请求历史如实记为失败(而非「HTTP 拿到文本」的绿色成功),
@@ -625,32 +634,6 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 服装账本:衣服明明没变,穿脱程度却跳了(半脱→全裸、已脱→又穿回),
           // 或者正文没写换装,整套衣服被换成另一套。
           // 这条最伤连续性,而且模型自己看不出来——它没有上一层的画面。
-          if (!slot && attempt < retries && outfitStates.size) {
-            const outfitGaps: OutfitGap[] = [];
-            const outfitText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
-            const prevOutfitText = (pos: string): string => {
-              const m = /^P(\d+)$/i.exec(pos.trim());
-              if (!m) return '';
-              const n = Number.parseInt(m[1], 10);
-              return n > 1 ? (outfitText.get(`P${n - 1}`) ?? '') : '';
-            };
-            for (const image of candidate.images) {
-              outfitGaps.push(...diagnoseOutfit(image, outfitStates));
-              const windowText = [
-                prevOutfitText(image.position),
-                outfitText.get(image.position) ?? '',
-              ]
-                .filter(Boolean)
-                .join(' ');
-              outfitGaps.push(
-                ...diagnoseGarment(image, outfitStates, windowText),
-              );
-            }
-            if (outfitGaps.length) {
-              retryNote = outfitRetryNote(outfitGaps);
-              throw new Error(`服装状态跳变(${outfitGaps.map(gap => gap.name).join('、')})`);
-            }
-          }
           // 构图缺项:只在还有重试次数时纠一次。没次数了就放行——
           // 交一张景别平庸的图,好过因为「没写机位」整楼不生。
           if (attempt < retries) {
@@ -736,7 +719,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
 
     // 单槽重写不落 changes:首次全量分析已为整楼建过档,这里再应用一次只会产生
     // 重复的建档/变更记录;库文本已含本楼增量(见上面 entriesBefore),AI 照抄即可。
-    const planOps = slot ? [] : planChangeOps(plan);
+    const appearanceChangeNotes: string[] = [];
+    const planOps = slot ? [] : planChangeOps(plan, source, appearanceChangeNotes);
     // 锁定角色(全局库)不接受 AI changes:丢弃,不写入楼层、不参与 @替换。
     // 重放侧 applyCharTagOps 也会按锁定名再拦一次(旧消息里可能已存这类 ops)。
     const effectiveOps = lockedNames.size
@@ -773,6 +757,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const floorOps = maleGuarded.map(item => item.op);
     const previousDelta = readCharTagFloorDelta(message);
 
+    plan.images.sort((a,b) => a.sourceLine - b.sourceLine || a.charOffset - b.charOffset);
+    const activeEntries = applyCharTagOps(entriesBefore, floorOps, floor, lockedNames);
+    const accepted = acceptClothingChanges(plan.outfitChanges ?? [], source, wardrobe, activeEntries);
+    const scope = `${chatId}|${floor}|${swipeId ?? 0}|${expectedStory}`;
+    const frames: ClothingFloor['frames'] = [];
+    const completion: ClothingState = new Map();
+    const visualNotes: string[] = [...accepted.rejected, ...appearanceChangeNotes];
     // @占位符按正文位置替换：变化前图片用旧档，变化位置及之后用新档。
     const unknownNames = new Set<string>();
     for (const image of plan.images) {
@@ -790,7 +781,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         maleGuarded,
         image.sourceLine,
         'tag',
-        lockedNames,
+        lockedNames, image.charOffset,
       );
       if (tagRes.text) image.tag = tagRes.text;
       if (image.nl) {
@@ -800,7 +791,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           maleGuarded,
           image.sourceLine,
           'nl',
-          lockedNames,
+          lockedNames, image.charOffset,
         );
         image.nl = nlRes.text;
         for (const n of nlRes.unknown) unknownNames.add(n);
@@ -812,7 +803,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           maleGuarded,
           image.sourceLine,
           'tag',
-          lockedNames,
+          lockedNames, image.charOffset,
         );
         character.tag = charTag.text;
         for (const n of charTag.unknown) unknownNames.add(n);
@@ -823,13 +814,22 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             maleGuarded,
             image.sourceLine,
             'nl',
-            lockedNames,
+            lockedNames, image.charOffset,
           );
           character.nl = charNl.text;
           for (const n of charNl.unknown) unknownNames.add(n);
         }
       }
       for (const n of tagRes.unknown) unknownNames.add(n);
+      const entriesAt = applyCharTagOps(entriesBefore, maleGuarded.filter(o => o.op.kind === 'new' || o.sourceLine < image.sourceLine
+        || o.sourceLine === image.sourceLine && (o.charOffset ?? 0) <= image.charOffset).map(o => o.op), floor, lockedNames);
+      visualNotes.push(...enforceAppearance(image, entriesAt, profile.nl, profile.naiCharPrompts));
+      const at = slotWardrobe ?? clothingAt(wardrobe, accepted.changes, scope, image.sourceLine, image.charOffset);
+      for (const [name, entry] of completion) if (!at.has(name)) at.set(name, entry);
+      initialiseClothingFromImage(image, at);
+      for (const [name, entry] of at) if (!wardrobe.has(name) && !accepted.changes.some(c => c.name === name)) completion.set(name, entry);
+      enforceClothing(image, at, profile.nl, profile.naiCharPrompts);
+      frames.push({ tag: serializeImageTag(image), sourceLine: image.sourceLine, charOffset: image.charOffset, entries: [...at.values()] });
     }
     if (unknownNames.size) {
       // 模型认为这是角色、却没给它建档 —— 该角色在图里将完全没有外貌。
@@ -846,7 +846,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     }
     // 没有图片、没有角色变化、也没有旧楼层变化要清理时,保持原来的无写入早退。
     if (!plan.images.length) opts.onNoImages?.();
-    if (!plan.images.length && !floorOps.length && !previousDelta) {
+    if (!plan.images.length && !floorOps.length && !accepted.changes.length && !previousDelta) {
       if (opts.manual) toastr.info('模型认为本楼没有值得插图的画面', '墨影');
       else console.debug(`[墨影] 第 ${floor} 楼无需插图`);
       return;
@@ -882,10 +882,20 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 全量写入同时落两笔:角色增量与本楼的服装账本。账本按「本楼实际写出的画面」冻结,
     // 下一楼读它当既成事实——没有这一笔,下一楼就又得从零猜她穿了什么、脱到哪一步。
     // 注意:applyMessageText 的实参在进入 buildNext 之前就会求值,因此账本必须用 plan.images 计算!
-    const nextOutfits = nextOutfitState(outfitStates, plan.images);
+    const finalWardrobe = clothingAt(wardrobe, accepted.changes, scope);
+    for (const [name, entry] of completion) if (!finalWardrobe.has(name)) finalWardrobe.set(name, entry);
+    const previousWardrobe = message.extra?.[BBI_OUTFIT_EXTRA_KEY] as Partial<ClothingFloor> | undefined;
+    const nextWardrobe: ClothingFloor = { v: 2, swipe: swipeId ?? 0, sourceHash: expectedStory, upstreamHash: wardrobeRevision,
+      start: [...wardrobe.values()], entries: [...finalWardrobe.values()], changes: accepted.changes, rejected: visualNotes, frames,
+      legacyBackup: previousWardrobe?.v === 2 ? previousWardrobe.legacyBackup : previousWardrobe };
+    const rewrittenWardrobe = slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
+      ? { ...savedWardrobe, frames: savedWardrobe.frames.map((frame, index) => index === slot.seq && plan.images[0] ? { ...frame, tag: serializeImageTag(plan.images[0]) } : frame) } : null;
+    if (visualNotes.length) diagnostic('continuity:resolved', { floor, notes: visualNotes });
     const result = await applyMessageText(
       floor,
       currentText => {
+        if (controller.signal.aborted || narrativeHash(currentText) !== expectedStory || clothingRevision(getContext()?.chat ?? [], floor) !== wardrobeRevision
+          || JSON.stringify(charTagsBeforeFloor(slot ? floor + 1 : floor)) !== expectedLibrary) return null;
         // 单槽重写:只替换第 seq 条 tag,正文与其它 tag 一字不动,也不需要位置重定位。
         // 模型返回的 position 在这里刻意不参与——画面钉死在原位,它只负责重写内容。
         // 开跑时快照的原文对不上 = 期间被用户/别的流程改过,放弃覆盖(同提示词编辑弹窗)。
@@ -915,7 +925,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       message,
       // 单槽不写法:本楼角色增量与其它槽位图片都不归它管,不传 extraUpdate 即保持原样。
       slot
-        ? undefined
+        ? rewrittenWardrobe ? [{ key: BBI_OUTFIT_EXTRA_KEY, value: rewrittenWardrobe }] : undefined
         : [
             {
               key: BBI_CHAR_EXTRA_KEY,
@@ -923,7 +933,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             },
             {
               key: BBI_OUTFIT_EXTRA_KEY,
-              value: buildOutfitStatePayload(nextOutfits, swipeId ?? 0),
+              value: nextWardrobe,
             },
           ],
       { render: !opts.headless },

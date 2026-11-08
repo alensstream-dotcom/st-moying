@@ -298,11 +298,11 @@ export async function buildAutoTagMessages(
           },
         ],
       }
-    : { position: 'P2', tag: sampleTag };
+    : { position: 'P2', tag: sampleTag, characters: [{ name: '小雪', tag: sampleTag }] };
   if (nlOn && !naiCharPromptsOn) sampleImage.nl = sampleNl;
   if (negativeOn) sampleImage.negative = 'extra people, duplicate character';
   sampleImage.size = profile.lockedSize ?? 'portrait';
-  const outputShape = JSON.stringify({ images: [sampleImage], changes: [] });
+  const outputShape = JSON.stringify({ images: [sampleImage], changes: [], outfitChanges: [] });
   // NAI 两种写法共用的尾段:角色块的取舍与 Base / 角色的分工不随自然语言开关变
   const naiCharacterRuleTail =
     'This includes visible characters who have no library profile: a one-off unnamed individual gets a Character Prompt too, keyed by the term the story uses for them. Anonymous crowds visible in the frame remain in Base. Character tag uses girl/boy without a numeric count and contains that character appearance, outfit, and action. Do not include quality tags, negative tags, or XML.';
@@ -366,7 +366,7 @@ export async function buildAutoTagMessages(
     : '- 多人画面中，每个角色的发色、瞳色、体型、服装、物件和个人动作都必须使用该角色的区分性称谓邻接绑定，禁止把两人的外貌特征散放成无法归属的一串公共 tag。';
   const characterRule = `7. 角色状态与 changes：${newCharacterRule}
    ${libraryReferenceRule}
-   - 按正文 P 位置为每个角色维护临时服装状态：正文未明确初始穿着时可以合理决定一次；没有穿上、脱下、换装、衣物损坏或场景/时间跳跃时沿用上一状态，发生明确变化后从对应 P 位置起更新。首次确定一套临时服装时，必须冻结足以复现款式的“服装视觉指纹”：服装类别之外，再固定版型/剪裁、主色和关键部件，涉及裤袜时固定颜色与透明度；例如不能只写 school uniform, pantyhose，而应具体到 navy school blazer, white collared shirt, red ribbon, dark pleated skirt, opaque white pantyhose。只补少量关键特征，不堆无关装饰。相同状态复用同一视觉指纹；镜头外不可见的部件可以省略，但省略不等于脱掉，后续重新可见且中间没有变化时必须恢复。每张图的 ${nlOn ? 'tag 与 nl 都' : 'tag 都'}要写出当前镜头可见的关键服装特征。临时穿着不得写进固定 outfit，除非设定明确它是长期不换的招牌着装。同一次输出内同一角色的临时服装必须**逐字复用同一串**：先在第一张图把整套视觉指纹定死，后续图的服装部分直接复制这串，只允许在末尾追加衣物状态词（slipped down / unzipped / wet / clinging / pulled aside / torn），不许更换单品、改颜色或改长度；正文没有写出换衣、脱下、衣物被毁或场景时间跳跃时，换了就是错误。镜头外不可见的部件省略后，重新出现在画面里时必须恢复原样。
+   - 按正文 P 位置为每个角色维护临时服装状态：正文未明确初始穿着时可以合理决定一次；没有穿上、脱下、换装、衣物损坏时沿用上一状态，发生明确变化后从对应 P 位置起更新。首次确定一套临时服装时，必须冻结足以复现款式的“服装视觉指纹”：服装类别之外，再固定版型/剪裁、主色和关键部件，涉及裤袜时固定颜色与透明度；例如不能只写 school uniform, pantyhose，而应具体到 navy school blazer, white collared shirt, red ribbon, dark pleated skirt, opaque white pantyhose。只补少量关键特征，不堆无关装饰。相同状态复用同一视觉指纹；镜头外不可见的部件可以省略，但省略不等于脱掉，后续重新可见且中间没有变化时必须恢复。每张图的 ${nlOn ? 'tag 与 nl 都' : 'tag 都'}要写出当前镜头可见的关键服装特征。临时穿着不得写进固定 outfit，除非设定明确它是长期不换的招牌着装。同一次输出内同一角色的临时服装必须**逐字复用同一串**：先在第一张图把整套视觉指纹定死，后续图的服装部分直接复制这串，只允许在末尾追加衣物状态词（slipped down / unzipped / wet / clinging / pulled aside / torn），不许更换单品、改颜色或改长度；正文没有写出换衣、脱下、衣物被毁时，换了就是错误。镜头外不可见的部件省略后，重新出现在画面里时必须恢复原样。
    ${multiCharacterBindingRule}
    - 库中已有角色发生**永久外貌变化**（染发、剪发、留疤、长大一档、永久变身、固定造型改变等）时，必须通过 changes 报告：{"name":"角色名","field":"hair","value":"short red hair","position":"P4","reason":"在此处染发并剪短"}；field 只能是 sex/age/hair/eyes/skin/body/extra/outfit/fandom。年龄变化（如过了几年、长大了）报 age，且必须同时把 body 的骨架词改成新档位——只改 age 不改骨架，画出来还是原来那个人。
    - 已建档角色被判定为同人、但档案里没有 fandom 的，必须补一条 changes：{"name":"角色名","field":"fandom","value":"character name (copyright name)","reason":"判定为同人，补身份 tag"}；档案已有 fandom 的直接照抄，不重复报告。
@@ -557,7 +557,7 @@ ${characterRule}
   const lastShotBlock = recentShots.length
     ? `【近期已出图的实拍 tag】[最近的排在最后;只用于延续状态与避免重复,不是要你再画一次]\n${recentShots
         .map((tag, index) => `${index + 1}. ${tag.slice(0, 500)}`)
-        .join('\n')}\n（这些画面已经存在。人物身上当时就是这样：已经脱掉或解开的部件不要写回去；服装与发型沿用最后一张，只允许顺着剧情继续往下脱。这些图用过的体位、机位、接触点不要再画一次：同一动作没有实质变化时不要重复出图，相邻楼层必须换姿势或换机位。）\n\n`
+        .join('\n')}\n（这些画面已经存在。人物身上当时就是这样：已经脱掉或解开的部件不要写回去；画面取景仅作参考；服装以服装现状账本及本节 outfitChanges 为准，不能从图片 tag 改写剧情状态。这些图用过的体位、机位、接触点不要再画一次：同一动作没有实质变化时不要重复出图，相邻楼层必须换姿势或换机位。）\n\n`
     : '';
 
   const taskBlock = taskNote?.trim() ? `${taskNote.trim()}\n\n` : '';
