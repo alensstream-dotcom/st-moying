@@ -1,5 +1,6 @@
 import { getContext, type STMessage } from '@/st/context';
 import { reactive } from 'vue';
+import { eligibleIdentityEntries } from './characterIdentity';
 
 /**
  * 角色固定外貌库。
@@ -498,6 +499,7 @@ export function deriveCharTags(
   chat: STMessage[],
   upToExclusive = chat.length,
   locked?: ReadonlySet<string>,
+  includeSuspended = false,
 ): CharTagEntry[] {
   let entries = seedEntries.map(cloneEntry);
   const end = Math.min(Math.max(0, upToExclusive), chat.length);
@@ -507,7 +509,13 @@ export function deriveCharTags(
     if (!delta || delta.swipe !== activeSwipe(message)) continue;
     entries = applyCharTagOps(entries, delta.ops, floor, locked);
   }
-  return entries;
+  return includeSuspended ? entries : eligibleIdentityEntries(entries);
+}
+
+/** Review-only access: suspended auto profiles stay in storage and remain recoverable. */
+export function allCharacterRecords(): CharTagEntry[] {
+  const chat = getContext()?.chat ?? [];
+  return deriveCharTags(mergedSeedEntries(), chat, chat.length, lockedCharTagNames(), true);
 }
 
 export function charTagsBeforeFloor(floor: number): CharTagEntry[] {

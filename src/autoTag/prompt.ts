@@ -302,7 +302,7 @@ export async function buildAutoTagMessages(
   if (nlOn && !naiCharPromptsOn) sampleImage.nl = sampleNl;
   if (negativeOn) sampleImage.negative = 'extra people, duplicate character';
   sampleImage.size = profile.lockedSize ?? 'portrait';
-  const outputShape = JSON.stringify({ images: [sampleImage], changes: [], outfitChanges: [] });
+  const outputShape = JSON.stringify({ images: [sampleImage], changes: [], outfitChanges: [], identities: [] });
   // NAI 两种写法共用的尾段:角色块的取舍与 Base / 角色的分工不随自然语言开关变
   const naiCharacterRuleTail =
     'This includes visible characters who have no library profile: a one-off unnamed individual gets a Character Prompt too, keyed by the term the story uses for them. Anonymous crowds visible in the frame remain in Base. Character tag uses girl/boy without a numeric count and contains that character appearance, outfit, and action. Do not include quality tags, negative tags, or XML.';

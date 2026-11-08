@@ -34,6 +34,7 @@ interface BookApi {
 
 /** 参考块中涉及的单个角色(结构化),供角色固定外貌 tag 库做锚定匹配。 */
 export interface BookRole {
+  gender?: string;
   /** 角色名:NPC 为柏宝书 name;主角为调用方给的名字(缺省「主角」)。 */
   name: string;
   /** 柏宝书记录的固定外貌原文(主角 appearance / NPC desc);未记录为空串。 */
@@ -113,7 +114,7 @@ function fmtNpcs(npcs: unknown, bodyText: string, roles: BookRole[]): string {
     // 重要角色常驻;随行角色永远在场;其余用名字去目标正文里查,出现才算参与本楼
     if (n.important === true || n.follow === true || bodyText.includes(name)) {
       lines.push(`- ${fmtNpc(n)}`);
-      roles.push({ name, desc: oneLine(n.desc), isProtagonist: false });
+      roles.push({ name, gender: oneLine(n.gender), desc: oneLine(n.desc), isProtagonist: false });
     }
   }
   return lines.length ? `重要角色:\n${lines.join('\n')}` : '';
@@ -131,7 +132,7 @@ function formatSnapshotRoles(
   if (protagonist) {
     lines.push(`主角:${protagonist}`);
     const p = (snapshot.protagonist ?? {}) as Record<string, unknown>;
-    roles.push({ name: protagonistName, desc: oneLine(p.appearance), isProtagonist: true });
+    roles.push({ name: protagonistName, gender: oneLine(p.gender), desc: oneLine(p.appearance), isProtagonist: true });
   }
   const npcs = fmtNpcs(snapshot.npcs, bodyText, roles);
   if (npcs) lines.push(npcs);

@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import BbiTextarea from '@/components/BbiTextarea.vue';
+import Collapsible from '@/components/Collapsible.vue';
+import { reviewAutomaticProfiles } from '@/autoTag/identityReview';
+import { confirmCharacterIdentity, currentIdentityFacts, identityEntrySuspended, identityFactFor, identityUi, undoIdentityReview } from '@/state/characterIdentity';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
 import { generateCharTags } from '@/autoTag/charAnchors';
 import { readBookMemory } from '@/autoTag/bookMemory';
 import {
+  allCharacterRecords,
+  recomputeCharTags,
   CHAR_TAG_FIELDS,
   CHAR_TAG_FIELD_LABELS,
   buildEntryTag,
@@ -29,6 +34,21 @@ import {
 } from '@/state/globalCharTags';
 import { getContext } from '@/st/context';
 import { computed, ref } from 'vue';
+
+const identityRows = computed(() => {
+  void charTagLib.entries; void identityUi.revision;
+  const facts = currentIdentityFacts(), entries = allCharacterRecords();
+  const names = [...new Set([...entries.filter(e => e.source !== 'manual').map(e => e.name), ...facts.map(f => f.name)])];
+  return names.map(name => { const entry = entries.find(e => e.name === name), fact = identityFactFor(name, facts);
+    return { name, entry, fact, suspended: !!entry && identityEntrySuspended(entry, facts) }; });
+});
+async function checkIdentity() {
+  try { await reviewAutomaticProfiles(); } catch (error) { toastr.error(error instanceof Error ? error.message : String(error), '身份审核'); }
+}
+function identityAction(action: () => void) {
+  try { action(); recomputeCharTags(); identityUi.feedback = '身份审核状态已更新；原档案保留，旧图片未删除'; }
+  catch (error) { toastr.error(error instanceof Error ? error.message : String(error), '身份审核'); }
+}
 
 /**
  * 角色管理 —— 两层固定外貌库:
@@ -333,6 +353,22 @@ function sourceLabel(entry: CharTagEntry): string {
     <p class="bbi-field-hint">
       角色固定外貌库:生成 tag 时 AI 照抄库中字段,@角色名 占位符也会被替换为库中最新外貌,稳定不漂移。
     </p>
+
+    <Collapsible title="身份审核 · 检查错误入库" :open="false">
+      <p class="bbi-field-hint">只依据真实设定或剧情判断身份；1girl、女装和长相不算证据。明确男性的自动档案暂停使用，手动绘图形象保留。旧档案未核实时继续兼容，新角色不确定则只画本张、不自动入库。</p>
+      <button class="bbi-btn" :disabled="identityUi.busy" @click="checkIdentity">{{ identityUi.busy ? '正在核对…' : '用已保存 LLM 检查错误入库' }}</button>
+      <button class="bbi-btn" :disabled="identityUi.busy" @click="identityAction(undoIdentityReview)">撤销上次审核 / 确认</button>
+      <p v-if="identityUi.feedback" role="status" class="bbi-field-hint">{{ identityUi.feedback }}</p>
+      <details v-for="row in identityRows" :key="row.name">
+        <summary>{{ row.name }} · {{ row.suspended ? '自动档案已暂停' : row.entry?.source === 'manual' ? '手动形象保留' : !row.fact || row.fact.gender === 'unknown' ? '身份未核实' : row.fact.gender === 'male' ? '男性 · 禁止自动入库' : row.fact.heroine ? '女性 · 女主' : '女性 · 未确认女主资格' }}</summary>
+        <p class="bbi-field-hint">{{ row.fact?.evidence || '旧绘图标签不能证明身份，尚无可验证的性别依据' }} · {{ row.fact?.reason }}</p>
+        <p v-if="row.fact?.conflict" class="bbi-field-hint">{{ row.fact.conflict }}</p>
+        <button class="bbi-btn" @click="identityAction(() => confirmCharacterIdentity(row.name, 'male', false))">确认男性 · 停用自动女性档案</button>
+        <button class="bbi-btn" @click="identityAction(() => confirmCharacterIdentity(row.name, 'female', true))">确认女性且是女主</button>
+        <button class="bbi-btn" @click="identityAction(() => confirmCharacterIdentity(row.name, 'unknown', false))">不加入女主库</button>
+        <details v-if="row.entry"><summary>原档案（保留备份）</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ JSON.stringify(row.entry.fields, null, 2) }}</pre></details>
+      </details>
+    </Collapsible>
 
     <!-- ===== 全局角色库 ===== -->
     <div class="bbi-char-section">

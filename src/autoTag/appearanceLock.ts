@@ -1,6 +1,7 @@
 import { CHAR_TAG_FIELDS, isManualFandom, type CharTagEntry } from '@/state/charTags';
 import { resolveCanonicalCharName } from './charReuse';
 import type { ImageInsertion } from './protocol';
+import { currentIdentityFacts, isMaleIdentity, type IdentityFact } from '@/state/characterIdentity';
 
 const split = (s: string) => s.split(',').map(t => t.trim()).filter(Boolean);
 const unique = (parts: string[]) => [...new Map(parts.map(t => [t.toLowerCase(), t])).values()].join(', ');
@@ -54,9 +55,10 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
 }
 
 /** Resolve only named blocks. Never expand @ references or impose traits on unnamed people. */
-export function enforceAppearance(image: ImageInsertion, entries: CharTagEntry[], nl: boolean, independent: boolean): string[] {
+export function enforceAppearance(image: ImageInsertion, entries: CharTagEntry[], nl: boolean, independent: boolean, facts: IdentityFact[] = currentIdentityFacts()): string[] {
   const managed: CharTagEntry[] = [], warnings: string[] = [];
   for (const prompt of image.characters) {
+    if (isMaleIdentity(prompt.name, facts) && !entries.some(e => e.name === prompt.name && e.source === 'manual')) continue;
     const name = resolveCanonicalCharName(prompt.name, entries), entry = entries.find(e => e.name === name);
     if (!entry) continue;
     const canonical = appearanceParts(entry); if (!canonical.length) continue;

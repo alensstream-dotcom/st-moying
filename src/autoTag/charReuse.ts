@@ -171,6 +171,9 @@ export function resolveCanonicalCharName(
   for (const entry of entries) {
     const aliases = candidateAliasesForEntry(entry);
     if (aliases.includes(trimmed)) {
+      // A shared surname plus a title is not a unique identity, especially across genders.
+      const title = /老师|先生|女士|师兄|师姐|师弟|师妹|公子|少爷|夫人|阿姨|叔叔|姐姐|哥哥|妹妹|弟弟|师尊|掌门|长老|前辈|道友/;
+      if (title.test(trimmed) && !(entry.desc.includes(trimmed) && /又名|别名|也叫|称呼|叫她|叫他|also known|alias|aka/i.test(entry.desc))) continue;
       matched.push(entry);
       continue;
     }
@@ -236,12 +239,14 @@ export function findCharAliases(
 export function normalizePlanCharacters(
   images: Array<{ characters?: Array<{ name: string; tag: string; nl?: string }> }>,
   entries: readonly CharTagEntry[],
+  excludedNames: ReadonlySet<string> = new Set(),
 ): void {
   if (!entries.length) return;
   const byName = new Map(entries.map(entry => [entry.name.trim(), entry]));
 
   for (const image of images) {
     for (const character of image.characters ?? []) {
+      if (excludedNames.has(character.name)) continue;
       const rawName = character.name.trim();
       if (!rawName) continue;
       const canonical = resolveCanonicalCharName(rawName, entries);

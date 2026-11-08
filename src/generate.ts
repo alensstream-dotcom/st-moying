@@ -1,3 +1,4 @@
+import { currentIdentityFacts, enforceKnownMaleIdentity, isMaleIdentity } from '@/state/characterIdentity';
 /**
  * 「一次出图」的共用中段 —— 楼层卡片与公开接口的唯一生成入口。
  *
@@ -31,7 +32,7 @@ import { acquireNaiSlot } from '@/floor/genQueue';
 import type { GenerationMeta } from '@/generationMeta';
 import { activeComfyPreset, activeNaiEndpoint, activeOrientationLock, effectiveComfyConn, effectiveNai, settings, type BackendId } from '@/state/settings';
 import { applyPresetToNaiConn, genPresetById } from '@/state/genPresets';
-import { charTagLib, isManualFandom } from '@/state/charTags';
+import { allCharacterRecords, charTagLib, isManualFandom } from '@/state/charTags';
 import { enforceAppearance } from '@/autoTag/appearanceLock';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
@@ -216,6 +217,13 @@ export async function generateImage(
       size: input.size ?? 'portrait' as const, characters: input.characters.map(c => ({ ...c })) };
     appearanceNotes = enforceAppearance(image, manualFandoms, !!input.nl || image.characters.some(c => !!c.nl), status.supportsCharacters);
     appearanceNotes.push(...manualFandoms.map(e => `锁定同人：${e.name} → ${e.fields.fandom}`));
+    input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
+  }
+  const identityFacts = currentIdentityFacts();
+  if (input.characters?.some(c => isMaleIdentity(c.name, identityFacts))) {
+    const image = { position: '', sourceLine: 0, charOffset: 0, tag: input.prompt, nl: input.nl ?? '', negative: input.negative ?? '',
+      size: input.size ?? 'portrait' as const, characters: input.characters.map(c => ({ ...c })) };
+    appearanceNotes.push(...enforceKnownMaleIdentity(image, allCharacterRecords(), identityFacts, status.supportsCharacters));
     input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
   }
   const characters = input.characters ?? [];

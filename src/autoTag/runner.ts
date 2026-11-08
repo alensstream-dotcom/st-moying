@@ -1,3 +1,4 @@
+import { IDENTITY_PROTOCOL, IDENTITY_EXTRA_KEY, assessIdentityClaims, currentIdentityFacts, eligibleIdentityEntries, enforceKnownMaleIdentity, identityContextHash, identityFactFor, isMaleIdentity, identityManualRevision, identityStoryHash, mayCreateHeroine, mergeIdentityFacts, type IdentitySources } from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
 import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { readBookMemory } from '@/autoTag/bookMemory';
@@ -380,8 +381,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const memory = readBookMemory(floor, context.chat[floor]?.mes ?? '', context.name1);
     // 单槽重写:库文本要包含本楼已落档的增量(首次全量分析建的档),否则 AI 会把
     // 已建档角色当新人重写。charTagsBeforeFloor(floor + 1) 正好含本楼(swipe 匹配时生效)。
-    const entriesBefore = slot ? charTagsBeforeFloor(floor + 1) : charTagsBeforeFloor(floor);
-    const expectedLibrary = JSON.stringify(entriesBefore);
+    const libraryAtStart = slot ? charTagsBeforeFloor(floor + 1) : charTagsBeforeFloor(floor);
+    const expectedLibrary = JSON.stringify(libraryAtStart);
+    const identityRevision = identityManualRevision();
+    const structuredFacts = assessIdentityClaims([], { story: '', card: '', worldbook: '', book: memory?.roles ?? [] });
+    const knownIdentities = mergeIdentityFacts([...currentIdentityFacts(), ...structuredFacts]);
+    const entriesBefore = eligibleIdentityEntries(libraryAtStart, knownIdentities);
     // 锁定名(全局库 ⊖ 本聊天基线):AI 的 changes 对这些名字一律无效,库文本里带 [locked] 标记
     const lockedNames = lockedCharTagNames();
     // 纯本地渲染:建档由主请求在同一次输出里完成(changes 的 field="new")
@@ -402,7 +407,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 直接点名「这段就是她」,别让模型再编一张脸或用别称另写角色块。
     // 只在上送给主请求前的快照上判,单槽重写同样适用(它也要照抄档案)。
     const charReuse = buildCharReuseBlock(
-      findCharReuse(entriesBefore, preparedTarget.promptText),
+      [], // Resemblance is a material hint, never proof of the person’s identity.
       findCharAliases(entriesBefore, preparedTarget.promptText),
     );
     // 服装现状:从前面楼层把每个人身上的衣服与穿脱程度读回来。
@@ -433,6 +438,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     );
     const channel = getTagGenChannel();
     messages.push({ role: 'system', content: CLOTHING_PROTOCOL });
+    messages.push({ role: 'system', content: IDENTITY_PROTOCOL + '\n已核实身份（旧绘图档案不是性别证据）：' + JSON.stringify(knownIdentities) });
+    const identitySources: IdentitySources = { story: source,
+      card: messages.filter(m => m.role === 'system' && /^【(?:角色设定|主角设定)/.test(m.content)).map(m => m.content).join('\n'),
+      worldbook: messages.filter(m => m.role === 'system' && m.content.startsWith('【世界设定')).map(m => m.content).join('\n'),
+      book: memory?.roles ?? [] };
     // 失败重试:请求异常与「返回无法解析/校验不通过」都视为可重试的异常(后者常见于模型没遵守协议);
     // 中止信号立即收手,不消耗重试。parseImagePlan 对坏输出抛错,「无画面」则是正常返回空数组。
     // 解析/校验放进 validate 回调:不过则请求历史如实记为失败(而非「HTTP 拿到文本」的绿色成功),
@@ -505,11 +515,21 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 称呼归并与外貌兜底:模型若在 characters[].name 或 changes[].name 里写了已建档角色的
           // 别称/尊称/简称(如把「风千华」写成「风阿姨」「千华」),先唯一归并回档案主名,
           // 并在因换称呼漏抄固定外貌时把档案核心外貌字段补进 character.tag。
-          normalizePlanCharacters(candidate.images, entriesBefore);
+          const candidateFacts = mergeIdentityFacts([...knownIdentities, ...assessIdentityClaims(candidate.identities ?? [], identitySources)]);
+          for (const change of candidate.changes) if (change.field === 'new' && !candidate.identities?.some(c => c.name === change.name)) {
+            (candidate.identities ??= []).push({ name: change.name, gender: 'unknown', heroine: false, source: 'story', evidence: '', reason: '未提供新角色身份审核依据' });
+          }
+          candidate.changes = candidate.changes.filter(c => c.field !== 'new' || mayCreateHeroine(c.name, candidateFacts));
+          const candidateEntries = eligibleIdentityEntries(entriesBefore, candidateFacts);
+          for (const image of candidate.images) for (const character of image.characters) {
+            const fact = identityFactFor(character.name, candidateFacts);
+            if (fact && fact.gender !== 'male' && candidateEntries.some(e => e.name === fact.name)) character.name = fact.name;
+          }
+          normalizePlanCharacters(candidate.images, candidateEntries, new Set(candidateFacts.filter(f => f.gender === 'male').flatMap(f => [f.name, ...(f.aliases ?? [])])));
           if (entriesBefore.length) {
             const existingNames = new Set(entriesBefore.map(e => e.name.trim()));
             candidate.changes = candidate.changes.filter(change => {
-              const canonical = resolveCanonicalCharName(change.name, entriesBefore);
+              const canonical = isMaleIdentity(change.name, candidateFacts) ? change.name : resolveCanonicalCharName(change.name, candidateEntries);
               if (canonical !== change.name) {
                 if (change.field === 'new' && existingNames.has(canonical)) return false;
                 change.name = canonical;
@@ -530,7 +550,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 空 images:协议上算正常返回,旧版直接放行,于是模型一句「没有值得插图的画面」
           // 就能让整楼不生、阅读器干等超时。这里在还有重试次数时把它当可纠错误,
           // 换一套口径逼它落到具体画面上;changes 非空(有建档要落)时不算空。
-          if (!slot && attempt < retries && !candidate.images.length && !candidate.changes.length) {
+          if (!slot && attempt < retries && !candidate.images.length && !candidate.changes.length && !candidate.identities?.length) {
             retryNote = EMPTY_PLAN_RETRY_NOTE;
             throw new Error('返回了空 images');
           }
@@ -719,6 +739,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
 
     // 单槽重写不落 changes:首次全量分析已为整楼建过档,这里再应用一次只会产生
     // 重复的建档/变更记录;库文本已含本楼增量(见上面 entriesBefore),AI 照抄即可。
+    const assessedIdentities = assessIdentityClaims(plan.identities ?? [], identitySources);
+    const planIdentities = mergeIdentityFacts([...knownIdentities, ...assessedIdentities]);
+    const safeEntries = eligibleIdentityEntries(entriesBefore, planIdentities);
     const appearanceChangeNotes: string[] = [];
     const planOps = slot ? [] : planChangeOps(plan, source, appearanceChangeNotes);
     // 锁定角色(全局库)不接受 AI changes:丢弃,不写入楼层、不参与 @替换。
@@ -751,14 +774,18 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 男性不建档:同上,规则之外再兜一次,把 sex 明确是男性的 new 直接丢掉。
     const maleGuarded = guardedOps.filter(item => {
       const op = item.op;
+      if (isMaleIdentity(op.name, planIdentities)) { appearanceChangeNotes.push(`${op.name}: 男性身份已确认，不自动建档或更新女主外貌`); return false; }
       if (op.kind !== 'new') return true;
-      return !MALE_SEX_RE.test(op.fields.sex.trim());
+      const accepted = mayCreateHeroine(op.name, planIdentities) && !MALE_SEX_RE.test(op.fields.sex.trim());
+      if (!accepted) appearanceChangeNotes.push(`${op.name}: 暂不自动入库，需要已验证女性身份及女主资格；本张仍可正常出镜`);
+      if (accepted) op.fields.sex = '1girl';
+      return accepted;
     });
     const floorOps = maleGuarded.map(item => item.op);
     const previousDelta = readCharTagFloorDelta(message);
 
     plan.images.sort((a,b) => a.sourceLine - b.sourceLine || a.charOffset - b.charOffset);
-    const activeEntries = applyCharTagOps(entriesBefore, floorOps, floor, lockedNames);
+    const activeEntries = applyCharTagOps(safeEntries, floorOps, floor, lockedNames);
     const accepted = acceptClothingChanges(plan.outfitChanges ?? [], source, wardrobe, activeEntries);
     const scope = `${chatId}|${floor}|${swipeId ?? 0}|${expectedStory}`;
     const frames: ClothingFloor['frames'] = [];
@@ -821,9 +848,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         }
       }
       for (const n of tagRes.unknown) unknownNames.add(n);
-      const entriesAt = applyCharTagOps(entriesBefore, maleGuarded.filter(o => o.op.kind === 'new' || o.sourceLine < image.sourceLine
+      const entriesAt = applyCharTagOps(safeEntries, maleGuarded.filter(o => o.op.kind === 'new' || o.sourceLine < image.sourceLine
         || o.sourceLine === image.sourceLine && (o.charOffset ?? 0) <= image.charOffset).map(o => o.op), floor, lockedNames);
-      visualNotes.push(...enforceAppearance(image, entriesAt, profile.nl, profile.naiCharPrompts));
+      visualNotes.push(...enforceAppearance(image, entriesAt, profile.nl, profile.naiCharPrompts, planIdentities));
+      visualNotes.push(...enforceKnownMaleIdentity(image, libraryAtStart, planIdentities, profile.naiCharPrompts));
       const at = slotWardrobe ?? clothingAt(wardrobe, accepted.changes, scope, image.sourceLine, image.charOffset);
       for (const [name, entry] of completion) if (!at.has(name)) at.set(name, entry);
       initialiseClothingFromImage(image, at);
@@ -846,7 +874,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     }
     // 没有图片、没有角色变化、也没有旧楼层变化要清理时,保持原来的无写入早退。
     if (!plan.images.length) opts.onNoImages?.();
-    if (!plan.images.length && !floorOps.length && !accepted.changes.length && !previousDelta) {
+    if (!plan.images.length && !floorOps.length && !accepted.changes.length && !assessedIdentities.length && !previousDelta) {
       if (opts.manual) toastr.info('模型认为本楼没有值得插图的画面', '墨影');
       else console.debug(`[墨影] 第 ${floor} 楼无需插图`);
       return;
@@ -895,7 +923,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       floor,
       currentText => {
         if (controller.signal.aborted || narrativeHash(currentText) !== expectedStory || clothingRevision(getContext()?.chat ?? [], floor) !== wardrobeRevision
-          || JSON.stringify(charTagsBeforeFloor(slot ? floor + 1 : floor)) !== expectedLibrary) return null;
+          || JSON.stringify(charTagsBeforeFloor(slot ? floor + 1 : floor)) !== expectedLibrary || identityManualRevision() !== identityRevision) return null;
         // 单槽重写:只替换第 seq 条 tag,正文与其它 tag 一字不动,也不需要位置重定位。
         // 模型返回的 position 在这里刻意不参与——画面钉死在原位,它只负责重写内容。
         // 开跑时快照的原文对不上 = 期间被用户/别的流程改过,放弃覆盖(同提示词编辑弹窗)。
@@ -927,6 +955,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       slot
         ? rewrittenWardrobe ? [{ key: BBI_OUTFIT_EXTRA_KEY, value: rewrittenWardrobe }] : undefined
         : [
+            {
+              key: IDENTITY_EXTRA_KEY,
+              value: { v: 1, swipe: swipeId ?? 0, sourceHash: identityStoryHash(rawSource), contextHash: identityContextHash(), facts: assessedIdentities },
+            },
             {
               key: BBI_CHAR_EXTRA_KEY,
               value: makeCharTagFloorDelta(floorOps, swipeId ?? 0),

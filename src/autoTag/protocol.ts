@@ -1,6 +1,7 @@
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import type { TargetSegment } from '@/autoTag/clean';
 import { parseClothingChanges, type ClothingChange } from './outfitTimeline';
+import { parseIdentityClaims, type IdentityClaim } from '@/state/characterIdentity';
 import { FORBIDDEN_SUBTAG, serializeImageTag } from '@/st/imageTagRegex';
 import {
   CHAR_TAG_FIELDS,
@@ -37,6 +38,7 @@ export interface ImageInsertion {
 }
 
 export interface ImagePlan {
+  identities?: IdentityClaim[];
   outfitChanges?: ClothingChange[];
   images: ImageInsertion[];
   /** AI 报告的角色库变更(建档/字段更新);调用方负责落库。 */
@@ -246,6 +248,7 @@ export function parseImagePlan(
     images: limitedImages,
     changes: parseChanges(parsed.changes, positions, segmentById),
     outfitChanges: parseClothingChanges(parsed.outfitChanges, segments),
+    identities: parseIdentityClaims(parsed.identities),
   };
 }
 
