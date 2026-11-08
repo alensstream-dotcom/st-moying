@@ -78,13 +78,6 @@ export interface GenerationParams {
 
 /** 随图落盘的完整出图元信息。 */
 export interface GenerationMeta {
-  /** Sanitized final NAI JSON body; reference binary omitted. No headers or endpoint. */
-  request?: unknown;
-  /** Versioned character/outfit state captured at the tag's paragraph, not the latest floor. */
-  scene?: unknown;
-  capabilities?: unknown;
-  warnings?: string[];
-  trimmed?: string[];
   backend: 'nai' | 'comfyui';
   /** NAI 模型名 / ComfyUI 工作流预设名。vibe 编码按模型分组，必须一起记。 */
   model: string;
@@ -159,10 +152,5 @@ export function formatGenerationMeta(meta: GenerationMeta): string {
   if (typeof p.shift === 'number') sampling.push(`Shift ${round(p.shift)}`);
   if (sampling.length) lines.push(`采样: ${sampling.join(' · ')}`);
 
-  if (meta.request) lines.push(`实际请求（参考二进制已省略）: ${JSON.stringify(meta.request, null, 2)}`);
-  if (meta.scene) lines.push(`人物/穿搭状态来源: ${JSON.stringify(meta.scene, null, 2)}`);
-  if (meta.capabilities) lines.push(`能力声明: ${JSON.stringify(meta.capabilities)}`);
-  if (meta.warnings?.length) lines.push(`降级说明: ${meta.warnings.join('；')}`);
-  if (meta.trimmed?.length) lines.push(`提示预算裁剪: ${meta.trimmed.join('；')}`);
   return lines.join('\n');
 }

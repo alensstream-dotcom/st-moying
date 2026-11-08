@@ -12,7 +12,6 @@ import {
   type LlmRecord,
 } from '@/state/history';
 import { copyText } from '@/st/clipboard';
-import { requestTraces } from '@/state/requestTrace';
 
 /**
  * 请求历史页。
@@ -186,13 +185,6 @@ function copyAll(record: HistoryRecord): void {
     </div>
 
     <!-- 一条请求 = 一个折叠区 -->
-    <Collapsible v-if="filter !== 'llm' && requestTraces.length" :open="false">
-      <template #header>NAI 实际请求（最近 20 次，参考二进制已省略）</template>
-      <details v-for="trace in requestTraces" :key="trace.id">
-        <summary>{{ time(trace.at) }} · #{{ trace.id }}</summary>
-        <pre style="white-space: pre-wrap; overflow-wrap: anywhere">{{ JSON.stringify(trace.body, null, 2) }}</pre>
-      </details>
-    </Collapsible>
     <div v-if="shown.length" class="bbi-sections">
       <Collapsible v-for="record in shown" :key="record.id" :open="false">
         <template #header>

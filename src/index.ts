@@ -5,7 +5,6 @@ import { bindFloorHydration } from '@/floor/hydrate';
 import { injectMenuButton } from '@/menu';
 import { registerPublicInterface } from '@/public/register';
 import { bindCharTagSync } from '@/state/charTags';
-import { bindSceneSync } from '@/state/sceneStore';
 import { initGlobalCharTags } from '@/state/globalCharTags';
 import { hydrateSettings } from '@/state/settings';
 import { ui } from '@/state/ui';
@@ -100,7 +99,6 @@ async function hydrateWhenReady(attempt = 0) {
       // 全局库必须在 bindCharTagSync 之前初始化:首次重算就要把全局条目合进派生库
       initGlobalCharTags();
       bindCharTagSync();
-      bindSceneSync();
       ensureImageTagRegexRegistered();
       bindAutoTagging();
       bindFloorHydration();

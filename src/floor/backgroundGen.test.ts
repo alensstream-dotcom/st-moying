@@ -78,21 +78,6 @@ function makeJob(overrides: Partial<BackgroundJob> = {}): BackgroundJob {
 }
 
 describe('backgroundGen', () => {
-  it('discards a completed background image after an intervening swipe and releases it', async () => {
-    const fullTag = makeFullTag();
-    const message = { mes: `正文\n${fullTag}`, swipe_id: 0, extra: {} };
-    getContextMock.mockReturnValue({ getCurrentChatId: () => 'chat-1', chat: [{}, {}, message] });
-    const revoke = vi.fn();
-    generateImageMock.mockImplementationOnce(async () => {
-      message.swipe_id = 1;
-      return { result: { revoke }, meta: {} };
-    });
-    await runBackgroundGenerations([makeJob({ tag: fullTag })]);
-    expect(generateImageMock).toHaveBeenCalledOnce();
-    expect(saveImageResultMock).not.toHaveBeenCalled();
-    expect(revoke).toHaveBeenCalledOnce();
-    expect(backgroundQueueState().count).toBe(0);
-  });
   beforeEach(() => {
     _resetBackgroundGenForTest();
     vi.clearAllMocks();

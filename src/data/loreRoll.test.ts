@@ -32,12 +32,14 @@ describe('loreRoll 素材抽取与随机生成', () => {
     expect(rolled?.tags).toContain('极光星尘战甲');
   });
 
-  it('姿势：内置姿势库已清空，留空时返回 null', () => {
+  it('姿势：留空时随机抽取姿势', () => {
     const rolled = rollPose('');
-    expect(rolled).toBeNull();
+    expect(rolled).not.toBeNull();
+    expect(rolled?.kind).toBe('pose');
+    expect(rolled?.tags.length).toBeGreaterThan(5);
   });
 
-  it('姿势：输入自由姿势词时可按自由词生成', () => {
+  it('姿势：命中姿势词', () => {
     const rolled = rollPose('kneeling');
     expect(rolled).not.toBeNull();
     expect(rolled?.tags).toContain('kneeling');
@@ -80,7 +82,7 @@ describe('loreRoll 素材抽取与随机生成', () => {
     const totalFandom = rollPoolSize('', 'fandom');
 
     expect(totalWardrobe).toBeGreaterThan(500);
-    expect(totalPose).toBe(0);
+    expect(totalPose).toBeGreaterThan(200);
     expect(totalFandom).toBeGreaterThan(200);
 
     const matchJk = rollPoolSize('jk', 'wardrobe');

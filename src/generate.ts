@@ -29,14 +29,11 @@ import { generateNaiImage, naiRandomSeed, naiSupportsCharacterPrompts } from '@/
 import { effectiveOrientation, parseSize, pickSize, type Orientation } from '@/backends/size';
 import { acquireNaiSlot } from '@/floor/genQueue';
 import type { GenerationMeta } from '@/generationMeta';
-import { capabilityOverride, resolveNaiCapabilities } from '@/backends/capabilities';
-import type { NaiVibe } from '@/state/settings';
 import { activeComfyPreset, activeNaiEndpoint, activeOrientationLock, effectiveComfyConn, effectiveNai, settings, type BackendId } from '@/state/settings';
 import { applyPresetToNaiConn, genPresetById } from '@/state/genPresets';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
-  referenceVibes?: NaiVibe[];
   /** 正向 danbooru 短 tag。 */
   prompt: string;
   /** 自然语言部分(可空)。 */
@@ -127,7 +124,7 @@ export function backendStatus(backend: BackendId = settings.defaultBackend): Bac
   if (backend === 'nai') {
     const model = settings.nai.model;
     // 支持与否只看模型,与配没配齐无关:第三方要在出图前就知道该不该传 characters
-    const supportsCharacters = naiSupportsCharacterPrompts(model) && resolveNaiCapabilities(model, capabilityOverride(activeNaiEndpoint().id)).characters;
+    const supportsCharacters = naiSupportsCharacterPrompts(model);
     const base = { backend, model, supportsCharacters };
     // 地址与 key 取**当前接入点**那一份(见 effectiveNai);渠道级 nai.url/nai.key 是存量字段。
     // reason 里刻意**不带接入点名字**:它会经 getBackendStatus 原样递给第三方,而名字是用户
@@ -211,10 +208,6 @@ export async function generateImage(
 
   const isNai = status.backend === 'nai';
   const characters = input.characters ?? [];
-  // Queue waits must not swap the model/endpoint/reference recipe underneath this job.
-  const naiSnapshot = isNai ? JSON.parse(JSON.stringify(effectiveNai())) as ReturnType<typeof effectiveNai> : null;
-  const capabilitiesSnapshot = isNai ? resolveNaiCapabilities(status.model, capabilityOverride(activeNaiEndpoint().id)) : null;
-  const referencesSnapshot = JSON.parse(JSON.stringify(input.referenceVibes ?? [])) as NaiVibe[];
   // 支持与否由后端说了算:ComfyUI 恒不支持;NAI 看模型是否 4.5/V5
   const charactersApplied = characters.length > 0 && status.supportsCharacters;
 
@@ -226,38 +219,27 @@ export async function generateImage(
 
     // 画幅锁在这里统一生效(卡片与公开接口同走本函数):只决定这一次用哪格尺寸,
     // tag 里记的方向原样不动——promptHash 吃 tag 原文,改写会让老图无辜变 stale。
-    const size = effectiveOrientation(naiSnapshot?.orientationLock ?? activeOrientationLock(), input.size ?? 'portrait');
+    const size = effectiveOrientation(activeOrientationLock(), input.size ?? 'portrait');
     let result: ComfyImageResult;
     let meta: GenerationMeta;
     if (isNai) {
-      const capabilities = capabilitiesSnapshot!;
-      const configured = naiSnapshot!;
+      // 单次覆盖模型:素材缩略图走 V4 试用模型(不占 Anlas),不该为此改动用户保存的渠道设置。
+      // effectiveNai() 返回的是浅拷贝,改它不会污染 settings。
+      const naiConn = effectiveNai();
       // 预设先套、模型覆盖后套:后者是调用方最具体的意图(naiModel 明确点名就用它)。
       const preset = input.genPresetId ? genPresetById(input.genPresetId) : null;
-      if (preset) applyPresetToNaiConn(configured, preset);
-      if (input.naiModel) configured.model = input.naiModel as typeof configured.model;
-      const references = referencesSnapshot.filter(v => v.dataPath);
-      const warnings: string[] = [];
-      if (characters.length > 1 && references.length) warnings.push('多人参考可能混合特征：已跳过人物绑定 Vibe，仅使用渠道画风参考');
-      const singleRefs = characters.length <= 1 && capabilities.vibes ? references : [];
-      if (singleRefs.length) warnings.push('人物参考使用共享 Vibe，不等同逐人物锁脸；可能与渠道画风参考混合');
-      if (!capabilities.characters && characters.length) warnings.push('当前模型/代理覆盖禁用独立人物提示，已降级');
-      if (!capabilities.vibes && (references.length || configured.vibes.some(v => v.enabled))) warnings.push('当前接入点禁用 Vibe，参考图未发送');
-      const fallback = !capabilities.characters && characters.length === 1;
-      const baseTags = input.prompt.split(',').map(t => t.trim()).filter(Boolean);
-      const characterTags = fallback ? characters[0].tag.split(',').map(t => t.trim()).filter(Boolean) : [];
-      const genderKnown = characterTags.some(t => /^1(?:boy|girl)$/i.test(t));
-      const sentPrompt = fallback ? [...new Set([...baseTags.filter(t => !(genderKnown && /^\d+(?:boys?|girls?)$/i.test(t))), ...characterTags])].join(', ') : input.prompt;
+      if (preset) applyPresetToNaiConn(naiConn, preset);
+      if (input.naiModel) naiConn.model = input.naiModel as typeof naiConn.model;
       const output = await generateNaiImage(
-        { ...configured, vibes: [...configured.vibes.filter(v => !singleRefs.some(r => r.id === v.id)), ...singleRefs.map(v => ({ ...v, enabled: true }))] },
+        naiConn,
         // characters 原样透传:不支持的模型由 buildNaiParameters 自己滤掉(同一口径
         // naiSupportsCharacterPrompts),在这儿再滤一遍只会多一处会漂的判据
-        { prompt: sentPrompt, nl: fallback ? [input.nl, characters[0].nl].filter(Boolean).join(' ') : input.nl ?? '', characters, seed: input.seed, size, capabilities },
+        { prompt: input.prompt, nl: input.nl ?? '', characters, seed: input.seed, size },
         signal,
         { onRetry: info => progress.onRetry?.({ attempt: info.attempt, max: info.max }) },
       );
       result = output.result;
-      meta = { backend: 'nai', model: status.model, ...output.usage, capabilities, warnings: [...(output.usage.warnings ?? []), ...warnings] };
+      meta = { backend: 'nai', model: status.model, ...output.usage };
     } else {
       const conn = effectiveComfyConn();
       result = await generateComfyImage(

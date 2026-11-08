@@ -4,7 +4,6 @@ import { novelReader } from '@/public/novelReader';
 import { cancelFloorTags, isFloorTagRunning, requestFloorTags } from '@/autoTag/runner';
 import { isBackgroundGenRunning, resumePending as resumeBackgroundPending } from '@/floor/backgroundGen';
 import { charTagLib } from '@/state/charTags';
-import { visualLibrary } from '@/state/visualLibrary';
 import { getContext } from '@/st/context';
 import { PLUGIN_VERSION } from '@/version';
 import {
@@ -14,14 +13,12 @@ import {
   getBackendStatus,
   getCharacters,
   getPublicRevision,
-  getScene,
 } from './api';
 import {
   PUBLIC_API_VERSION,
   type GenerateOptions,
   type GenerateRequest,
   type GetCharactersOptions,
-  type GetSceneOptions,
   type PublicCapabilities,
   type PublicChangeListener,
   type PublicChangeNotice,
@@ -111,7 +108,6 @@ function createApi(): STBaiBaiImageApi {
       return clonePublic(capabilities);
     },
     getCharacters: (options?: GetCharactersOptions) => getCharacters(options),
-    getScene: (options?: GetSceneOptions) => getScene(options),
     getBackendStatus: () => getBackendStatus(),
     generate: (request: GenerateRequest, options?: GenerateOptions) => generate(request, options),
     requestFloorTags: (floor: number, opts?: { replace?: boolean }) => requestFloorTags(floor, opts),
@@ -143,7 +139,6 @@ export function registerPublicInterface(): void {
   // 角色库是响应式派生结果,一律 watch 它本身,不去逐个订阅那些**导致**它变的事件
   // (CHAT_CHANGED / 删楼 / 滑动 / 用户手动编辑 / 柏宝书同步……漏一个就少一次通知)。
   watch(() => charTagLib.entries, queueChangedNotice, { deep: true });
-  watch(() => visualLibrary, queueChangedNotice, { deep: true });
 
   ready = true;
   emitNotice('ready');

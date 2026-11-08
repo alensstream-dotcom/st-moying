@@ -1,7 +1,5 @@
 import { unzipSync } from 'fflate';
 import { randomUuid } from '@/randomUuid';
-import { recordRequest, safeRequest } from '@/state/requestTrace';
-import { fitCaptionBudget, type resolveNaiCapabilities } from './capabilities';
 
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import type { ComfyImageResult } from '@/backends/comfyui';
@@ -235,7 +233,6 @@ async function sha256Hex(text: string): Promise<string> {
 /* ============ payload 构造(纯函数,可测) ============ */
 
 export interface NaiGenerateValues {
-  capabilities?: ReturnType<typeof resolveNaiCapabilities>;
   /** 正向 tag(不含质量词)。 */
   prompt: string;
   nl?: string;
@@ -359,13 +356,7 @@ export function naiUndesiredContent(nai: NaiSettings): string {
  * 字段处各调一次,两处必须同源。拼装改动一律留在本函数内部——在某个调用点单独加料会让
  * NAI3(读 input)与 NAI4/4.5(读 v4_prompt)拿到不同的提示词,且只在 NAI3 上暴露。
  */
-export function globalStyleOnly(value: string): string {
-  return value.split(',').map(t => t.trim()).filter(t => t && !/\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|bob cut|ahoge|breasts|hips|thighs|hanfu|robe|dress|uniform|shirt|jacket|skirt|stockings|panties|bra|sleeves|clothes|clothing|outfit)\b/i.test(t)
-    && !/^\d+(?:girls?|boys?)$/i.test(t)).join(', ');
-}
-export function fullPositivePrompt(nai: NaiSettings, prompt: string, nl = '', _managedCharacters = false): string {
-  // User recipes are authoritative, including weighted syntax and appearance words.
-  // Scene continuity must never rewrite the configured artist/quality recipe.
+export function fullPositivePrompt(nai: NaiSettings, prompt: string, nl = ''): string {
   const artist = naiArtistPrompt(nai);
   const quality = naiQualityTags(nai);
   const tags = [artist, prompt.trim(), quality].filter(Boolean).join(', ');
@@ -405,7 +396,7 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
   const { width, height } = parseResolution(pickSize(nai, orientation) || '832×1216');
   // 显式传入 > 面板固定种子 > 随机
   const seed = values.seed ?? (nai.seed > 0 ? nai.seed : naiRandomSeed());
-  const prompt = fullPositivePrompt(nai, values.prompt, values.nl, !!values.characters?.length);
+  const prompt = fullPositivePrompt(nai, values.prompt, values.nl);
   const negative = fullNegativePrompt(nai);
   const skipCfg = skipCfgAboveSigma(width, height, nai.model, nai.varietyBoost);
   const sampler = isNai5(nai.model) && !NAI_V5_SAMPLERS.has(nai.sampler) ? 'k_euler_ancestral' : nai.sampler;
@@ -447,7 +438,7 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
   } else {
     // NAI4/4.5/V5: v4 caption structure; Vibe uses a model-specific cached encoding.
     params.reference_image_multiple_cached = [];
-    const charCaptions = naiSupportsCharacterPrompts(nai.model) && values.capabilities?.characters !== false
+    const charCaptions = naiSupportsCharacterPrompts(nai.model)
       ? (values.characters ?? []).map(character => ({
           char_caption: characterCaption(character),
           centers: [{ x: 0.5, y: 0.5 }],
@@ -472,10 +463,6 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
     params.deliberate_euler_ancestral_bug = false;
     params.prefer_brownian = true;
   }
-  if (values.capabilities?.vibes === false) {
-    for (const key of Object.keys(params)) if (key.startsWith('reference_') || key === 'normalize_reference_strength_multiple') delete params[key];
-  }
-  if (values.capabilities?.characters === false) delete params.characterPrompts;
   return params;
 }
 
@@ -644,7 +631,7 @@ export function unzipNaiImage(buffer: ArrayBuffer): { base64: string; filename: 
 export interface NaiImageOutput {
   result: ComfyImageResult;
   /** 不在 tag 文本里的那部分配方（画师串 / vibe / 采样参数 / 模型无关字段）。 */
-  usage: Pick<GenerationMeta, 'positive' | 'negative' | 'width' | 'height' | 'artist' | 'vibes' | 'params' | 'request' | 'trimmed' | 'warnings'>;
+  usage: Pick<GenerationMeta, 'positive' | 'negative' | 'width' | 'height' | 'artist' | 'vibes' | 'params'>;
 }
 
 /**
@@ -666,9 +653,8 @@ export async function generateNaiImage(
   // 画师串在发请求时解析一次，快照下来随图落盘：事后配方被删/改名也不丢。
   const artist = naiArtistUsage(nai);
   const params = buildNaiParameters(nai, values);
-  const activeVibes = naiSupportsVibes(nai.model) && values.capabilities?.vibes !== false ? nai.vibes.filter(vibe => vibe.enabled) : [];
+  const activeVibes = naiSupportsVibes(nai.model) ? nai.vibes.filter(vibe => vibe.enabled) : [];
   const loaded = new Map<string, NaiVibeData>();
-  const warnings: string[] = [];
   for (const vibe of activeVibes) {
     try {
       const data = await loadVibeData(vibe);
@@ -683,33 +669,23 @@ export async function generateNaiImage(
             },
       );
     } catch (error) {
-      warnings.push(`Vibe「${vibe.name}」读取失败，本次未使用该参考`);
       console.warn(`[墨影] 读取 vibe「${vibe.name}」失败:`, error);
     }
   }
-  const { applied, skipped } = applyVibes(params, values.capabilities?.vibes === false ? { ...nai, vibes: [] } : nai, loaded);
+  const { applied, skipped } = applyVibes(params, nai, loaded);
   if (skipped.length) {
     const reason = naiSupportsVibes(nai.model) ? '缺当前模型编码' : '当前模型不支持 Vibe Transfer';
-    warnings.push(`Vibe「${skipped.join('、')}」${reason}，已跳过`);
     console.warn(`[墨影] 以下 vibe 因${reason}被跳过:`, skipped);
     toastr.warning(`vibe「${skipped.join('、')}」${reason},已跳过`, '墨影');
   }
 
   const body = {
-    input: fullPositivePrompt(nai, values.prompt, values.nl, !!values.characters?.length),
+    input: fullPositivePrompt(nai, values.prompt, values.nl),
     model: nai.model,
     action: 'generate',
     parameters: params,
     use_new_shared_trial: true,
   };
-  const v4 = params.v4_prompt as { caption: { base_caption: string; char_captions: Array<{ char_caption: string }> } } | undefined;
-  const budget = fitCaptionBudget(body.input, v4?.caption.char_captions.map(c => c.char_caption) ?? [], values.capabilities?.maxPromptChars ?? 0);
-  body.input = budget.base;
-  if (v4) {
-    v4.caption.base_caption = budget.base;
-    v4.caption.char_captions.forEach((c, i) => { c.char_caption = budget.characters[i]; });
-  }
-  recordRequest(body);
   // 只把「发请求 + 解包」包进重试:上面拼参数、读 vibe 数据的活是一次性的,
   // 重跑它们既白费功夫,也会把 vibe 缺编码的 toastr 警告重复弹出来。
   const NAI_ATTEMPT_TIMEOUT_MS = 120_000;
@@ -762,11 +738,8 @@ export async function generateNaiImage(
   return {
     result,
     usage: {
-      request: safeRequest(body),
-      warnings,
-      trimmed: budget.removed,
       // positive 即顶层 input / v4_prompt 里那份全文（含画师串与质量词）
-      positive: body.input,
+      positive: fullPositivePrompt(nai, values.prompt, values.nl),
       negative: fullNegativePrompt(nai),
       width: params.width as number,
       height: params.height as number,

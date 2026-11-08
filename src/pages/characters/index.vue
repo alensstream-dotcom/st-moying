@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import BbiTextarea from '@/components/BbiTextarea.vue';
-
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
-import Collapsible from '@/components/Collapsible.vue';
-import { confirmIdentity, refreshSceneStore, sceneStore, undoIdentityConfirmation } from '@/state/sceneStore';
 import ModalMask from '@/components/ModalMask.vue';
 import { generateCharTags } from '@/autoTag/charAnchors';
 import { readBookMemory } from '@/autoTag/bookMemory';
@@ -31,11 +28,7 @@ import {
   upsertGlobalCharTag,
 } from '@/state/globalCharTags';
 import { getContext } from '@/st/context';
-import { computed, ref, watch } from 'vue';
-
-const indexMode = ref<'heroine' | 'all'>('heroine');
-const indexedCharacters = computed(() => sceneStore.current.characters.filter(c => indexMode.value === 'all' || c.isHeroine));
-watch(() => charTagLib.entries, refreshSceneStore, { immediate: true });
+import { computed, ref } from 'vue';
 
 /**
  * 角色管理 —— 两层固定外貌库:
@@ -338,31 +331,9 @@ function sourceLabel(entry: CharTagEntry): string {
     <hr class="bbi-rule" />
 
     <p class="bbi-field-hint">
-      自动档案是当前生图唯一使用的人物与穿搭状态：首次定妆由已保存的 LLM 补全，之后只处理有证据的剧情变化。旧外貌库放在下方兼容区。
+      角色固定外貌库:生成 tag 时 AI 照抄库中字段,@角色名 占位符也会被替换为库中最新外貌,稳定不漂移。
     </p>
-    <p class="bbi-field-hint">正常生图无需手填。中文同人/服装抽样在「素材库」，这里可查看自动建立的外貌、衣物和素材绑定。</p>
-    <Collapsible title="自动人物档案与剧情穿搭" :open="true">
-      <button class="bbi-btn" @click="indexMode = indexMode === 'heroine' ? 'all' : 'heroine'">{{ indexMode === 'heroine' ? '查看全部人物' : '只看女主' }}</button>
-      <button class="bbi-btn" @click="refreshSceneStore">刷新状态</button>
-      <button class="bbi-btn" @click="undoIdentityConfirmation">撤销上次身份确认</button>
-      <p class="bbi-field-hint">旧库只读迁移，不会删除记录。旧 AI 的 1girl 不视为女性证据；身份不明的人请在“全部人物”中核对。确认女性与加入女主库是两个独立操作。</p>
-      <p v-if="!indexedCharacters.length" class="bbi-field-hint">暂无符合条件的人物。</p>
-      <details v-for="character in indexedCharacters" :key="character.characterId">
-        <summary>{{ character.name }} · {{ character.identity.gender }} · {{ character.isHeroine ? '女主' : '非女主/待核对' }}</summary>
-        <button class="bbi-btn" @click="confirmIdentity(character, 'male', false)">确认男性</button>
-        <button class="bbi-btn" @click="confirmIdentity(character, 'female', false)">确认女性</button>
-        <button class="bbi-btn" @click="confirmIdentity(character, 'female', true)">确认为女性并加入女主</button>
-        <button class="bbi-btn" @click="confirmIdentity(character, 'unknown', false)">标为未知并移出女主</button>
-        <p>定妆：{{ Object.values(character.baseAppearance).join('，') || '等待首次自动定妆' }}</p>
-        <p>当前穿搭：{{ character.outfit?.design || '尚未确定' }}</p>
-        <p v-for="g in character.outfit?.garments" :key="g.id">{{ g.id }}：{{ g.design }} · {{ Object.entries(g.state).map(([k,v]) => `${k}: ${v}`).join('，') }}</p>
-        <p v-for="b in character.visualBindings" :key="b.scope">{{ b.scope }}素材：{{ b.resolved.name }} v{{ b.version }} · {{ b.reason }}</p>
-        <details><summary>状态来源与原始记录</summary><pre style="white-space: pre-wrap; overflow-wrap: anywhere">{{ JSON.stringify(character, null, 2) }}</pre></details>
-      </details>
-      <p v-for="warning in sceneStore.current.warnings" :key="warning" class="bbi-field-hint">{{ warning }}</p>
-    </Collapsible>
 
-    <details><summary>旧版人物库兼容与备份（新生图不再向此处重复建档）</summary>
     <!-- ===== 全局角色库 ===== -->
     <div class="bbi-char-section">
       <div class="bbi-char-section-head">
@@ -482,7 +453,6 @@ function sourceLabel(entry: CharTagEntry): string {
       </div>
     </div>
 
-    </details>
     <!-- ===== 角色编辑弹窗 ===== -->
     <ModalMask :open="!!draft" @close="closeEntry">
       <div v-if="draft" class="bbi-modal bbi-char-modal" role="dialog" aria-modal="true" aria-label="编辑角色">

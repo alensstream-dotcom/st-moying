@@ -1,6 +1,5 @@
 import { getContext } from '@/st/context';
 import { reactive } from 'vue';
-import { readCompatibleData } from '@/state/legacyCompatibility';
 import {
   findCharTag,
   normalizeCharTagStore,
@@ -114,7 +113,7 @@ export function initGlobalCharTags(): void {
   setGlobalCharTagSource(() => globalCharTagLib.entries);
   const ctx = getContext();
   if (ctx?.extensionSettings) {
-    const store = readStore(readCompatibleData(ctx.extensionSettings, GLOBAL_KEY, 'baibai_image_char_global'));
+    const store = readStore(ctx.extensionSettings[GLOBAL_KEY]);
     if (store) applyStore(store);
   }
   bindListener();

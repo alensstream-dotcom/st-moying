@@ -1,5 +1,4 @@
 import { requestNovelFloorTags } from '@/autoTag/runner';
-import { generationSceneSnapshot } from '@/floor/sceneSnapshot';
 import { clearAutoGenerateForFloor } from '@/floor/autoGenerate';
 import { beginGen, clearGen, failGen, getGenRecord, hasActiveGen, isCurrentGen, setGenPhase, setGenRetry, setQueueAhead, slotKey } from '@/floor/genState';
 import { hydrateMessage } from '@/floor/hydrate';
@@ -13,7 +12,6 @@ import { parseImageTagContent, parseImageTags, stripImageTags } from '@/st/image
 
 /** The batch interface owns no component and never waits for a render frame. */
 const planning = new Map<string, Promise<PlanResult>>();
-const planningTails = new Map<string, Promise<unknown>>();
 const generating = new Map<string, Promise<void>>();
 const dirty = new Map<string, { floor: number; chatId: string; assert: () => STMessage }>();
 let refreshing = false;
@@ -104,24 +102,10 @@ function floorStatus(floor: number) {
 }
 
 async function planFloor(floor: number): Promise<PlanResult> {
-  const at = capture(floor), key = `${at.chatId}|${floor}|${at.swipe}`;
-  const existing = planning.get(key); if (existing) return existing;
-  // A later floor must read the preceding floor's committed scene state.
-  // Only planning is serialized; accepted image jobs still use the NAI queue.
-  const task = (planningTails.get(at.chatId) ?? Promise.resolve()).catch(() => {}).then(() => {
-    at.assert();
-    return planFloorNow(floor);
-  });
-  planning.set(key, task); planningTails.set(at.chatId, task);
-  try { return await task; }
-  finally {
-    if (planning.get(key) === task) planning.delete(key);
-    if (planningTails.get(at.chatId) === task) planningTails.delete(at.chatId);
-  }
-}
-
-async function planFloorNow(floor: number): Promise<PlanResult> {
   const at = capture(floor);
+  const key = `${at.chatId}|${floor}|${at.swipe}`;
+  const existing = planning.get(key);
+  if (existing) return existing;
   const tags = parseImageTags(at.message.mes);
   // Reuse persisted tags after stop/reload. Image failures must never invoke the LLM again.
   if (tags.length) {
@@ -133,7 +117,8 @@ async function planFloorNow(floor: number): Promise<PlanResult> {
     return { status: 'tagged', tagCount: tags.length };
   }
   const sourceHash = promptHash(stripImageTags(at.message.mes));
-  // Do not reuse old no-images results: older de-dup rules skipped later novel sections.
+  const previous = at.message.extra?.bbiNovelPlan as { status?: string; sourceHash?: string } | undefined;
+  if (previous?.status === 'no-images' && previous.sourceHash === sourceHash) return { status: 'no-images', tagCount: 0 };
   const task = (async (): Promise<PlanResult> => {
     const result = await requestNovelFloorTags(floor);
     const current = at.assert();
@@ -146,7 +131,8 @@ async function planFloorNow(floor: number): Promise<PlanResult> {
     markDirty(floor, at);
     return { status: result.status, tagCount: savedTags.length };
   })();
-  return await task;
+  planning.set(key, task);
+  try { return await task; } finally { if (planning.get(key) === task) planning.delete(key); }
 }
 
 function runSlot(floor: number, seq: number, rawTag: string): Promise<void> {
@@ -182,13 +168,11 @@ function runSlot(floor: number, seq: number, rawTag: string): Promise<void> {
     let output: Awaited<ReturnType<typeof generateImage>> | undefined;
     try {
       assert();
-      const scene = generationSceneSnapshot(floor, at.swipe, seq, rawTag);
-      output = await generateImage({ prompt: scene.prompt ?? content.tag, nl: content.nl, negative: content.negative, characters: content.characters, size: content.size, seed, referenceVibes: scene.referenceVibes }, signal, {
+      output = await generateImage({ prompt: content.tag, nl: content.nl, negative: content.negative, characters: content.characters, size: content.size, seed }, signal, {
         onStart: () => setGenPhase(slot, token, 'generating'),
         onQueue: ahead => setQueueAhead(slot, token, ahead),
         onRetry: retry => setGenRetry(slot, token, retry),
       });
-      output.meta.scene = scene.trace;
       assert();
       await saveImageResult(floor, at.swipe, seq, rawTag, seed, output.result, output.meta, assert);
       if (historyId !== null) safeHistory(() => finishImage(historyId));
@@ -221,4 +205,4 @@ async function generateFloor(floor: number) {
   return { status: failures.length ? 'failed' as const : 'ready' as const, failures, ...floorStatus(floor) };
 }
 
-export const novelReader = Object.freeze({ version: 1 as const, pipelineRevision: 2 as const, planFloor, generateFloor, getFloorStatus: floorStatus, refresh });
+export const novelReader = Object.freeze({ version: 1 as const, planFloor, generateFloor, getFloorStatus: floorStatus, refresh });

@@ -11,7 +11,7 @@
  */
 
 import { WARDROBE_CATEGORIES } from '@/data/wardrobe';
-import type { FandomPreset, NsfwLevel, PoseCategoryId, PoseEntry, WardrobeItem, WardrobeSlot } from '@/data/loreTypes';
+import type { NsfwLevel, PoseCategoryId, PoseEntry, WardrobeItem, WardrobeSlot } from '@/data/loreTypes';
 import { POSE_CATEGORIES } from '@/data/poseBank';
 
 const STORAGE_KEY = 'moying_image_custom_lore';
@@ -19,7 +19,6 @@ const STORAGE_KEY = 'moying_image_custom_lore';
 /** 上限:再多就不是"挑几套自己喜欢"的量级了,而且召回要遍历全部条目。 */
 const MAX_WARDROBE = 600;
 const MAX_POSES = 200;
-const MAX_FANDOM = 400;
 
 const SLOT_IDS: ReadonlySet<string> = new Set<WardrobeSlot>([
   'full',
@@ -46,7 +45,6 @@ export const WARDROBE_SLOT_LABELS: ReadonlyArray<{ id: WardrobeSlot; label: stri
 export interface CustomLoreStore {
   wardrobe: WardrobeItem[];
   poses: PoseEntry[];
-  fandom: FandomPreset[];
 }
 
 /** 表单提交的形状:UI 只填必要字段,id 与清洗由这里负责。 */
@@ -71,20 +69,9 @@ export interface CustomPoseInput {
   note?: string;
 }
 
-export interface CustomFandomInput {
-  name: string;
-  tags: string;
-  aliases: string;
-  franchise?: string;
-  hair?: string;
-  eyes?: string;
-  nsfw?: NsfwLevel;
-  note?: string;
-}
-
 /** 空 store:localStorage 不可用(SSR / 测试 / 隐私模式)时的安全返回值。 */
 function emptyStore(): CustomLoreStore {
-  return { wardrobe: [], poses: [], fandom: [] };
+  return { wardrobe: [], poses: [] };
 }
 
 function storage(): Storage | null {
@@ -163,30 +150,6 @@ function normalizePose(raw: unknown, index: number): PoseEntry | null {
   };
 }
 
-function normalizeFandom(raw: unknown, index: number): FandomPreset | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const o = raw as Record<string, unknown>;
-  const name = String(o.name ?? '').trim();
-  const tags = String(o.tags ?? '').trim();
-  if (!name || !tags) return null;
-  const nsfwRaw = Number(o.nsfw);
-  const nsfw = (Number.isFinite(nsfwRaw) ? Math.min(3, Math.max(0, Math.round(nsfwRaw))) : 0) as NsfwLevel;
-  const aliases = Array.isArray(o.aliases)
-    ? o.aliases.map(alias => String(alias).trim()).filter(Boolean)
-    : splitList(String(o.aliases ?? ''));
-  return {
-    id: String(o.id ?? '').trim() || `uf-${index}`,
-    name,
-    tags,
-    aliases: aliases.length ? aliases : [name],
-    nsfw,
-    franchise: String(o.franchise ?? '').trim() || '自定义同人',
-    hair: typeof o.hair === 'string' && o.hair.trim() ? o.hair.trim() : undefined,
-    eyes: typeof o.eyes === 'string' && o.eyes.trim() ? o.eyes.trim() : undefined,
-    note: typeof o.note === 'string' && o.note.trim() ? o.note.trim() : undefined,
-  };
-}
-
 let cache: CustomLoreStore | null = null;
 
 /** 读全量自定义条目(带缓存;写操作会重置缓存)。 */
@@ -201,7 +164,6 @@ export function loadCustomLore(): CustomLoreStore {
     const parsed = JSON.parse(box.getItem(STORAGE_KEY) || 'null') as Record<string, unknown> | null;
     const wardrobeRaw = Array.isArray(parsed?.wardrobe) ? (parsed!.wardrobe as unknown[]) : [];
     const posesRaw = Array.isArray(parsed?.poses) ? (parsed!.poses as unknown[]) : [];
-    const fandomRaw = Array.isArray(parsed?.fandom) ? (parsed!.fandom as unknown[]) : [];
     cache = {
       wardrobe: wardrobeRaw
         .map((item, index) => normalizeWardrobe(item, index))
@@ -211,10 +173,6 @@ export function loadCustomLore(): CustomLoreStore {
         .map((item, index) => normalizePose(item, index))
         .filter((item): item is PoseEntry => !!item)
         .slice(0, MAX_POSES),
-      fandom: fandomRaw
-        .map((item, index) => normalizeFandom(item, index))
-        .filter((item): item is FandomPreset => !!item)
-        .slice(0, MAX_FANDOM),
     };
   } catch {
     cache = emptyStore();
@@ -239,10 +197,6 @@ export function customWardrobe(): WardrobeItem[] {
 
 export function customPoses(): PoseEntry[] {
   return loadCustomLore().poses;
-}
-
-export function customFandom(): FandomPreset[] {
-  return loadCustomLore().fandom;
 }
 
 /** 新条目的 id:时间戳 + 序号,足够在单机内唯一,也不与内置的 w2- 前缀冲突。 */
@@ -290,37 +244,7 @@ export function addCustomWardrobe(input: CustomWardrobeInput): AddResult<Wardrob
     category: WARDROBE_CATEGORIES.some(c => c.id === input.category) ? input.category : 'costume',
     slot: input.slot,
   };
-  persist({ wardrobe: [...store.wardrobe, item], poses: store.poses, fandom: store.fandom });
-  return { ok: true, item };
-}
-
-/** 新增一条自定义同人角色。 */
-export function addCustomFandom(input: CustomFandomInput): AddResult<FandomPreset> {
-  const store = loadCustomLore();
-  const name = input.name.trim();
-  const tags = input.tags.trim().replace(/\s+/g, ' ');
-  if (!name) return { ok: false, error: '角色名称不能为空' };
-  if (!tags) return { ok: false, error: 'tag 串不能为空' };
-  const aliasesRaw = splitList(input.aliases);
-  const aliases = aliasesRaw.length ? aliasesRaw : [name];
-  if (store.fandom.some(item => nameKey(item) === name.toLowerCase())) {
-    return { ok: false, error: `已经有同名同人角色「${name}」了` };
-  }
-  if (store.fandom.length >= MAX_FANDOM) {
-    return { ok: false, error: `自定义同人已达上限 ${MAX_FANDOM} 条` };
-  }
-  const item: FandomPreset = {
-    id: nextId('uf-', store.fandom),
-    name,
-    tags,
-    aliases,
-    nsfw: input.nsfw ?? 0,
-    franchise: input.franchise?.trim() || '自定义同人',
-    hair: input.hair?.trim() || undefined,
-    eyes: input.eyes?.trim() || undefined,
-    note: input.note?.trim() || undefined,
-  };
-  persist({ wardrobe: store.wardrobe, poses: store.poses, fandom: [...store.fandom, item] });
+  persist({ wardrobe: [...store.wardrobe, item], poses: store.poses });
   return { ok: true, item };
 }
 
@@ -352,7 +276,7 @@ export function addCustomPose(input: CustomPoseInput): AddResult<PoseEntry> {
     camera: input.camera?.trim() || undefined,
     note: input.note?.trim() || undefined,
   };
-  persist({ wardrobe: store.wardrobe, poses: [...store.poses, item], fandom: store.fandom });
+  persist({ wardrobe: store.wardrobe, poses: [...store.poses, item] });
   return { ok: true, item };
 }
 
@@ -384,39 +308,7 @@ export function updateCustomWardrobe(id: string, input: CustomWardrobeInput): Ad
   };
   const wardrobe = [...store.wardrobe];
   wardrobe[index] = item;
-  persist({ wardrobe, poses: store.poses, fandom: store.fandom });
-  return { ok: true, item };
-}
-
-/** 修改一条自定义同人角色。 */
-export function updateCustomFandom(id: string, input: CustomFandomInput): AddResult<FandomPreset> {
-  const store = loadCustomLore();
-  const index = store.fandom.findIndex(item => item.id === id);
-  if (index < 0) return { ok: false, error: '找不到要修改的条目(可能已被删除)' };
-  const name = input.name.trim();
-  const tags = input.tags.trim().replace(/\s+/g, ' ');
-  if (!name) return { ok: false, error: '名称不能为空' };
-  if (!tags) return { ok: false, error: 'tag 串不能为空' };
-  const aliasesRaw = splitList(input.aliases);
-  const aliases = aliasesRaw.length ? aliasesRaw : [name];
-  if (store.fandom.some((item, at) => at !== index && nameKey(item) === name.toLowerCase())) {
-    return { ok: false, error: `已经有同名条目「${name}」了` };
-  }
-  const before = store.fandom[index];
-  const item: FandomPreset = {
-    ...before,
-    name,
-    tags,
-    aliases,
-    nsfw: input.nsfw ?? before.nsfw ?? 0,
-    franchise: input.franchise?.trim() || before.franchise || '自定义同人',
-    hair: input.hair?.trim() || undefined,
-    eyes: input.eyes?.trim() || undefined,
-    note: input.note?.trim() || undefined,
-  };
-  const fandom = [...store.fandom];
-  fandom[index] = item;
-  persist({ wardrobe: store.wardrobe, poses: store.poses, fandom });
+  persist({ wardrobe, poses: store.poses });
   return { ok: true, item };
 }
 
@@ -450,28 +342,22 @@ export function updateCustomPose(id: string, input: CustomPoseInput): AddResult<
   };
   const poses = [...store.poses];
   poses[index] = item;
-  persist({ wardrobe: store.wardrobe, poses, fandom: store.fandom });
+  persist({ wardrobe: store.wardrobe, poses });
   return { ok: true, item };
 }
 
 /** 删除一条自定义条目(只能删自定义的,内置条目不动)。 */
-export function removeCustomLore(kind: 'wardrobe' | 'pose' | 'fandom', id: string): boolean {
+export function removeCustomLore(kind: 'wardrobe' | 'pose', id: string): boolean {
   const store = loadCustomLore();
   if (kind === 'wardrobe') {
     const next = store.wardrobe.filter(item => item.id !== id);
     if (next.length === store.wardrobe.length) return false;
-    persist({ wardrobe: next, poses: store.poses, fandom: store.fandom });
-    return true;
-  }
-  if (kind === 'fandom') {
-    const next = store.fandom.filter(item => item.id !== id);
-    if (next.length === store.fandom.length) return false;
-    persist({ wardrobe: store.wardrobe, poses: store.poses, fandom: next });
+    persist({ wardrobe: next, poses: store.poses });
     return true;
   }
   const next = store.poses.filter(item => item.id !== id);
   if (next.length === store.poses.length) return false;
-  persist({ wardrobe: store.wardrobe, poses: next, fandom: store.fandom });
+  persist({ wardrobe: store.wardrobe, poses: next });
   return true;
 }
 
@@ -636,13 +522,12 @@ export function guessWardrobeSlot(tags: string, labels: string[] = []): string {
 /** 导出成 JSON 文本(可直接贴给别人,或存进网盘当备份)。 */
 export function exportCustomLoreJson(): string {
   const store = loadCustomLore();
-  return JSON.stringify({ version: 1, wardrobe: store.wardrobe, poses: store.poses, fandom: store.fandom }, null, 2);
+  return JSON.stringify({ version: 1, wardrobe: store.wardrobe, poses: store.poses }, null, 2);
 }
 
 export interface ImportReport {
   wardrobe: number;
   poses: number;
-  fandom?: number;
   skipped: number;
   error?: string;
 }
@@ -699,7 +584,6 @@ export function importCustomLoreJson(raw: string): ImportReport {
   const store = loadCustomLore();
   const wardrobe = [...store.wardrobe];
   const poses = [...store.poses];
-  const fandom = [...store.fandom];
   let skipped = 0;
   const pushWardrobe = (value: unknown) => {
     const item = normalizeWardrobe(value, wardrobe.length);
@@ -733,56 +617,34 @@ export function importCustomLoreJson(raw: string): ImportReport {
     }
     poses.push({ ...item, id: nextId('up-', poses) });
   };
-  const pushFandom = (value: unknown) => {
-    const item = normalizeFandom(value, fandom.length);
-    if (!item || !item.aliases.length) {
-      skipped += 1;
-      return;
-    }
-    if (fandom.some(exist => nameKey(exist) === nameKey(item))) {
-      skipped += 1;
-      return;
-    }
-    if (fandom.length >= MAX_FANDOM) {
-      skipped += 1;
-      return;
-    }
-    fandom.push({ ...item, id: nextId('uf-', fandom) });
-  };
 
   if (Array.isArray(parsed)) {
     for (const entry of parsed) {
-      const obj = entry as Record<string, unknown>;
-      const category = String(obj?.category ?? '').trim();
-      if (typeof obj?.franchise === 'string' || /\d+(?:\.\d+)?::/.test(String(obj?.tags ?? ''))) pushFandom(entry);
-      else if (POSE_CATEGORIES.some(c => c.id === category)) pushPose(entry);
+      const category = String((entry as Record<string, unknown>)?.category ?? '').trim();
+      if (POSE_CATEGORIES.some(c => c.id === category)) pushPose(entry);
       else pushWardrobe(entry);
     }
   } else if (parsed && typeof parsed === 'object') {
     const box = parsed as Record<string, unknown>;
     const wardrobeRaw = Array.isArray(box.wardrobe) ? box.wardrobe : [];
     const posesRaw = Array.isArray(box.poses) ? box.poses : [];
-    const fandomRaw = Array.isArray(box.fandom) ? box.fandom : [];
-    if (!wardrobeRaw.length && !posesRaw.length && !fandomRaw.length) {
+    if (!wardrobeRaw.length && !posesRaw.length) {
       // 单条对象:按 category 猜归属
       const category = String(box.category ?? '').trim();
-      if (typeof box.franchise === 'string' || /\d+(?:\.\d+)?::/.test(String(box.tags ?? ''))) pushFandom(box);
-      else if (POSE_CATEGORIES.some(c => c.id === category)) pushPose(box);
+      if (POSE_CATEGORIES.some(c => c.id === category)) pushPose(box);
       else pushWardrobe(box);
     } else {
       for (const entry of wardrobeRaw) pushWardrobe(entry);
       for (const entry of posesRaw) pushPose(entry);
-      for (const entry of fandomRaw) pushFandom(entry);
     }
   } else {
     return { wardrobe: 0, poses: 0, skipped: 0, error: '无法识别的结构' };
   }
 
-  persist({ wardrobe, poses, fandom });
+  persist({ wardrobe, poses });
   return {
     wardrobe: wardrobe.length - store.wardrobe.length,
     poses: poses.length - store.poses.length,
-    fandom: fandom.length - store.fandom.length,
     skipped,
   };
 }

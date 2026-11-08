@@ -38,12 +38,11 @@ import {
 } from '@/floor/storage';
 import { isTagPlanning } from '@/floor/tagPlanState';
 import { formatGenerationMeta } from '@/generationMeta';
-import { generationSceneSnapshot } from '@/floor/sceneSnapshot';
 import { activeComfyPreset, activeOrientationLock, imageDisplayMaxHeight, settings } from '@/state/settings';
 import { beginImage, failImage, finishImage, safeHistory } from '@/state/history';
 import { copyText } from '@/st/clipboard';
 import { getContext } from '@/st/context';
-import { formatPromptText, parseImageTags } from '@/st/imageTagRegex';
+import { formatPromptText } from '@/st/imageTagRegex';
 
 /**
  * 楼层生图卡片(DESIGN-FLOOR-UI.md §8)。
@@ -267,7 +266,6 @@ async function generate(fresh = false): Promise<void> {
   // 本次任务的输入全部就地取值:请求在途时本组件很可能已被重水合销毁
   // (任一兄弟槽位出图都会触发全楼重建),销毁后再读 props 不可靠。
   const job = {
-    chatId: props.chatId,
     messageId: props.messageId,
     swipeId: props.swipeId,
     seq: props.seq,
@@ -282,19 +280,8 @@ async function generate(fresh = false): Promise<void> {
   const { signal, token } = beginGen(slot, currentHash, naiActive.value ? 'queued' : 'generating');
   // 历史记录 id:在 seed 确定后才登记(见下),故这里先置空,catch 里据此判断要不要收尾。
   let historyId: number | null = null;
-  let output: Awaited<ReturnType<typeof generateImage>> | undefined;
-  const expectedMessage = getContext()?.chat[job.messageId];
-  const assert = () => {
-    const ctx = getContext(), current = ctx?.chat[job.messageId];
-    const same = current === expectedMessage || Boolean(expectedMessage?.send_date && current?.send_date === expectedMessage.send_date && current.name === expectedMessage.name);
-    if (ctx?.getCurrentChatId?.() !== job.chatId || !same || (current?.swipe_id ?? 0) !== job.swipeId
-      || parseImageTags(current?.mes ?? '')[job.seq] !== job.tag || !isCurrentGen(slot, token)) {
-      throw new DOMException('聊天、楼层或提示词已变化，旧图片不会写入当前聊天', 'AbortError');
-    }
-  };
 
   try {
-    assert();
     // 发起时就确定种子(NAI 面板种子 > 0 时用固定值;否则随机),随结果落盘进 extra
     // (entry.seed),历史翻页可查/可复用。口径在 generate.ts,与公开接口同源。
     const seed = decideSeed(settings.defaultBackend, undefined, fresh);
@@ -314,28 +301,25 @@ async function generate(fresh = false): Promise<void> {
         seq: job.seq,
       }),
     );
-    const scene = generationSceneSnapshot(job.messageId, job.swipeId, job.seq, job.tag);
-    if (!scene.stateSourceValid) toastr.warning('此图没有当前有效的剧情状态快照，沿用已保存提示词', '墨影');
-    const referenceVibes = scene.referenceVibes;
     // 闸门、后端分派都在 generateImage 里(公开接口走同一条路,见 generate.ts);
     // 本组件只把进度回调接到自己的槽位运行态上。
-    const { result, meta } = await generateImage({ ...job, prompt: scene.prompt ?? job.prompt, seed, referenceVibes }, signal, {
+    const { result, meta } = await generateImage({ ...job, seed }, signal, {
       onStart: () => setGenPhase(slot, token, 'generating'),
       onQueue: ahead => setQueueAhead(slot, token, ahead),
       onRetry: retry => setGenRetry(slot, token, retry),
     });
-    output = { result, meta } as Awaited<ReturnType<typeof generateImage>>;
-    meta.scene = scene.trace;
     // 图已经拿到手:此时若发现本任务已被取代(取消后重绘 / reconcile),不要落盘,
     // 否则会把旧提示词的结果写进 extra,并触发一次多余的重水合打断新任务。
     if (!isCurrentGen(slot, token)) {
+      result.revoke();
       // 图出来了却被丢弃,历史里记成「已取消」——否则这条会永远停在「进行中」。
       if (historyId !== null) safeHistory(() => failImage(historyId!, '', true));
       return;
     }
     // 落盘:图片进 ST 文件系统 + extra 写指针。成功后重水合,
     // 卡片从 extra 恢复为 ready(blob/dataURL 生命周期随之结束)。
-    await saveImageResult(job.messageId, job.swipeId, job.seq, job.tag, seed, result, meta, assert);
+    await saveImageResult(job.messageId, job.swipeId, job.seq, job.tag, seed, result, meta);
+    result.revoke();
     if (historyId !== null) safeHistory(() => finishImage(historyId!));
     // 先清运行态再重水合:重水合会重建本组件,清完才不会带着 generating 复活
     clearGen(slot, token);
@@ -351,8 +335,6 @@ async function generate(fresh = false): Promise<void> {
     } else {
       failGen(slot, token, e instanceof Error ? e.message : String(e));
     }
-  } finally {
-    output?.result.revoke();
   }
 }
 

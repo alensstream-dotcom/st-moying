@@ -1,6 +1,5 @@
 import { getContext, type STMessage } from '@/st/context';
 import { reactive } from 'vue';
-import { stateHash, transcriptRevisions, type SceneDelta } from '@/state/sceneState';
 
 /**
  * 角色固定外貌库。
@@ -150,8 +149,6 @@ export interface CharTagChangeRecord {
 }
 
 export interface CharTagEntry {
-  characterId?: string;
-  aliases?: string[];
   name: string;
   fields: Record<CharTagField, string>;
   raw: string;
@@ -188,8 +185,6 @@ export interface CharTagFloorDelta {
   v: 1;
   swipe: number;
   ops: CharTagAutoOp[];
-  scene?: SceneDelta;
-  legacyBackup?: unknown;
 }
 
 export const BBI_CHAR_EXTRA_KEY = 'bbiCharChanges';
@@ -317,8 +312,6 @@ function normalizeEntry(raw: unknown): CharTagEntry | null {
   if (!rawTag && charFieldsEmpty(fields)) return null;
   return {
     name,
-    ...(typeof value.characterId === 'string' && value.characterId ? { characterId: value.characterId } : {}),
-    ...(Array.isArray(value.aliases) ? { aliases: value.aliases.filter((a): a is string => typeof a === 'string' && !!a.trim()).map(a => a.trim()) } : {}),
     fields,
     raw: rawTag,
     nl: typeof value.nl === 'string' ? value.nl.trim() : '',
@@ -331,7 +324,6 @@ function normalizeEntry(raw: unknown): CharTagEntry | null {
 function cloneEntry(entry: CharTagEntry): CharTagEntry {
   return {
     ...entry,
-    ...(entry.aliases ? { aliases: [...entry.aliases] } : {}),
     fields: { ...entry.fields },
     history: entry.history.map(record => ({ ...record })),
   };
@@ -395,7 +387,7 @@ export function readCharTagFloorDelta(message: STMessage | undefined): CharTagFl
   if (value.v !== 1 || !Array.isArray(value.ops)) return null;
   const swipe = typeof value.swipe === 'number' && Number.isInteger(value.swipe) ? value.swipe : 0;
   const ops = value.ops.map(normalizeAutoOp).filter((op): op is CharTagAutoOp => !!op);
-  return { ...value, v: 1, swipe, ops };
+  return { v: 1, swipe, ops };
 }
 
 function activeSwipe(message: STMessage): number {
@@ -503,12 +495,10 @@ export function deriveCharTags(
 ): CharTagEntry[] {
   let entries = seedEntries.map(cloneEntry);
   const end = Math.min(Math.max(0, upToExclusive), chat.length);
-  const revisions = transcriptRevisions(chat, end - 1);
   for (let floor = 0; floor < end; floor += 1) {
     const message = chat[floor];
     const delta = readCharTagFloorDelta(message);
     if (!delta || delta.swipe !== activeSwipe(message)) continue;
-    if (delta.scene && delta.scene.revision !== revisions[floor]) continue;
     entries = applyCharTagOps(entries, delta.ops, floor, locked);
   }
   return entries;
@@ -519,8 +509,8 @@ export function charTagsBeforeFloor(floor: number): CharTagEntry[] {
   return deriveCharTags(mergedSeedEntries(), chat, floor, lockedCharTagNames());
 }
 
-export function makeCharTagFloorDelta(ops: CharTagAutoOp[], swipe: number, scene?: SceneDelta, legacyBackup?: unknown): CharTagFloorDelta | undefined {
-  return ops.length || scene ? { v: 1, swipe, ops, ...(scene ? { scene } : {}), ...(legacyBackup ? { legacyBackup } : {}) } : undefined;
+export function makeCharTagFloorDelta(ops: CharTagAutoOp[], swipe: number): CharTagFloorDelta | undefined {
+  return ops.length ? { v: 1, swipe, ops } : undefined;
 }
 
 export function recomputeCharTags(): void {
@@ -531,8 +521,7 @@ export function recomputeCharTags(): void {
 }
 
 export function hydrateCharTags(): void {
-  const metadata = getContext()?.chatMetadata;
-  const raw = metadata?.[META_KEY] ?? metadata?.baibai_image_char_tags;
+  const raw = getContext()?.chatMetadata?.[META_KEY];
   // v2 的整库快照无法可靠反推来源楼层,迁移时作为基线保留,避免丢用户现有数据。
   baseEntries = normalizeCharTagStore(raw);
   recomputeCharTags();
@@ -559,9 +548,8 @@ function stripOpsFromExtra(extra: Record<string, unknown> | undefined, names: Se
     .map(normalizeAutoOp)
     .filter((op): op is CharTagAutoOp => !!op && !names.has(op.name));
   if (nextOps.length === value.ops.length) return false;
-  if (nextOps.length || value.scene) {
+  if (nextOps.length) {
     extra[BBI_CHAR_EXTRA_KEY] = {
-      ...value,
       v: 1,
       swipe: typeof value.swipe === 'number' ? value.swipe : 0,
       ops: nextOps,
@@ -612,8 +600,6 @@ export function upsertCharTag(
   const previous = findCharTag(oldName ?? name);
   const next: CharTagEntry = {
     name,
-    characterId: entry.characterId ?? previous?.characterId ?? `char_${stateHash(`${getContext()?.getCurrentChatId?.() ?? ''}\0${previous?.name ?? name}`)}`,
-    aliases: [...new Set([name, ...(entry.aliases ?? previous?.aliases ?? []), ...(oldName ? [oldName] : [])])],
     fields: normalizeFields(entry.fields),
     raw: entry.raw.trim(),
     nl: entry.nl.trim(),
@@ -705,7 +691,5 @@ export function bindCharTagSync(): void {
   if (context.eventTypes.MESSAGE_SWIPED) {
     context.eventSource.on(context.eventTypes.MESSAGE_SWIPED, recomputeLater);
   }
-  if (context.eventTypes.MESSAGE_UPDATED) context.eventSource.on(context.eventTypes.MESSAGE_UPDATED, recomputeLater);
-  if (context.eventTypes.MESSAGE_EDITED) context.eventSource.on(context.eventTypes.MESSAGE_EDITED, recomputeLater);
   hydrateCharTags();
 }

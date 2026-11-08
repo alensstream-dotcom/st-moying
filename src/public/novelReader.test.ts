@@ -39,22 +39,6 @@ beforeEach(() => {
 });
 
 describe('headless novel pipeline', () => {
-  it('uses persisted appearance references and records the same frame for headless novel images', async () => {
-    await novelReader.planFloor(0);
-    mocks.chat[0].extra!.bbiCharChanges = { swipe: 0, scene: {
-      v: 1, revision: 'saved-source', events: [], rejected: [], frames: [{
-        tag, sourceLine: 0, warnings: [], characters: [{ name: '林疏桐', visualBindings: [{
-          scope: 'appearance', resolved: { vibe: { id: 'locked-face', dataPath: '/user/files/immutable-face.json' } },
-        }] }],
-      }],
-    } };
-    await novelReader.generateFloor(0);
-    expect(mocks.generate.mock.calls[0][0].referenceVibes).toEqual([{ id: 'locked-face', dataPath: '/user/files/immutable-face.json' }]);
-    const savedMeta = mocks.saveImage.mock.calls[0][6];
-    expect(savedMeta.scene.frame.tag).toBe(tag);
-    expect(savedMeta.scene.stateSourceValid).toBe(false);
-    expect(savedMeta.scene.floor).toBe(0);
-  });
   it('plans the next floor while the first floor image is still in flight, without any DOM', async () => {
     const image = deferred<ReturnType<typeof output>>();
     mocks.generate.mockReturnValueOnce(image.promise);

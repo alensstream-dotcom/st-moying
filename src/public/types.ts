@@ -34,10 +34,8 @@ export interface PublicCapabilities {
 export type PublicCharacterFields = Record<CharTagField, string>;
 
 export interface PublicCharacter {
-  characterId?: string;
   /** 角色名。**逐字原样**,不音译不规范化(生图 tag 与正文靠它对齐)。 */
   name: string;
-  aliases?: string[];
   /**
    * 可直接用于生图的完整 tag 串。
    * 由 fields 按固定顺序(同人身份→性别→年龄段→头发→眼睛→肤色→体型→标志特征→着装)拼成;
@@ -76,29 +74,6 @@ export interface GetCharactersOptions {
   floor?: number;
 }
 
-export interface GetSceneOptions {
-  /** Inclusive target floor; omitted means the current end. -1 reads only the manual baseline. */
-  floor?: number;
-  /** Original narrative line, not a DOM row. Omitted means end of the floor. */
-  sourceLine?: number;
-}
-export interface PublicSceneSnapshot {
-  apiVersion: typeof PUBLIC_API_VERSION;
-  pluginVersion: string;
-  chatId: string | null;
-  floor: number;
-  sourceLine: number | null;
-  characters: Array<{
-    characterId: string; name: string; work: string; aliases: string[];
-    identity: { gender: 'unknown' | 'female' | 'male'; confirmed: boolean; evidence: string; conflict?: string };
-    isHeroine: boolean;
-    baseAppearance: Record<string, string>; currentAppearance: Record<string, string>;
-    outfit?: { outfitInstanceId: string; design: string; garments: Array<{ id: string; design: string; state: Record<string, string> }>; provenance: string };
-    visualBindings: Array<{ materialId: string; version: number; scope: string; materialSeed: number; effectivePosition: { floor: number; line: number }; reason: string }>;
-  }>;
-  warnings: string[];
-}
-
 export interface PublicCharacterList {
   apiVersion: typeof PUBLIC_API_VERSION;
   pluginVersion: string;
@@ -130,10 +105,8 @@ export interface PublicBackendStatus {
 
 /** 多角色提示里的一位(NAI 4.5/V5 的 Character Prompt)。 */
 export interface PublicCharacterPrompt {
-  characterId?: string;
   /** 角色名,仅用于标识,不进提示词。 */
   name: string;
-  work?: string;
   /** 该角色的 tag(通常取 PublicCharacter.tag)。 */
   tag: string;
   /** 该角色的自然语言描述(可空)。 */
@@ -272,8 +245,6 @@ export interface STBaiBaiImageApi {
   readonly capabilities: PublicCapabilities;
   /** 取墨影已记录的角色列表(含可直接出图的 tag)。返回深拷贝,改它不影响墨影。 */
   getCharacters(options?: GetCharactersOptions): PublicCharacterList;
-  /** 取指定楼层/行号的确定性人物与穿搭状态快照。 */
-  getScene(options?: GetSceneOptions): PublicSceneSnapshot;
   /** 出图前先问问:后端配好了吗、支不支持多角色。 */
   getBackendStatus(): PublicBackendStatus;
   /** 调墨影生图。图返回给你,显示在哪由你决定。 */

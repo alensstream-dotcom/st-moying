@@ -1,5 +1,4 @@
 import { normalizeOrientation, type Orientation } from '@/backends/size';
-import { parseSceneEvents, type SceneEvent } from '@/state/sceneState';
 import type { TargetSegment } from '@/autoTag/clean';
 import { FORBIDDEN_SUBTAG, serializeImageTag } from '@/st/imageTagRegex';
 import {
@@ -10,8 +9,6 @@ import {
 } from '@/state/charTags';
 
 export interface ImageCharacterPrompt {
-  characterId?: string;
-  work?: string;
   name: string;
   tag: string;
   nl: string;
@@ -39,7 +36,6 @@ export interface ImageInsertion {
 }
 
 export interface ImagePlan {
-  sceneEvents?: SceneEvent[];
   images: ImageInsertion[];
   /** AI 报告的角色库变更(建档/字段更新);调用方负责落库。 */
   changes: CharChange[];
@@ -164,10 +160,7 @@ function sanitizeCharacters(value: unknown, imageIndex: number): ImageCharacterP
       const name = sanitizeContent(item.name, `characters[${index}].name`, imageIndex);
       const tag = sanitizeContent(item.tag ?? item.prompt, `characters[${index}].tag`, imageIndex);
       const nl = sanitizeContent(item.nl, `characters[${index}].nl`, imageIndex);
-      if (name && tag) characters.push({ name, tag, nl,
-        ...(typeof item.characterId === 'string' ? { characterId: item.characterId.trim() } : {}),
-        ...(typeof item.work === 'string' ? { work: item.work.trim() } : {}),
-      });
+      if (name && tag) characters.push({ name, tag, nl });
     } catch {
       // A malformed character prompt must not discard an otherwise valid image plan.
     }
@@ -247,7 +240,6 @@ export function parseImagePlan(
   }
   return {
     images: limitedImages,
-    ...(Array.isArray(parsed.sceneEvents) ? { sceneEvents: parseSceneEvents(parsed.sceneEvents, positions) } : {}),
     changes: parseChanges(parsed.changes, positions),
   };
 }

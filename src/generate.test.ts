@@ -193,7 +193,7 @@ describe('generateImage', () => {
     naiReady();
     const characters = [{ name: '阿黛尔', tag: '1girl', nl: '' }];
     await generateImage({ prompt: 'x', characters, seed: 5, size: 'landscape' });
-    expect(vi.mocked(generateNaiImage).mock.calls[0][1]).toMatchObject({
+    expect(vi.mocked(generateNaiImage).mock.calls[0][1]).toEqual({
       prompt: 'x', nl: '', characters, seed: 5, size: 'landscape',
     });
   });
@@ -302,7 +302,7 @@ describe('generateImage', () => {
     });
 
     const out = await generateImage({ prompt: '1girl', seed: 1 });
-    expect(out.meta).toMatchObject({
+    expect(out.meta).toEqual({
       backend: 'nai',
       model: 'nai-diffusion-4-5-full',
       positive: 'artist:wlop, 1girl, masterpiece',

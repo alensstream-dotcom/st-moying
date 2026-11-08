@@ -31,7 +31,7 @@ import {
   lookTextOf,
   scanLook,
 } from '@/data/lookMatch';
-import { customFandom, customPoses, customWardrobe } from '@/data/customLore';
+import { customPoses, customWardrobe } from '@/data/customLore';
 import type {
   BodyPreset,
   FacePreset,
@@ -104,11 +104,6 @@ export const FACE_CARDS: FaceCard[] = [
   ...[...BODY_PRESETS, ...BODY_EXTRA].map(preset => ({ ...preset, kind: 'body' as const })),
   ...[...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2].map(preset => ({ ...preset, kind: 'fandom' as const })),
 ];
-
-export function allFaceCards(): FaceCard[] {
-  const custom = customFandom().map(preset => ({ ...preset, kind: 'fandom' as const }));
-  return custom.length ? [...FACE_CARDS, ...custom] : FACE_CARDS;
-}
 
 const WARDROBE_CATEGORY_LABEL = new Map<string, string>(WARDROBE_CATEGORIES.map(c => [c.id, c.label]));
 const POSE_CATEGORY_LABEL = new Map<string, string>(POSE_CATEGORIES.map(c => [c.id, c.label]));
@@ -218,8 +213,7 @@ function collectFaceCandidates(
   const fandom: LoreHit<FaceCard>[] = [];
   const hay = body.toLowerCase();
   const bodyLook = scanLook(body);
-  const cards = allFaceCards();
-  for (const card of cards) {
+  for (const card of FACE_CARDS) {
     if (card.kind !== 'fandom' || card.nsfw > maxNsfw) continue;
     const preset = card as FandomPreset;
     const franchise = (preset.franchise ?? '').trim();
@@ -261,7 +255,7 @@ function collectFaceCandidates(
   // 脸型与体型:正文写了气质/外形词才召回,与原先口径一致。
   const byKind = (kind: FaceCardKind): LoreHit<FaceCard>[] => {
     const scored: LoreHit<FaceCard>[] = [];
-    for (const card of cards) {
+    for (const card of FACE_CARDS) {
       if (card.kind !== kind || card.nsfw > maxNsfw) continue;
       const { score, hits } = scoreLore(card, body, vibes);
       if (score > 0) scored.push({ item: card, score, hits, category: kind });
@@ -294,7 +288,7 @@ function collectFaceCandidates(
   // 被说成「正文点名」,只是「挑一条最近的」。
   if (!picked.length) {
     const anyKind = (kind: FaceCardKind): LoreHit<FaceCard>[] =>
-      cards.filter(card => card.kind === kind && card.nsfw <= maxNsfw)
+      FACE_CARDS.filter(card => card.kind === kind && card.nsfw <= maxNsfw)
         .sort((a, b) => tie(a.id, b.id))
         .map(card => ({ item: card, score: 0, hits: [], category: kind }));
     picked.push(...anyKind('face').slice(0, Math.max(1, Math.ceil(limit / 2))));
@@ -578,5 +572,5 @@ export function allPoseItems(): PoseEntry[] {
 }
 
 export function allFandomItems(): FandomPreset[] {
-  return [...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2, ...customFandom()];
+  return [...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2];
 }

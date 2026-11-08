@@ -218,10 +218,7 @@ export function parseImageTagContent(raw: string): ImageTagContent {
           const name = oneLine(typeof rawItem.name === 'string' ? rawItem.name : '');
           const tag = oneLine(typeof rawItem.tag === 'string' ? rawItem.tag : '');
           const nl = oneLine(typeof rawItem.nl === 'string' ? rawItem.nl : '');
-          return name && tag ? [{ name, tag, nl,
-            ...(typeof rawItem.characterId === 'string' ? { characterId: oneLine(rawItem.characterId) } : {}),
-            ...(typeof rawItem.work === 'string' ? { work: oneLine(rawItem.work) } : {}),
-          }] : [];
+          return name && tag ? [{ name, tag, nl }] : [];
         });
       }
     } catch {
