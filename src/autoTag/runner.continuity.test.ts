@@ -45,6 +45,49 @@ beforeEach(() => {
 });
 
 describe('actual runner persistence and compiled requests', () => {
+  it('keeps saved state valid when a tag is inserted between physical paragraphs', async () => {
+    const ctx = mocks.ctx!;
+    ctx.chat.push(message('小雪是女子。小雪穿着青色外袍和白色内衫。\n\n她继续交谈。'));
+    await requestFloorTags(0);
+    expect(parseImageTags(ctx.chat[0].mes)).toHaveLength(1);
+    expect(sceneAt(0).warnings).not.toContain('floor 0: stale state ignored; re-analyse from this floor');
+    expect(sceneAt(0).characters[0].identity.gender).toBe('female');
+  });
+  it('persists era clothing for an identity-only newcomer without a legacy changes record', async () => {
+    const ctx = mocks.ctx!;
+    ctx.chatMetadata.bbi_world_visual_v1 = { setting: 'xianxia' };
+    ctx.chat.push(message('小雪是成年女子，站在庭院中。'));
+    response = { images: [image()], changes: [], sceneEvents: [{ name: '小雪', kind: 'identity', gender: 'female', isHeroine: true,
+      position: 'P1', evidence: '小雪是成年女子', appearance: { hair: 'silver hair', eyes: 'blue eyes' } }] };
+    await requestFloorTags(0);
+    const initial = sceneAt(0).characters[0];
+    expect(initial.outfit?.provenance).toContain('世界观视觉补全');
+    expect(initial.outfit?.garments.length).toBeGreaterThan(0);
+    expect(initial.baseAppearance.hair).toBe('silver hair');
+    expect(readCharTagFloorDelta(ctx.chat[0])?.scene?.events.some(e => e.kind === 'defaults')).toBe(true);
+    const identity = (response.sceneEvents as Array<{ appearance: Record<string, string> }>)[0];
+    identity.appearance = { hair: 'red hair', eyes: 'green eyes' };
+    await requestFloorTags(0, { replace: true });
+    expect(sceneAt(0).characters[0].baseAppearance.hair).toBe('silver hair');
+    expect(sceneAt(0).characters[0].outfit).toEqual(initial.outfit);
+    ctx.chat.push(message('小雪继续交谈，没有换装。'));
+    response = { images: [image()], changes: [], sceneEvents: [] };
+    await requestFloorTags(1);
+    expect(sceneAt(1).characters[0].outfit).toEqual(initial.outfit);
+    const compiled = parseImageTagContent(parseImageTags(ctx.chat[1].mes)[0]);
+    expect(compiled.characters[0].tag).toContain('silver hair');
+    expect(compiled.characters[0].tag).not.toContain('blonde hair');
+    expect(compiled.characters[0].tag).toContain(initial.outfit!.garments[0].design.split(',')[0]);
+  });
+  it('stops after one quota failure without retrying JSON repair or persisting partial state', async () => {
+    mocks.ctx!.chat.push(message('小雪是女子。小雪穿着青色外袍和白色内衫。'));
+    settings.autoTag.retryCount = 2;
+    mocks.complete.mockRejectedValueOnce(Object.assign(new Error('副 API 渠道额度不足'), { status: 429 }));
+    await requestFloorTags(0);
+    expect(mocks.complete).toHaveBeenCalledOnce();
+    expect(readCharTagFloorDelta(mocks.ctx!.chat[0])).toBeNull();
+    expect(parseImageTags(mocks.ctx!.chat[0].mes)).toEqual([]);
+  });
   it('applies a versioned clothing binding at the selected paragraph, preserves state and can undo', async () => {
     const ctx = mocks.ctx!;
     ctx.chat.push(message('小雪是女子。小雪穿着青色外袍和白色内衫。\n小雪解开外袍系带。'));

@@ -21,6 +21,24 @@ function save(chat: STMessage[], floor: number, events: SceneEvent[]) {
 }
 
 describe('versioned character and outfit state', () => {
+  it('treats a removal mislabeled as change as a state patch without replacing the outfit', () => {
+    const worn = applySceneEvents(state(), [dressing], 'a', 'v', 0);
+    const removal: SceneEvent = { name: '小雪', kind: 'outfit', operation: 'change', sourceLine: 1,
+      evidence: '小雪把外袍脱下放在椅上', garments: [{ id: 'outer', design: '', state: { location: 'on_chair', leftSleeve: 'off_arm' } }] };
+    const after = applySceneEvents(worn, [removal], 'a', 'v', 0);
+    expect(after.characters[0].outfit?.outfitInstanceId).toBe(worn.characters[0].outfit?.outfitInstanceId);
+    expect(after.characters[0].outfit?.garments[0].state.location).toBe('on_chair');
+    expect(after.characters[0].outfit?.garments[1].state.location).toBe('on_body');
+  });
+  it('does not apply another person\'s clothing or hair evidence to the target character', () => {
+    const wrongClothes = { ...dressing, evidence: '青云解开外袍系带' };
+    const wrongHair: SceneEvent = { name: '小雪', kind: 'appearance', sourceLine: 0, evidence: '青云染红头发', appearance: { hair: 'red hair' } };
+    const result = validateSceneEvents([wrongClothes, wrongHair], '青云解开外袍系带。青云染红头发');
+    expect(result.events).toEqual([]);
+    expect(result.rejected).toHaveLength(2);
+    const alias = { ...dressing, evidence: '雪姑娘穿着青色外袍和白色内衫' };
+    expect(validateSceneEvents([alias], alias.evidence, { characters: [{ name: '小雪', aliases: ['雪姑娘'] }] }).events).toHaveLength(1);
+  });
   it('blocks compilation across unloaded native-host history instead of silently resetting clothing', () => {
     const chat = [message('既有剧情'), null, message('当前剧情')] as unknown as STMessage[];
     expect(() => transcriptRevision(chat, 2)).not.toThrow();

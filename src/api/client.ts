@@ -1,4 +1,5 @@
 import { getContext } from '@/st/context';
+import { nativeStreamFailure } from './providerErrors';
 import type { ApiChannel } from '@/state/settings';
 import {
   beginLlm,
@@ -326,6 +327,8 @@ async function requestCompletionAtUrl(
       }));
     }
     // A response is still marked successful only after caller validation passes.
+    const hostFailure = nativeStreamFailure(result.content);
+    if (hostFailure) throw new ApiError(hostFailure.message, hostFailure.status);
     opts.validate?.(result.content, { finishReason: result.finishReason });
 
     if (historyId !== null) {
@@ -361,6 +364,17 @@ export async function readSseContent(
   resp: Response,
   finish?: { finishReason: string | null; nativeFinishReason: string | null },
 ): Promise<string> {
+  // Some compatible endpoints ignore stream=true and return a complete JSON reply.
+  if (resp.headers.get('content-type')?.includes('application/json')) {
+    const data = await resp.json();
+    if (data?.error) throw new ApiError(data.error.message || '副 API 返回错误');
+    const choice = data?.choices?.[0];
+    if (finish) {
+      finish.finishReason = choice?.finish_reason ?? null;
+      finish.nativeFinishReason = choice?.native_finish_reason ?? null;
+    }
+    return extractContent(data);
+  }
   const reader = resp.body?.getReader();
   if (!reader) {
     // 无法流式读取(理论上不会):退回当作整体 JSON 处理
@@ -378,8 +392,8 @@ export async function readSseContent(
   let reasoningOut = '';
   for (; ;) {
     const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
+    // EOF is also a line boundary. A valid final SSE event need not end in \n.
+    buf += done ? decoder.decode() + '\n' : decoder.decode(value, { stream: true });
     // 按行解析,保留最后一段不完整的行到下次
     const lines = buf.split('\n');
     buf = lines.pop() ?? '';
@@ -398,7 +412,9 @@ export async function readSseContent(
         }
         const src = choice?.delta ?? choice?.message;
         const piece = textOf(src?.content) || textOf(choice?.text);
-        if (piece) out += piece;
+        if (piece) {
+          out += piece;
+        }
         const reasoningPiece =
           textOf(src?.reasoning) || textOf(src?.reasoning_content) || textOf(src?.thinking);
         if (reasoningPiece) reasoningOut += reasoningPiece;
@@ -407,8 +423,12 @@ export async function readSseContent(
         // 单行解析失败忽略(可能是注释行/心跳)
       }
     }
+    if (done) break;
   }
-  return out.trim() || reasoningOut.trim();
+  const content = out.trim() || reasoningOut.trim();
+  const failure = nativeStreamFailure(content);
+  if (failure) throw new ApiError(failure.message, failure.status);
+  return content;
 }
 
 /** 把可能是 string / content-parts 数组 / 其他类型的值转成文本;非字符串成分一律丢弃。 */

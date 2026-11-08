@@ -29,6 +29,7 @@ import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import type { Orientation } from '@/backends/size';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { consumeAutoGenerate } from '@/floor/autoGenerate';
+import { generationSceneSnapshot } from '@/floor/sceneSnapshot';
 import { beginGen, clearGen, failGen, getGenRecord, hasActiveGen, pruneGenSlots, setGenPhase, setGenRetry, setQueueAhead, slotKey } from '@/floor/genState';
 import { hydrateMessage } from '@/floor/hydrate';
 import { isImageMissing } from '@/floor/missingImages';
@@ -233,7 +234,18 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
     }),
   );
 
+  let generated: Awaited<ReturnType<typeof generateImage>> | undefined;
+  const assert = () => {
+    const current = getContext(), next = current?.chat[job.messageId];
+    const same = next === message || Boolean(message?.send_date && next?.send_date === message.send_date && next.name === message.name);
+    if (!chatMatches(job.chatId) || !same || (next?.swipe_id ?? 0) !== job.swipeId
+      || parseImageTags(next?.mes ?? '')[job.seq] !== fullTag || handle.signal.aborted) {
+      throw new DOMException('聊天、楼层或提示词已变化，旧图片不会写入当前聊天', 'AbortError');
+    }
+  };
   try {
+    assert();
+    const scene = generationSceneSnapshot(job.messageId, job.swipeId, job.seq, fullTag);
     const { result, meta } = await generateImage(
       {
         prompt: job.prompt,
@@ -242,6 +254,7 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
         characters: job.characters,
         size: job.size,
         seed,
+        referenceVibes: scene.referenceVibes,
       },
       handle.signal ?? signal,
       {
@@ -250,8 +263,10 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
         onRetry: retry => setGenRetry(key, handle.token, retry),
       },
     );
-    await saveImageResult(job.messageId, job.swipeId, job.seq, fullTag, seed, result, meta);
-    result.revoke();
+    generated = { result, meta } as Awaited<ReturnType<typeof generateImage>>;
+    meta.scene = scene.trace;
+    assert();
+    await saveImageResult(job.messageId, job.swipeId, job.seq, fullTag, seed, result, meta, assert);
     if (historyId !== null) safeHistory(() => finishImage(historyId));
     clearGen(key, handle.token);
     dropPending(jobKey(job));
@@ -270,6 +285,8 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
     failGen(key, handle.token, message);
     enqueue({ ...job, tag: fullTag }, message);
     return 'failed';
+  } finally {
+    generated?.result.revoke();
   }
 }
 

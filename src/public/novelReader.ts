@@ -1,4 +1,5 @@
 import { requestNovelFloorTags } from '@/autoTag/runner';
+import { generationSceneSnapshot } from '@/floor/sceneSnapshot';
 import { clearAutoGenerateForFloor } from '@/floor/autoGenerate';
 import { beginGen, clearGen, failGen, getGenRecord, hasActiveGen, isCurrentGen, setGenPhase, setGenRetry, setQueueAhead, slotKey } from '@/floor/genState';
 import { hydrateMessage } from '@/floor/hydrate';
@@ -168,11 +169,13 @@ function runSlot(floor: number, seq: number, rawTag: string): Promise<void> {
     let output: Awaited<ReturnType<typeof generateImage>> | undefined;
     try {
       assert();
-      output = await generateImage({ prompt: content.tag, nl: content.nl, negative: content.negative, characters: content.characters, size: content.size, seed }, signal, {
+      const scene = generationSceneSnapshot(floor, at.swipe, seq, rawTag);
+      output = await generateImage({ prompt: content.tag, nl: content.nl, negative: content.negative, characters: content.characters, size: content.size, seed, referenceVibes: scene.referenceVibes }, signal, {
         onStart: () => setGenPhase(slot, token, 'generating'),
         onQueue: ahead => setQueueAhead(slot, token, ahead),
         onRetry: retry => setGenRetry(slot, token, retry),
       });
+      output.meta.scene = scene.trace;
       assert();
       await saveImageResult(floor, at.swipe, seq, rawTag, seed, output.result, output.meta, assert);
       if (historyId !== null) safeHistory(() => finishImage(historyId));

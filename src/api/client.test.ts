@@ -207,6 +207,23 @@ describe('extractContent:推理模型把答案塞进 reasoning', () => {
 });
 
 describe('readSseContent:流式', () => {
+  it('recognizes a native HTTP-200 SSE quota error as a provider failure, not truncated JSON', async () => {
+    const stream = 'data: '+JSON.stringify({ id: 'tauritavern-error-chunk-1', choices: [{ delta: { content: '[API 错误]\nOpenAI endpoint failed with status 429: quota exceeded' } }] })+'\n\ndata: [DONE]\n\n';
+    await expect(readSseContent(sseResponse(stream))).rejects.toMatchObject({ status: 429, message: expect.stringContaining('额度不足') });
+  });
+  it('does not discard the final event or finish reason when EOF has no newline', async () => {
+    const meta = { finishReason: null as string | null, nativeFinishReason: null as string | null };
+    const raw = 'data: {"choices":[{"delta":{"content":"{\\"images\\":[]}"},"finish_reason":"stop"}]}';
+    expect(await readSseContent(sseResponse(raw), meta)).toBe('{"images":[]}');
+    expect(meta.finishReason).toBe('stop');
+  });
+
+  it('accepts a compatible endpoint returning non-streaming JSON for a streaming request', async () => {
+    const meta = { finishReason: null as string | null, nativeFinishReason: null as string | null };
+    const response = new Response(JSON.stringify({ choices: [{ message: { content: '{"images":[]}' }, finish_reason: 'stop' }] }), { headers: { 'content-type': 'application/json; charset=utf-8' } });
+    expect(await readSseContent(response, meta)).toBe('{"images":[]}');
+    expect(meta.finishReason).toBe('stop');
+  });
   it('拼接 delta.content', async () => {
     const sse = [
       'data: {"choices":[{"delta":{"content":"Hel"}}]}',

@@ -1,4 +1,6 @@
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
+import { permanentCompletionFailure } from '@/api/providerErrors';
+import { withIntroductionDefaults } from '@/autoTag/sceneDefaults';
 import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { readBookMemory } from '@/autoTag/bookMemory';
 import {
@@ -739,6 +741,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           return;
         }
         lastError = error instanceof Error ? error.message : String(error);
+        if (permanentCompletionFailure(error)) break;
         // HTTP 层被拦时错误信息里带的是渠道原文(常见 400 + 「内容审核」),它进不了 validate
         // (内容为空时 client 直接抛错),所以这里补判一次。空内容同样按被拦处理:
         // 两者都要降载,判错方向的代价只是这一次重试更短,不会更差。
@@ -778,6 +781,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const floorOps = [...retainedDesigns, ...effectiveOps.map(item => item.op)];
     plan.images.sort((a, b) => a.sourceLine - b.sourceLine);
     const checkedEvents = validateSceneEvents(plan.sceneEvents ?? [], source, {
+      characters: sceneBefore.characters,
       card: messages.filter(m => m.role === 'system' && m.content.startsWith('【角色设定(角色卡设定')).map(m => m.content).join('\n'),
       worldbook: messages.filter(m => m.role === 'system' && m.content.startsWith('【世界设定(世界书激活')).map(m => m.content).join('\n'),
     });
@@ -796,6 +800,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     if (previousDelta?.swipe === (swipeId ?? 0)) restoreVisualSeeds(sceneBefore, previousDelta.scene?.designSeeds ?? []);
     fillWorldDefaults(sceneBefore, world, latestMaterials(), floor);
     sceneDelta.designSeeds = cloneVisual(sceneBefore.characters.filter(c => c.outfit && !priorOutfits.has(c.characterId)));
+    sceneDelta.events = withIntroductionDefaults(sceneBefore, sceneDelta.events, world, latestMaterials(), chatId, sceneRevision, floor,
+      previousDelta?.scene?.revision === sceneRevision ? previousDelta.scene.events : []);
     const eventsForFrame = [...sceneDelta.events, ...(manualEvents()[floor] ?? [])];
     const sceneAfter = applyConfirmations(applySceneEvents(sceneBefore, eventsForFrame, chatId, sceneRevision, floor));
     for (const op of floorOps) if (op.kind === 'new') {
@@ -961,7 +967,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         if (!rebased) return null;
         rebaseNote = describeRebase(rebased.report);
         writtenImages = rebased.images;
-        return injectImageTags(base, rebased.images);
+        const written = injectImageTags(base, rebased.images);
+        // Insertion may split a physical line or add paragraph separators. Record the
+        // revision of the text actually persisted, not the pre-insertion layout.
+        if (!slot) sceneDelta.revision = transcriptRevision(getContext()?.chat ?? [], floor, written);
+        return written;
       },
       chatId,
       swipeId,

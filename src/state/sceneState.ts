@@ -28,7 +28,9 @@ export interface SceneEvent {
   work?: string;
   characterId?: string;
   aliases?: string[];
-  kind: 'identity' | 'appearance' | 'outfit' | 'binding' | 'design';
+  kind: 'identity' | 'appearance' | 'outfit' | 'binding' | 'design' | 'defaults';
+  /** Program-generated visual completion at the actual introduction line; never LLM evidence. */
+  designSeed?: SceneCharacter;
   sourceLine: number;
   evidence: string;
   evidenceSource?: 'story' | 'card' | 'worldbook';
@@ -170,7 +172,7 @@ export function parseSceneEvents(raw: unknown, positions: Map<string, number>): 
   return events.sort((a, b) => a.sourceLine - b.sourceLine || (a.kind === 'identity' ? -1 : b.kind === 'identity' ? 1 : 0));
 }
 
-export function validateSceneEvents(events: SceneEvent[], source: string, sources: { card?: string; worldbook?: string } = {}): { events: SceneEvent[]; rejected: string[] } {
+export function validateSceneEvents(events: SceneEvent[], source: string, sources: { card?: string; worldbook?: string; characters?: Array<{ name: string; aliases: string[] }> } = {}): { events: SceneEvent[]; rejected: string[] } {
   const accepted: SceneEvent[] = [], rejected: string[] = [];
   for (const event of events) {
     const preceding = source.replace(/\r\n?/g, '\n').split('\n').slice(0, event.sourceLine + 1).join('\n');
@@ -180,6 +182,12 @@ export function validateSceneEvents(events: SceneEvent[], source: string, source
     }
     if (event.kind === 'identity' && !event.evidence.includes(event.name)) {
       rejected.push(`${event.name}: identity quote does not name the person`); continue;
+    }
+    if (event.kind === 'outfit' || event.kind === 'appearance') {
+      const names = [event.name, ...(sources.characters?.find(c => c.name === event.name)?.aliases ?? [])];
+      if (!names.some(name => name && event.evidence.includes(name))) {
+        rejected.push(`${event.name}: change quote does not identify the affected person; state retained`); continue;
+      }
     }
     if (event.kind === 'outfit' && !(event.operation === 'patch'
       ? /解|脱|放|拿|穿|系|扣|敞|卷|撕|破|损|整理|open|unfasten|remove|put|take|wear|roll|damage|close|fasten/i
@@ -207,7 +215,9 @@ export function applySceneEvents(input: SceneState, events: SceneEvent[], scope:
       state.characters.push(character);
     }
     if (!character) { state.warnings.push(`${event.name}: unresolved identity`); continue; }
-    if (event.kind === 'binding' && event.binding) {
+    if (event.kind === 'defaults' && event.designSeed) {
+      restoreVisualSeeds(state, [event.designSeed]);
+    } else if (event.kind === 'binding' && event.binding) {
       applyVisualBinding(character, event.binding, event.mode ?? 'preserve');
     } else if (event.kind === 'design') {
       character.baseAppearance = { ...event.baseAppearance };
@@ -241,6 +251,14 @@ export function applySceneEvents(input: SceneState, events: SceneEvent[], scope:
       // Evidence-backed changes are temporary by default; the stable design remains unchanged.
       Object.assign(character.currentAppearance, event.appearance);
     } else if (event.operation === 'change') {
+      // Models sometimes label a removal as a full change while returning only
+      // state fields. Apply it as a patch only when every named garment exists.
+      if (event.garments?.length && event.garments.every(g => !g.design && Object.keys(g.state).length > 0
+        && character.outfit?.garments.some(existing => existing.id === g.id))
+        && /脱|解|放|拿|敞|卷|撕|破|remove|unfasten|take off|put down|roll/i.test(event.evidence)) {
+        for (const patch of event.garments) Object.assign(character.outfit!.garments.find(g => g.id === patch.id)!.state, patch.state);
+        continue;
+      }
       if (!event.garments?.length || event.garments.some(g => !g.design) || new Set(event.garments.map(g => g.id)).size !== event.garments.length) {
         state.warnings.push(`${event.name}: invalid outfit change`); continue;
       }
@@ -317,7 +335,8 @@ export function restoreVisualSeeds(state: SceneState, designs: SceneCharacter[])
 
 export const SCENE_PROTOCOL = `
 连续性协议（优先于自由描述）：未提及必须继承，不得因脸部特写、素材预览或重画而重置衣服。
-JSON 可增加 sceneEvents 数组。每项 name、可选 work/characterId、kind、position(P编号)、evidence（必须逐字引用目标正文，且不晚于生效位置）。没有明确变化就返回 []。
+JSON 必须包含 sceneEvents 数组；首次出场的人物身份、首次明确穿搭和实际变化必须提取，不能只输出传统 changes。没有明确变化就返回 []。
+每项 name、可选 work/characterId、kind、position(P编号)、evidence（必须逐字引用目标正文，且不晚于生效位置）。证据必须明确包含受影响的人物姓名或已登记别名；代词段应连同前文姓名一并引用，无法消歧则保留未知，不把别人的变化套给该角色。
 身份事实也可引用角色卡/已激活世界书：evidenceSource="card" 或 "worldbook"；evidence 必须逐字引用本次提供的对应设定且包含人物名。仅身份可用静态设定引用，衣物和临时形象变化必须引用目标剧情，不能用静态初始设定重置状态。
 身份：kind="identity", gender="male|female|unknown", isHeroine（是否女主，独立判断）, aliases（仅明确同一人别名）。长发、俊美、女装、1girl 和图片不是女性证据；梦境/回忆/变身/伪装不改变现实身份。所有出场人物都可索引，未知不能默认女性。
 同名不同作品必须分别提供 work；首次 identity 可附 appearance={hair,eyes,skin,body,extra} 作为独立人物视觉设计补全，不能把这些绘图外貌当成身份依据。images.characters 使用对应 characterId 或 work 消歧。
