@@ -14,6 +14,7 @@ import {
   lockedCharTagNames,
   type CharTagEntry,
 } from '@/state/charTags';
+import { sceneAt } from '@/state/sceneStore';
 import { PLUGIN_VERSION } from '@/version';
 import {
   PUBLIC_API_VERSION,
@@ -21,12 +22,14 @@ import {
   type GenerateRequest,
   type GenerateResult,
   type GetCharactersOptions,
+  type GetSceneOptions,
   type PublicBackendStatus,
   type PublicCharacter,
   type PublicCharacterList,
   type PublicError,
   type PublicErrorCode,
   type PublicGenerateProgress,
+  type PublicSceneSnapshot,
 } from './types';
 
 /**
@@ -100,7 +103,7 @@ function hasPublicCode(error: unknown): error is PublicError {
  * instanceof 在我们这边是 false —— 于是用户主动取消会被报成 backend_error。
  *
  * rate_limited 与 backend_error 分开,是因为两者的**处置方式**不同:前者该等一会儿再来
- * (柏宝绘的自动退避已经用尽了),后者是配置/网络问题,再来一次也是同样的错。
+ * (墨影的自动退避已经用尽了),后者是配置/网络问题,再来一次也是同样的错。
  */
 export function toPublicError(error: unknown): PublicError {
   if (hasPublicCode(error)) return error;
@@ -126,7 +129,9 @@ export function toPublicError(error: unknown): PublicError {
 
 function toPublicCharacter(entry: CharTagEntry, locked: ReadonlySet<string>): PublicCharacter {
   return {
+    ...(entry.characterId ? { characterId: entry.characterId } : {}),
     name: entry.name,
+    ...(entry.aliases ? { aliases: [...entry.aliases] } : {}),
     // tag 用 buildEntryTag 现算,不自己拼:它是「字段 → tag 串」的唯一口径
     // (含「老条目只有整串 raw」那条回落),抄第二份必然与卡片实际出图的串漂移
     tag: buildEntryTag(entry),
@@ -160,6 +165,32 @@ export function getCharacters(options: GetCharactersOptions = {}): PublicCharact
   };
 }
 
+export function getScene(options: GetSceneOptions = {}): PublicSceneSnapshot {
+  const ctx = getContext();
+  const end = (ctx?.chat?.length ?? 0) - 1;
+  const floor = options.floor ?? end;
+  if (!Number.isInteger(floor) || floor < -1 || floor > end) throw publicError('invalid_args', 'floor 不在当前聊天范围内');
+  if (options.sourceLine !== undefined && (!Number.isInteger(options.sourceLine) || options.sourceLine < 0)) throw publicError('invalid_args', 'sourceLine 必须是非负整数');
+  let state: ReturnType<typeof sceneAt>;
+  try { state = sceneAt(floor, options.sourceLine ?? Infinity); } catch (error) { throw toPublicError(error); }
+  // Explicit projection: never export resolved materials or Vibe storage/connection data.
+  return JSON.parse(JSON.stringify({
+    apiVersion: PUBLIC_API_VERSION, pluginVersion: PLUGIN_VERSION, chatId: ctx?.getCurrentChatId?.() ?? null,
+    floor, sourceLine: options.sourceLine ?? null,
+    characters: state.characters.map(c => ({ characterId: c.characterId, name: c.name, work: c.work, aliases: c.aliases,
+      identity: { gender: c.identity.gender, confirmed: c.identity.confirmed, evidence: c.identity.evidence, ...(c.identity.conflict ? { conflict: c.identity.conflict } : {}) },
+      isHeroine: c.isHeroine,
+      baseAppearance: Object.fromEntries(Object.entries(c.baseAppearance).filter(([k]) => ['fandom','age','hair','eyes','skin','body','extra'].includes(k))),
+      currentAppearance: Object.fromEntries(Object.entries(c.currentAppearance).filter(([k]) => ['age','hair','eyes','skin','body','extra'].includes(k))),
+      ...(c.outfit ? { outfit: { outfitInstanceId: c.outfit.outfitInstanceId, design: c.outfit.design, provenance: c.outfit.provenance,
+        garments: c.outfit.garments.map(g => ({ id: g.id, design: g.design, state: Object.fromEntries(Object.entries(g.state).filter(([k]) => ['location','fastening','leftSleeve','rightSleeve'].includes(k))) })),
+      } } : {}), visualBindings: (c.visualBindings ?? []).map(b => ({
+        materialId: b.materialId, version: b.version, scope: b.scope, materialSeed: b.materialSeed, effectivePosition: b.effectivePosition, reason: b.reason,
+      })),
+    })), warnings: state.warnings,
+  })) as PublicSceneSnapshot;
+}
+
 /* —— 后端状态 —— */
 
 /**
@@ -187,10 +218,12 @@ function normalizeCharacters(raw: GenerateRequest['characters']): ImageCharacter
   if (!Array.isArray(raw)) return [];
   return raw.flatMap(item => {
     if (!item || typeof item !== 'object') return [];
+    const characterId = typeof item.characterId === 'string' && item.characterId.trim() ? item.characterId.trim() : undefined;
     const name = typeof item.name === 'string' ? item.name.trim() : '';
+    const work = typeof item.work === 'string' && item.work.trim() ? item.work.trim() : undefined;
     const tag = typeof item.tag === 'string' ? item.tag.trim() : '';
     const nl = typeof item.nl === 'string' ? item.nl.trim() : '';
-    return name && tag ? [{ name, tag, nl }] : [];
+    return name && tag ? [{ ...(characterId ? { characterId } : {}), name, ...(work ? { work } : {}), tag, nl }] : [];
   });
 }
 
@@ -224,7 +257,7 @@ function safeProgress(
     try {
       onProgress(progress);
     } catch (error) {
-      console.warn('[柏宝绘] 公共接口 onProgress 回调异常', error);
+      console.warn('[墨影] 公共接口 onProgress 回调异常', error);
     }
   };
 }
@@ -245,7 +278,7 @@ export async function generate(
   // 先报 not_configured,别让第三方等一个注定 401 的请求
   const status = backendStatus();
   if (!status.configured) {
-    throw publicError('not_configured', status.reason || '柏宝绘出图后端未配置');
+    throw publicError('not_configured', status.reason || '墨影出图后端未配置');
   }
 
   const report = safeProgress(options.onProgress);
@@ -330,7 +363,7 @@ async function saveToGallery(
   try {
     return await saveExternalImage(name, tag, seed, result, meta);
   } catch (error) {
-    console.warn('[柏宝绘] 公共接口生成的图片落盘失败（图片本身已返回给调用方）', error);
+    console.warn('[墨影] 公共接口生成的图片落盘失败（图片本身已返回给调用方）', error);
     return null;
   }
 }

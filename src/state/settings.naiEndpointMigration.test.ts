@@ -24,7 +24,7 @@ vi.mock('@/st/context', () => ({
 
 async function hydrateWithNai(nai: Record<string, unknown> | undefined) {
   mocks.context = {
-    extensionSettings: { baibai_image: nai === undefined ? {} : { nai } },
+    extensionSettings: { moying_image: nai === undefined ? {} : { nai } },
     saveSettingsDebounced: vi.fn(),
   };
   const { hydrateSettings, settings } = await import('@/state/settings');
@@ -189,7 +189,7 @@ describe('effectiveNai:出图只认当前接入点', () => {
   it('url/key 取当前条,其余出图参数一律沿用渠道级(换站不用重配)', async () => {
     mocks.context = {
       extensionSettings: {
-        baibai_image: {
+        moying_image: {
           nai: {
             url: 'https://legacy.example',
             key: 'legacy-key',

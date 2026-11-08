@@ -5,9 +5,12 @@ import Collapsible from '@/components/Collapsible.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
+import { JAILBREAK_TIERS, type JailbreakTierId } from '@/autoTag/jailbreak';
 import { fetchModels, testChannel } from '@/api/client';
+import type { NsfwLevel } from '@/data/loreTypes';
 import {
   BACKENDS,
+  applyRecommendedNaiScenePreset,
   DEFAULT_COMFY_SPEC,
   DEFAULT_COMFY_THINKING,
   DEFAULT_JAILBREAK_PROMPT,
@@ -22,6 +25,11 @@ import {
   type BackendId,
   type ImageDisplaySize,
 } from '@/state/settings';
+import {
+  applyGenPreset,
+  linkPresetToPrompt,
+  presetForPrompt,
+} from '@/state/genPresets';
 import { getContext } from '@/st/context';
 import {
   ORB_SHAPES,
@@ -42,6 +50,16 @@ const NAV_OPTIONS: { value: NavPosition; label: string }[] = [
 
 // 出图后端可选项:与渠道页页签同口径,藏掉未开放的 webui
 const BACKEND_OPTIONS = BACKENDS.filter(b => b.value !== 'webui');
+
+const presetNotice = ref('');
+
+function flashPreset(text: string) {
+  presetNotice.value = text;
+  window.setTimeout(() => {
+    if (presetNotice.value === text) presetNotice.value = '';
+  }, 2400);
+}
+
 
 /**
  * 思考强度候选:各家取值的并集,**不是**某一家的官方列表。
@@ -120,6 +138,47 @@ function normalizeAutoTagNumbers(changed?: 'minImages' | 'maxImages' | Event) {
   settings.autoTag.minImages = minImages;
   settings.autoTag.maxImages = maxImages;
   settings.autoTag.retryCount = Math.min(5, Math.max(0, Math.floor(Number(settings.autoTag.retryCount) || 0)));
+  // 素材库条数:夹在硬上限内,手填 999 会把副 API 上下文挤爆(服装 1~16、姿势 0~12)
+  settings.autoTag.lore.wardrobeLimit = Math.min(
+    16,
+    Math.max(1, Math.floor(Number(settings.autoTag.lore.wardrobeLimit) || 1)),
+  );
+  settings.autoTag.lore.poseLimit = Math.min(
+    12,
+    Math.max(0, Math.floor(Number(settings.autoTag.lore.poseLimit) || 0)),
+  );
+  // 人物外貌条数:2~10。低于 2 时同人条目和脸型体型没法同时进候选。
+  settings.autoTag.lore.faceLimit = Math.min(
+    10,
+    Math.max(2, Math.floor(Number(settings.autoTag.lore.faceLimit) || 8)),
+  );
+}
+
+/* —— 破限挡位:难度阶梯 + 自定义叠加,文本见 autoTag/jailbreak.ts。
+   叠加关系:档位文本在前、附加词在后;选 off 只发附加词。
+   附加词在「提示词」组里留空时回落内置默认(DEFAULT_JAILBREAK_PROMPT)。 */
+const JAILBREAK_OPTIONS = JAILBREAK_TIERS.map(t => ({ value: t.id, label: t.label }));
+const jailbreakTierSel = computed<string>({
+  get: () => settings.autoTag.jailbreakTier,
+  set: v => (settings.autoTag.jailbreakTier = v as JailbreakTierId),
+});
+const jailbreakTierSummary = computed(
+  () => JAILBREAK_TIERS.find(t => t.id === settings.autoTag.jailbreakTier)?.summary ?? '',
+);
+
+/* —— 素材库召回尺度(见 data/loreIndex.ts 的 LoreOptions) —— */
+const NSFW_LEVEL_OPTIONS = [
+  { value: '0', label: '仅日常' },
+  { value: '1', label: '到微诱惑' },
+  { value: '2', label: '到情趣内衣' },
+  { value: '3', label: '全部(含明确 NSFW)' },
+];
+const loreMaxNsfwSel = computed<string>({
+  get: () => String(settings.autoTag.lore.maxNsfw),
+  set: v => (settings.autoTag.lore.maxNsfw = Math.min(3, Math.max(0, Number(v) || 0)) as NsfwLevel),
+});
+function openLorePage() {
+  ui.activePage = 'lore';
 }
 
 /* —— 自定义提示词(UI 照搬柏宝书):列表只读展示,编辑在弹窗里进行。
@@ -151,8 +210,8 @@ const NL_SECTION_MACROS = [
 const TAG_PROMPT_METAS: TagPromptMeta[] = [
   {
     key: 'jailbreak',
-    label: '破限词',
-    hint: '作为置顶 system 附加在自动 tag 请求里，降低副 API 拒答率。留空则用内置默认（与柏宝书同款文本）。全后端通用。',
+    label: '破限附加词',
+    hint: '叠加在【破限挡位】选中的文本之后，用来补你自己渠道的经验（例如整段模型身份/授权词）。留空则用内置默认那段 NVWA 破限；档位选「关闭」时只发这一段。改的是「附加词」，挡位本身的措辞在源码里。',
     builtin: DEFAULT_JAILBREAK_PROMPT,
     macros: [],
   },
@@ -192,8 +251,41 @@ const TAG_PROMPT_METAS: TagPromptMeta[] = [
   },
 ];
 
+const scenePresetConfirmOpen = ref(false);
+function applyNaiScenePreset() {
+  applyRecommendedNaiScenePreset();
+  scenePresetConfirmOpen.value = false;
+  toastr.success('已选择剧情原味画师配方，并恢复配套的 NAI 规范和思维链。', 'NAI 配置');
+}
+
 // 正在编辑的提示词;draft 是草稿,点「完成」才写回 settings(取消则丢弃)。
 const editingTagPrompt = ref<TagPromptMeta | null>(null);
+const PRESET_LINK_OPTIONS = computed(() => [
+  { value: '', label: '不绑定' },
+  ...settings.genPresets.map(preset => ({
+    value: preset.id,
+    label: preset.name + (preset.forLore ? ' · 素材库' : ''),
+  })),
+]);
+
+/**
+ * 这一组提示词绑定的生图配置。
+ *
+ * 绑定之后打开它(openTagPrompt)会自动 applyGenPreset:用户换的是「规范/思维链」,
+ * 但配套的模型、步数、负面词、画师串往往也得一起换,这里替他一起换。
+ */
+const promptPresetLink = computed<string>({
+  get: () => {
+    const key = editingTagPrompt.value?.key;
+    return key ? (settings.promptPresetLinks[key] ?? '') : '';
+  },
+  set: v => {
+    const key = editingTagPrompt.value?.key;
+    if (!key) return;
+    linkPresetToPrompt(key, v);
+    if (v) flashPreset('下次打开这组提示词时自动切到这套生图配置');
+  },
+});
 const tagPromptDraft = ref('');
 const tagPromptArea = ref<InstanceType<typeof BbiTextarea> | null>(null);
 
@@ -203,6 +295,12 @@ function isTagPromptCustom(key: keyof AutoTagPrompts): boolean {
 }
 
 function openTagPrompt(meta: TagPromptMeta) {
+  // 绑过生图配置就顺手切过去:换的是这一组提示词,配套参数一起换才不用重配
+  const linked = presetForPrompt(meta.key);
+  if (linked) {
+    applyGenPreset(linked.id);
+    flashPreset('配套生图配置已切到「' + linked.name + '」');
+  }
   editingTagPrompt.value = meta;
   // 已自定义→载入用户内容;未自定义→预填内置模板,方便直接在其上改
   tagPromptDraft.value = settings.autoTag.prompts[meta.key].trim() || meta.builtin;
@@ -500,9 +598,9 @@ async function confirmUpdate() {
   const toastr = (globalThis as Record<string, any>).toastr;
   try {
     await performUpdate();
-    toastr?.success?.('更新成功,正在刷新页面…', '柏宝绘');
+    toastr?.success?.('更新成功,正在刷新页面…', '墨影');
   } catch (error) {
-    toastr?.error?.(`更新失败:${error instanceof Error ? error.message : String(error)}`, '柏宝绘');
+    toastr?.error?.(`更新失败:${error instanceof Error ? error.message : String(error)}`, '墨影');
   }
 }
 </script>
@@ -539,7 +637,7 @@ async function confirmUpdate() {
     <!-- 总开关:整个插件的主控。全页唯一的大号滑动开关,与下方各项的小复选框拉开层级。 -->
     <div class="bbi-master" :class="{ 'is-off': !settings.enabled }">
       <span class="bbi-master-spine" aria-hidden="true"></span>
-      <span class="bbi-master-title">柏宝绘 · 文生图</span>
+      <span class="bbi-master-title">墨影 · 文生图</span>
       <button
         type="button"
         role="switch"
@@ -606,13 +704,13 @@ async function confirmUpdate() {
           <span class="bbi-field-label">在 ST 顶栏显示按钮</span>
           <input v-model="ui.showTopBar" type="checkbox" class="bbi-checkbox" />
         </label>
-        <p class="bbi-field-hint">在酒馆顶部导航栏加一个快速打开柏宝绘的按钮。左下角魔杖入口照旧保留。</p>
+        <p class="bbi-field-hint">在酒馆顶部导航栏加一个快速打开墨影的按钮。左下角魔杖入口照旧保留。</p>
 
         <label class="bbi-switch-row">
           <span class="bbi-field-label">显示屏幕悬浮球</span>
           <input v-model="ui.showOrb" type="checkbox" class="bbi-checkbox" />
         </label>
-        <p class="bbi-field-hint">在屏幕边缘挂一枚可拖动的悬浮球,点击即开柏宝绘。拖到中间可常驻悬浮,拖近左右边缘则吸附贴边。</p>
+        <p class="bbi-field-hint">在屏幕边缘挂一枚可拖动的悬浮球,点击即开墨影。拖到中间可常驻悬浮,拖近左右边缘则吸附贴边。</p>
 
         <!-- 悬浮球外观:配置项多,开启后才收进小分组 -->
         <Collapsible v-if="ui.showOrb" title="悬浮球外观" :open="false">
@@ -687,6 +785,17 @@ async function confirmUpdate() {
         </label>
         <p class="bbi-field-hint">AI 正文生成后自动判断该楼是否需要插图,需要就写入生图 tag。</p>
 
+        <!-- 破限挡位:放在本组最前面,它是「模型肯不肯把 NSFW 写完整」的总开关,
+             比条数、重试次数这些细节重要得多。 -->
+        <div class="bbi-select-row">
+          <span class="bbi-field-label">破限挡位</span>
+          <BbiSelect v-model="jailbreakTierSel" :options="JAILBREAK_OPTIONS" aria-label="破限挡位" />
+        </div>
+        <p class="bbi-field-hint">{{ jailbreakTierSummary }}</p>
+        <p class="bbi-field-hint">
+          作为置顶 system 发出,与「破限附加词」是叠加关系:档位文本在前、附加词在后,选「关闭」只发附加词;附加词留空时用内置默认那段。日常剧情嫌模型变笨就往下降一档;NSFW 楼老被截断就往上升。改完立刻对新请求生效,不必重启。
+        </p>
+
         <label class="bbi-switch-row">
           <span class="bbi-field-label">自动生成图片</span>
           <input v-model="settings.autoTag.autoGenerate" type="checkbox" class="bbi-checkbox" />
@@ -745,6 +854,87 @@ async function confirmUpdate() {
           />
         </label>
         <p class="bbi-field-hint">副 API 请求失败或返回无法解析时自动重试；0 = 不重试，最多 5 次。</p>
+      </Collapsible>
+
+      <!-- 素材库召回:服装 / 姿势候选按正文命中后注入,见 data/loreIndex.ts 与 autoTag/prompt.ts -->
+      <Collapsible title="素材库召回" :open="false">
+        <label class="bbi-switch-row">
+          <span class="bbi-field-label">注入候选库</span>
+          <input v-model="settings.autoTag.lore.enabled" type="checkbox" class="bbi-checkbox" />
+        </label>
+        <p class="bbi-field-hint">
+          按正文里出现的衣着词与亲密动作,从内置库挑出具体 tag 串交给模型照抄。这是「写黑丝永远只出那几种」和「姿势构图总是太平」的主要解法:模型不再自己回忆款式,而是从候选里挑一条整组照抄。
+        </p>
+
+        <div class="bbi-select-row">
+          <span class="bbi-field-label">尺度上限</span>
+          <BbiSelect v-model="loreMaxNsfwSel" :options="NSFW_LEVEL_OPTIONS" aria-label="素材库尺度上限" />
+        </div>
+        <p class="bbi-field-hint">只决定能召回哪些候选,不改写正文。写日常剧情时降到「仅日常」,可避免情趣款被误召回。</p>
+
+        <label class="bbi-num-row">
+          <span class="bbi-field-label">服装候选条数</span>
+          <input
+            v-model.number="settings.autoTag.lore.wardrobeLimit"
+            class="bbi-input bbi-num"
+            type="number"
+            min="1"
+            max="16"
+            step="1"
+            @change="normalizeAutoTagNumbers"
+          />
+        </label>
+
+        <label class="bbi-num-row">
+          <span class="bbi-field-label">姿势候选条数</span>
+          <input
+            v-model.number="settings.autoTag.lore.poseLimit"
+            class="bbi-input bbi-num"
+            type="number"
+            min="0"
+            max="12"
+            step="1"
+            @change="normalizeAutoTagNumbers"
+          />
+        </label>
+        <p class="bbi-field-hint">姿势填 0 = 不注入姿势库。条数越多模型挑得越准,代价是占副 API 的上下文。</p>
+
+        <label class="bbi-switch-row">
+          <span class="bbi-field-label">注入人物外貌候选</span>
+          <input v-model="settings.autoTag.lore.faces" type="checkbox" class="bbi-checkbox" />
+        </label>
+        <p class="bbi-field-hint">
+          默认开(旧配置升级时也会自动开一次)。命中「清冷 / 银发 / 红瞳 / 丰腴」这类外形词、或正文点名了某部作品的某个角色时,把整套脸型/体型/同人骨相指纹交给模型整组照抄,治「生出来人物不好看、一张大众脸」。关掉后新建档只能由模型现场编脸。
+        </p>
+
+        <label class="bbi-num-row">
+          <span class="bbi-field-label">人物外貌候选条数</span>
+          <input
+            v-model.number="settings.autoTag.lore.faceLimit"
+            class="bbi-input bbi-num"
+            type="number"
+            min="2"
+            max="10"
+            step="1"
+            @change="normalizeAutoTagNumbers"
+          />
+        </label>
+        <p class="bbi-field-hint">
+          同人骨相优先占位:正文点名作品或角色时排最前,只用外形词擦边时退居其后,剩下的位置留给脸型和体型。建议 8——低了同人进不来,高了占上下文。同人条目自带 `0.6::角色 (作品)::` 权重,是借骨相,不会把原剧情带进来;发色瞳色与角色的固定外貌冲突时以角色为准。如果是你自己写的「同人向」剧情,把作品名或角色名写进正文,命中率会从「靠外形词擦边」变成「必定排第一」。
+        </p>
+        <p class="bbi-field-hint">
+          <strong>外形写全了就直接复用</strong>:正文把角色写成「银白长发、紫瞳、尖耳」这种具体外形,而你库里正好有一条逐项对得上时,那条会被标「外形重合」并压到第一位,提示词要求模型照抄它、不许再自己编一张脸。同一个判定也作用在已建档角色上——正文外形与某份档案逐项对上,会直接点名「这段就是她」,不会重复建档。
+        </p>
+
+        <div class="bbi-channel-bar">
+          <span class="bbi-field-label">服装 / 姿势 / 面相</span>
+          <button class="bbi-btn bbi-btn-primary bbi-btn-sm" type="button" @click="openLorePage">
+            <Icon name="lore" /> 打开素材库
+          </button>
+        </div>
+        <p class="bbi-field-hint">
+          素材库里可以逐条浏览,点一条直接套到角色管理里的某个人物身上(写入该角色的固定着装或外貌字段);页顶的「新增 / 导入 / 导出」用来放你自己找到的款式——导入的条目与内置条目一起参与召回,库变大不会让每次请求变长(只按命中挑固定的几条)。
+        </p>
       </Collapsible>
 
       <!-- 排除角色:名单与柏宝书共享(见 state/settings.ts 的共享存储),任一端改动自动同步 -->
@@ -853,6 +1043,12 @@ async function confirmUpdate() {
 
       <!-- 自定义提示词(与柏宝书同款入口,独立成区) -->
       <Collapsible title="自定义提示词" :open="false">
+        <div class="bbi-field-hint">
+          二创推荐：保留细腻半写实画风，按剧情区分日常与成年人亲密场景，女主主画面、男主按需要局部入镜。不会修改 API 密钥、出图数量或角色库。
+        </div>
+        <button class="bbi-btn bbi-btn-primary" type="button" @click="scenePresetConfirmOpen = true">
+          应用推荐 NAI 配置（正/负面 + 思维链 + 规范）
+        </button>
         <ul class="bbi-prompt-list">
           <li v-for="m in TAG_PROMPT_METAS" :key="m.key" class="bbi-prompt-item">
             <button class="bbi-prompt-open" type="button" @click="openTagPrompt(m)">
@@ -1104,6 +1300,13 @@ async function confirmUpdate() {
         </header>
 
         <p class="bbi-modal-label">{{ editingTagPrompt.hint }}</p>
+        <div class="bbi-select-row">
+          <span class="bbi-field-label">配套生图配置</span>
+          <BbiSelect v-model="promptPresetLink" :options="PRESET_LINK_OPTIONS" aria-label="配套生图配置" />
+        </div>
+        <p class="bbi-field-hint">
+          绑一套之后,每次打开这组提示词(换一组规范 / 思维链)生图配置会自动跟着切,不用再手动改一遍。
+        </p>
 
         <!-- 可用宏:点一下插入到光标处(规范与思维链四份都有自然语言条件段,ComfyUI 规范另有 {{nl}};
              无宏的条目不显示这一栏) -->
@@ -1140,6 +1343,16 @@ async function confirmUpdate() {
         </footer>
       </div>
     </ModalMask>
+
+    <ConfirmDialog
+      v-model:open="scenePresetConfirmOpen"
+      title="应用推荐 NAI 配置"
+      confirm-text="应用配置"
+      @confirm="applyNaiScenePreset"
+    >
+      将启用内置「剧情原味·电影感半写实」画师配方（包含正负面词），并把你当前自定义的 NAI 思维链与规范切回新版内置规则。
+      此操作不会影响 ComfyUI、渠道、API 密钥、图数、角色外貌库和服装档案。现有自定义文本不会保留在对应设置字段，建议需要时提前复制备份。
+    </ConfirmDialog>
 
     <ConfirmDialog
       v-model:open="updateConfirmOpen"
@@ -1677,5 +1890,18 @@ async function confirmUpdate() {
   .bbi-btn-label-short {
     display: inline;
   }
+}
+
+/* 预设操作条:名字输入 + 一排按钮,窄屏自动折行 */
+.bbi-preset-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.bbi-preset-bar .bbi-input {
+  flex: 1 1 120px;
+  min-width: 96px;
 }
 </style>

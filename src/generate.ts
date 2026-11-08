@@ -12,7 +12,7 @@
  * **闸门不可绕过**,这是本模块存在的首要理由:直接调 backends/nai.ts 的
  * generateNaiImage 会跑在 floor/genQueue.ts 的并发闸门与全局节奏之外,0.2.0 整版的
  * NAI 限流自愈(429 全局冷却、相邻请求最小间隔、退避重试)当场失效。第三方并发调用
- * 是常态,绕过去的症状是用户 NAI 账号吃一串密集 429 —— 而用户只会认为柏宝绘坏了。
+ * 是常态,绕过去的症状是用户 NAI 账号吃一串密集 429 —— 而用户只会认为墨影坏了。
  * 故公开接口与卡片共用本函数,闸门在这里包死。
  *
  * 本模块**刻意不碰**:楼层坐标、genState、extra、水合、请求历史埋点。
@@ -32,6 +32,7 @@ import type { GenerationMeta } from '@/generationMeta';
 import { capabilityOverride, resolveNaiCapabilities } from '@/backends/capabilities';
 import type { NaiVibe } from '@/state/settings';
 import { activeComfyPreset, activeNaiEndpoint, activeOrientationLock, effectiveComfyConn, effectiveNai, settings, type BackendId } from '@/state/settings';
+import { applyPresetToNaiConn, genPresetById } from '@/state/genPresets';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
@@ -51,6 +52,26 @@ export interface GenerateInput {
   size?: Orientation;
   /** 本次种子。由调用方经 decideSeed() 先行确定(埋点要在发请求前拿到它)。 */
   seed: number;
+  /**
+   * 只对本次请求生效的后端覆盖(留空 = 用渠道默认)。
+   *
+   * 素材缩略图必须钉死 NAI:缩略图的提示词是 danbooru tag 串,拿去 ComfyUI 的
+   * SD 模型会出拼贴状碎片;而「跟随渠道当前模型」在用户把默认渠道设成 ComfyUI
+   * 时正好会踩这个坑。
+   */
+  backend?: BackendId;
+  /**
+   * 只对本次请求生效的 NAI 模型覆盖(留空 = 用渠道配置)。素材缩略图用它走
+   * `nai-diffusion-4-curated-preview` 这类不占额度的模型,免得为预览烧 Anlas。
+   */
+  naiModel?: string;
+  /**
+   * 只对本次请求生效的生图配置预设(留空 = 用渠道当前参数)。
+   *
+   * 素材库配图走这条:用户把「素材库配图」那套预设标成 forLore 之后,预览图按那套出,
+   * 不跟主出图参数走,也就不必为了配预览先把主配置改一遍。
+   */
+  genPresetId?: string;
 }
 
 /** 生成过程中的进度上报(卡片用它显示排队位置与退避进度)。 */
@@ -102,9 +123,7 @@ export interface BackendStatus {
  * ComfyUI 要按模式分别校验(custom 要工作流 JSON;simple 要模型/VAE/CLIP 选齐,
  * 与出图组装同一口径 validateSimpleConfig,避免「卡片能点、出图才报错」);NAI 要 url + key。
  */
-export function backendStatus(): BackendStatus {
-  const backend = settings.defaultBackend;
-
+export function backendStatus(backend: BackendId = settings.defaultBackend): BackendStatus {
   if (backend === 'nai') {
     const model = settings.nai.model;
     // 支持与否只看模型,与配没配齐无关:第三方要在出图前就知道该不该传 characters
@@ -147,7 +166,7 @@ export function backendStatus(): BackendStatus {
     configured: false,
     model: '',
     supportsCharacters: false,
-    reason: '出图后端未选择,请在柏宝绘「渠道」页选择出图渠道',
+    reason: '出图后端未选择,请在墨影「渠道」页选择出图渠道',
   };
 }
 
@@ -158,9 +177,15 @@ export function backendStatus(): BackendStatus {
  * 口径:显式指定 > NAI 面板固定种子(>0)> 随机。
  * NAI 与 ComfyUI 的随机上界不同(各自协议的合法范围),故分开取。
  */
-export function decideSeed(backend: BackendId, override?: number): number {
-  if (override !== undefined && Number.isFinite(override) && override > 0) return Math.floor(override);
-  if (backend === 'nai') return settings.nai.seed > 0 ? settings.nai.seed : naiRandomSeed();
+/**
+ * 决定这一张的种子。
+ *
+ * `fresh` 为重绘场景:面板里写死的种子在重绘时必须让位,否则每点一次「重新生成」
+ * 都拿同一个 seed 求同一张图,用户会以为按钮坏了。
+ */
+export function decideSeed(backend: BackendId, override?: number, fresh = false): number {
+  if (!fresh && override !== undefined && Number.isFinite(override) && override > 0) return Math.floor(override);
+  if (backend === 'nai') return !fresh && settings.nai.seed > 0 ? settings.nai.seed : naiRandomSeed();
   return randomSeed();
 }
 
@@ -178,7 +203,8 @@ export async function generateImage(
   signal?: AbortSignal,
   progress: GenerateProgress = {},
 ): Promise<GenerateOutput> {
-  const status = backendStatus();
+  const target = input.backend ?? settings.defaultBackend;
+  const status = backendStatus(target);
   // 兜底:卡片侧已用 configured 拦在按钮上,公开接口侧也会先报 not_configured。
   // 真漏到这里说明上游判据漂了,宁可明说也别发一个注定 401/404 的请求。
   if (!status.configured) throw new Error(status.reason || '出图后端未配置');
@@ -206,6 +232,10 @@ export async function generateImage(
     if (isNai) {
       const capabilities = capabilitiesSnapshot!;
       const configured = naiSnapshot!;
+      // 预设先套、模型覆盖后套:后者是调用方最具体的意图(naiModel 明确点名就用它)。
+      const preset = input.genPresetId ? genPresetById(input.genPresetId) : null;
+      if (preset) applyPresetToNaiConn(configured, preset);
+      if (input.naiModel) configured.model = input.naiModel as typeof configured.model;
       const references = referencesSnapshot.filter(v => v.dataPath);
       const warnings: string[] = [];
       if (characters.length > 1 && references.length) warnings.push('多人参考可能混合特征：已跳过人物绑定 Vibe，仅使用渠道画风参考');

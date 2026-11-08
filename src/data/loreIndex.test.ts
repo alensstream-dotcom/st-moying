@@ -52,24 +52,15 @@ describe('loreIndex 服装召回', () => {
   });
 });
 
-describe('loreIndex 姿势召回', () => {
-  it('「后入」召回到后位类,且带上机位', () => {
+describe('loreIndex 姿势召回（内置姿势库已清空）', () => {
+  it('内置姿势库为空时不召回内置姿势', () => {
     const { poses } = collectLoreCandidates('他让她跪趴下来,后入的姿势', { wardrobeLimit: 0, poseLimit: 6 });
-    expect(poses.length).toBeGreaterThan(0);
-    expect(poses.every(hit => hit.category === 'rear')).toBe(true);
-    expect(poses.some(hit => Boolean(hit.item.camera))).toBe(true);
+    expect(poses).toEqual([]);
   });
 
-  it('姿势库每类条数均衡,不出现某一类独大', () => {
-    expect(POSE_ITEMS.length).toBeGreaterThanOrEqual(84);
-    const counts = POSE_CATEGORIES.map(
-      category => POSE_ITEMS.filter(item => item.category === category.id).length,
-    );
-    for (const count of counts) {
-      expect(count).toBeGreaterThanOrEqual(6);
-    }
-    // 最多的那一类不能超过最少那一类的 4 倍,否则召回会永远偏向同一类。
-    expect(Math.max(...counts)).toBeLessThanOrEqual(Math.min(...counts) * 4);
+  it('内置姿势库已清空，分类定义保留供自定义条目兼容', () => {
+    expect(POSE_ITEMS).toEqual([]);
+    expect(POSE_CATEGORIES.length).toBeGreaterThan(0);
   });
 });
 
@@ -111,10 +102,10 @@ describe('loreIndex 渲染', () => {
     expect(buildLoreBlock('他打开门走出去,外面在下雨')).toBe('');
   });
 
-  it('服装与姿势同时命中时两块都在', () => {
+  it('服装命中时只注入服装候选库（内置姿势库已清空）', () => {
     const block = buildLoreBlock('她穿着水手服跪在地上,后入', { wardrobeLimit: 4, poseLimit: 4 });
     expect(block).toContain('【服装候选库】');
-    expect(block).toContain('【姿势与机位候选库】');
+    expect(block).not.toContain('【姿势与机位候选库】');
   });
 });
 

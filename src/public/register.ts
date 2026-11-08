@@ -1,6 +1,10 @@
 import { watch } from 'vue';
+import { novelReader } from '@/public/novelReader';
 
+import { cancelFloorTags, isFloorTagRunning, requestFloorTags } from '@/autoTag/runner';
+import { isBackgroundGenRunning, resumePending as resumeBackgroundPending } from '@/floor/backgroundGen';
 import { charTagLib } from '@/state/charTags';
+import { visualLibrary } from '@/state/visualLibrary';
 import { getContext } from '@/st/context';
 import { PLUGIN_VERSION } from '@/version';
 import {
@@ -10,12 +14,14 @@ import {
   getBackendStatus,
   getCharacters,
   getPublicRevision,
+  getScene,
 } from './api';
 import {
   PUBLIC_API_VERSION,
   type GenerateOptions,
   type GenerateRequest,
   type GetCharactersOptions,
+  type GetSceneOptions,
   type PublicCapabilities,
   type PublicChangeListener,
   type PublicChangeNotice,
@@ -26,8 +32,8 @@ import {
  * 公开接口的注册与事件面(与柏宝书 src/public/register.ts 同款,第三方学一套就够)。
  *
  * 第三方怎么拿到接口——**两条路都得给**,因为插件加载顺序不确定:
- * - 它比柏宝绘晚加载:直接读 globalThis.STBaiBaiImage 就有;
- * - 它比柏宝绘早加载:读到 undefined,只能等 window 的 'st-baibai-image:ready'。
+ * - 它比墨影晚加载:直接读 globalThis.STBaiBaiImage 就有;
+ * - 它比墨影早加载:读到 undefined,只能等 window 的 'st-baibai-image:ready'。
  * 只给其中一条,另一半场合的第三方就得写轮询——那是我们的锅,不是它的。
  */
 
@@ -73,7 +79,7 @@ function emitNotice(type: PublicChangeNotice['type']): void {
     try {
       listener(clonePublic(detail));
     } catch (error) {
-      console.warn('[柏宝绘] 公共接口订阅回调异常', error);
+      console.warn('[墨影] 公共接口订阅回调异常', error);
     }
   }
   const eventName = type === 'ready' ? PUBLIC_READY_EVENT : PUBLIC_CHANGED_EVENT;
@@ -96,23 +102,29 @@ function queueChangedNotice(): void {
 }
 
 function createApi(): STBaiBaiImageApi {
-  // 冻结:第三方(或它引的某个库)往接口对象上挂东西、或替换掉 generate,
-  // 会让后到的另一个第三方拿到被改过的接口。冻结让这类改动直接失败而不是静默生效。
-  return Object.freeze({
+  // 不冻结顶层引用,并直接暴露无 UI 弹窗的楼层配图触发与后台状态接口,方便小说阅读器后台直调与测试桩打补丁
+  return {
     apiVersion: PUBLIC_API_VERSION,
     pluginVersion: PLUGIN_VERSION,
+    novelReader,
     get capabilities() {
       return clonePublic(capabilities);
     },
     getCharacters: (options?: GetCharactersOptions) => getCharacters(options),
+    getScene: (options?: GetSceneOptions) => getScene(options),
     getBackendStatus: () => getBackendStatus(),
     generate: (request: GenerateRequest, options?: GenerateOptions) => generate(request, options),
+    requestFloorTags: (floor: number, opts?: { replace?: boolean }) => requestFloorTags(floor, opts),
+    cancelFloorTags: (floor: number) => cancelFloorTags(floor),
+    isFloorTagRunning: (floor: number) => isFloorTagRunning(floor),
+    isBackgroundGenRunning: () => isBackgroundGenRunning(),
+    resumeBackgroundPending: () => resumeBackgroundPending(),
     subscribe(listener: PublicChangeListener) {
       if (typeof listener !== 'function') throw new TypeError('subscribe listener 必须是函数');
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-  });
+  } as STBaiBaiImageApi;
 }
 
 /**
@@ -131,8 +143,9 @@ export function registerPublicInterface(): void {
   // 角色库是响应式派生结果,一律 watch 它本身,不去逐个订阅那些**导致**它变的事件
   // (CHAT_CHANGED / 删楼 / 滑动 / 用户手动编辑 / 柏宝书同步……漏一个就少一次通知)。
   watch(() => charTagLib.entries, queueChangedNotice, { deep: true });
+  watch(() => visualLibrary, queueChangedNotice, { deep: true });
 
   ready = true;
   emitNotice('ready');
-  console.log('[柏宝绘] 公共接口已就绪', clonePublic(capabilities));
+  console.log('[墨影] 公共接口已就绪', clonePublic(capabilities));
 }

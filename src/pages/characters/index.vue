@@ -73,6 +73,7 @@ const pendingRollback = ref<{ name: string; record: CharTagChangeRecord } | null
 const FIELD_PLACEHOLDERS: Record<CharTagField, string> = {
   fandom: '同人角色填: character name (copyright name), 不带转义括号; 原创留空',
   sex: '如 1girl / 1boy',
+  age: '如 young adult / teenager / mature female / child',
   hair: '如 long black hair',
   eyes: '如 red eyes',
   skin: '如 pale skin(可不填)',
@@ -198,11 +199,11 @@ function confirmEntry() {
   if (!d) return;
   const name = d.name.trim();
   if (!name) {
-    toastr.warning('角色名不能为空', '柏宝绘');
+    toastr.warning('角色名不能为空', '墨影');
     return;
   }
   if (!previewTag.value) {
-    toastr.warning('至少填一个外貌字段(或整串 tag)', '柏宝绘');
+    toastr.warning('至少填一个外貌字段(或整串 tag)', '墨影');
     return;
   }
   const entryData: CharTagEntry = {
@@ -243,7 +244,7 @@ function confirmPromote() {
   confirmPromoteOpen.value = false;
   if (!editingName.value) return;
   if (promoteCharTagToGlobal(editingName.value)) {
-    toastr.success(`「${editingName.value}」已提升为全局角色,所有聊天生效`, '柏宝绘');
+    toastr.success(`「${editingName.value}」已提升为全局角色,所有聊天生效`, '墨影');
   }
   closeEntry();
 }
@@ -252,7 +253,7 @@ function copyToChat() {
   if (!editingName.value) return;
   const name = editingName.value;
   if (copyGlobalCharTagToChat(name)) {
-    toastr.success(`已把「${name}」复制到本聊天,之后本聊天以副本为准`, '柏宝绘');
+    toastr.success(`已把「${name}」复制到本聊天,之后本聊天以副本为准`, '墨影');
   }
   closeEntry();
 }
@@ -263,13 +264,13 @@ async function regenerateFromBook() {
   if (!d) return;
   const name = d.name.trim();
   if (!name) {
-    toastr.warning('先填写角色名', '柏宝绘');
+    toastr.warning('先填写角色名', '墨影');
     return;
   }
   const ctx = getContext();
   const floor = (ctx?.chat.length ?? 0) - 1;
   if (!ctx || floor < 0) {
-    toastr.info('当前没有打开的聊天', '柏宝绘');
+    toastr.info('当前没有打开的聊天', '墨影');
     return;
   }
   regenerating.value = true;
@@ -277,12 +278,12 @@ async function regenerateFromBook() {
     const memory = readBookMemory(floor, ctx.chat[floor]?.mes ?? '', ctx.name1);
     const role = memory?.roles.find(r => r.name === name);
     if (!role?.desc) {
-      toastr.info('柏宝书最新状态里没有该角色的外貌记录,可手动填写', '柏宝绘');
+      toastr.info('柏宝书最新状态里没有该角色的外貌记录,可手动填写', '墨影');
       return;
     }
     const [result] = await generateCharTags([{ name, desc: role.desc }]);
     if (!result) {
-      toastr.warning('模型没有返回该角色的 tag,请重试或手动填写', '柏宝绘');
+      toastr.warning('模型没有返回该角色的 tag,请重试或手动填写', '墨影');
       return;
     }
     const fields = { ...emptyCharFields(), ...result.fields };
@@ -290,9 +291,9 @@ async function regenerateFromBook() {
     d.raw = '';
     draftSource.value = 'book';
     draftDesc.value = role.desc;
-    toastr.success('已按柏宝书最新外貌生成,点「完成」保存', '柏宝绘');
+    toastr.success('已按柏宝书最新外貌生成,点「完成」保存', '墨影');
   } catch (error) {
-    toastr.error(error instanceof Error ? error.message : String(error), '柏宝绘');
+    toastr.error(error instanceof Error ? error.message : String(error), '墨影');
   } finally {
     regenerating.value = false;
   }
@@ -318,9 +319,9 @@ function confirmRollback() {
   pendingRollback.value = null;
   if (!p) return;
   if (rollbackCharTag(p.name, p.record)) {
-    toastr.success(`已回滚「${p.name}」的${fieldLabel(p.record.field)}变更`, '柏宝绘');
+    toastr.success(`已回滚「${p.name}」的${fieldLabel(p.record.field)}变更`, '墨影');
   } else {
-    toastr.warning('回滚失败:条目可能已删除', '柏宝绘');
+    toastr.warning('回滚失败:条目可能已删除', '墨影');
   }
 }
 

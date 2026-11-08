@@ -1,20 +1,76 @@
-import { requestCompletion, requestViaMainApi } from '@/api/client';
+import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
+import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { readBookMemory } from '@/autoTag/bookMemory';
 import {
   applyPositionedCharRefs,
   resolveCharAnchors,
   type PositionedCharOp,
 } from '@/autoTag/charAnchors';
+import {
+  diagnoseCast,
+  diagnoseContact,
+  diagnosePropTarget,
+  castRetryNote,
+  type CastGap,
+} from '@/autoTag/castCheck';
 import { prepareTargetText } from '@/autoTag/clean';
+import {
+  buildCharReuseBlock,
+  findCharAliases,
+  findCharReuse,
+  normalizePlanCharacters,
+  resolveCanonicalCharName,
+} from '@/autoTag/charReuse';
+import {
+  BBI_OUTFIT_EXTRA_KEY,
+  buildOutfitStateBlock,
+  buildOutfitStatePayload,
+  diagnoseGarment,
+  diagnoseOutfit,
+  latestOutfitStates,
+  nextOutfitState,
+  outfitRetryNote,
+  seedOutfitStates,
+  type OutfitGap,
+} from '@/autoTag/outfitState';
+import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
+import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { compileSceneImage } from '@/autoTag/sceneCompiler';
-import { applySceneEvents, resolveSceneCharacter, restoreVisualSeeds, seedVisualDesign, SCENE_PROTOCOL, stateHash, transcriptRevision, validateSceneEvents, type SceneDelta } from '@/state/sceneState';
+import {
+  applySceneEvents,
+  resolveSceneCharacter,
+  restoreVisualSeeds,
+  seedVisualDesign,
+  SCENE_PROTOCOL,
+  stateHash,
+  transcriptRevision,
+  validateSceneEvents,
+  type SceneDelta,
+} from '@/state/sceneState';
 import { applyConfirmations, confirmationRevision, manualEvents, sceneAt } from '@/state/sceneStore';
 import { cloneVisual, fillWorldDefaults } from '@/state/visualDesign';
 import { latestMaterials, visualConfigurationRevision, worldProfile } from '@/state/visualLibrary';
-import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
-import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
+import {
+  diagnoseMonotonousShots,
+  diagnoseShot,
+  monotonousShotRetryNote,
+  shotRetryNote,
+} from '@/autoTag/shotCheck';
+import { salvageJsonObject } from '@/autoTag/salvage';
+import { diagnoseDistance, distanceRetryNote } from '@/autoTag/shotGuide';
+import {
+  adjacentPositionNote,
+  adjacentPositions,
+  duplicatePositionNote,
+  duplicatePositions,
+} from '@/autoTag/positionCheck';
+import {
+  diagnoseTruncation,
+  EMPTY_PLAN_RETRY_NOTE,
+  truncationRetryNote,
+} from '@/autoTag/truncation';
 import {
   BBI_CHAR_EXTRA_KEY,
   CHAR_TAG_FIELDS,
@@ -24,21 +80,29 @@ import {
   emptyCharFields,
   lockedCharTagNames,
   makeCharTagFloorDelta,
+  normalizeCharAge,
   readCharTagFloorDelta,
   recomputeCharTags,
   type CharTagAutoOp,
   type CharTagField,
 } from '@/state/charTags';
-import { injectImageTags, parseImagePlan, type ImagePlan } from '@/autoTag/protocol';
+import { injectImageTags, parseImagePlan, type ImageInsertion, type ImagePlan } from '@/autoTag/protocol';
 import {
   clearAutoGenerateForFloor,
   consumeAutoGenerate,
   markForAutoGenerate,
 } from '@/floor/autoGenerate';
+import {
+  cancelBackgroundFloorJobs,
+  clearPreclaimedBackgroundSlots,
+  preclaimBackgroundSlots,
+  runBackgroundGenerations,
+} from '@/floor/backgroundGen';
 import { applyMessageText, type ApplyMessageResult } from '@/st/messageEdit';
 import { getContext, isAiStoryMessage, type STMessage } from '@/st/context';
 import {
   hasImageTagTrace,
+  parseImageTagContent,
   parseImageTags,
   replaceImageTagAt,
   serializeImageTag,
@@ -79,7 +143,7 @@ function diagnostic(event: string, payload: unknown = null): void {
  * 手动点击是显式意图,静默 return 在用户那里就等于「按钮点了没反应」——查不出、
  * 也没法反馈。自动路径保持安静(每层楼都弹一次没人受得了),它的去向看诊断日志。
  */
-function abort(
+function reportAbort(
   floor: number,
   reason: string,
   manual: boolean | undefined,
@@ -87,7 +151,7 @@ function abort(
   payload: Record<string, unknown> = {},
 ): void {
   diagnostic('runForFloor:skip', { floor, reason, ...payload });
-  if (manual) toastr.warning(hint, '柏宝绘');
+  if (manual) toastr.warning(hint, '墨影');
 }
 
 function activeSwipeId(message: STMessage): number | null {
@@ -105,6 +169,8 @@ function textHash(text: string): string {
 }
 
 interface RunOptions {
+  headless?: boolean;
+  onNoImages?: () => void;
   /** 手动触发(楼层按钮):绕过 autoTag.enabled 与 processed 去重;空结果也给出反馈。 */
   manual?: boolean;
   /** 重新生成:先把已有 tag 从正文剔除再分析/注入;旧图片保留在卡片历史里。 */
@@ -137,6 +203,23 @@ function describeRebase(report: RebaseReport): string {
 }
 
 /** 把 AI 报告的 changes 转成当前楼层操作;真正写回在正文 CAS 成功时一次完成。 */
+/**
+ * fandom 角色不接受 AI changes 回填的字段:长相只由同人 tag 决定。
+ *
+ * age 刻意不在这里:年龄档不是同人 tag 的一部分(同人 tag 只给骨相和身份),
+ * 剧情里「过了几年」「长大了」时它该跟着变;hair/eyes 则相反,变了就等于换人,
+ * 宁可让模型照抄同人 tag,也不让它按自己记忆改。
+ */
+const FANDOM_GUARD_FIELDS: ReadonlySet<string> = new Set(['hair', 'eyes', 'skin', 'body', 'raw']);
+/**
+ * sex 字段里的男性标记。
+ *
+ * 建档是永久副作用:一旦入库,之后每一张图都会照抄他的长相,于是「出现过的男的」
+ * 全都留在角色库里。规则已经写明男性不建档,模型仍会顺手建一条,所以在落盘前按
+ * sex 再拦一次 —— 宁可丢掉一条建不准的档,也不要让库越用越脏。
+ */
+const MALE_SEX_RE = /^(?:1boy|boy|male|man|men|masculine|♂)/i;
+
 function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
   const ops: PositionedCharOp[] = [];
   for (const change of plan.changes) {
@@ -159,6 +242,9 @@ function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
         }
       }
       if (!fields && change.value) value = change.value;
+      // age 一律归一到规范词:模型会把正文的「刚毕业的大学生」原样抄进来,
+      // 不归一的后果是这个角色每张图年龄都不一样。
+      if (fields?.age) fields.age = normalizeCharAge(fields.age);
       op = createCharTagNewOp(
         {
           name: change.name,
@@ -173,7 +259,8 @@ function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
     } else if (change.field === 'nl') {
       op = createCharTagSetOp(change.name, 'nl', change.value || change.nl || '', change.reason);
     } else {
-      op = createCharTagSetOp(change.name, change.field, change.value, change.reason);
+      const next = change.field === 'age' ? normalizeCharAge(change.value) : change.value;
+      op = createCharTagSetOp(change.name, change.field, next, change.reason);
     }
     if (op) ops.push({ op, sourceLine: change.sourceLine });
   }
@@ -181,6 +268,10 @@ function planChangeOps(plan: ImagePlan): PositionedCharOp[] {
 }
 
 async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> {
+  const abort = (...args: Parameters<typeof reportAbort>): void => {
+    reportAbort(...args);
+    if (opts.headless) throw new Error(args[3]);
+  };
   const context = getContext();
   diagnostic('runForFloor:enter', {
     floor,
@@ -196,7 +287,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     return;
   }
   if (!settings.enabled) {
-    abort(floor, 'extension-disabled', opts.manual, '柏宝绘已停用，请先在插件设置里开启');
+    abort(floor, 'extension-disabled', opts.manual, '墨影已停用，请先在插件设置里开启');
     return;
   }
   if (!opts.manual && !settings.autoTag.enabled) {
@@ -249,7 +340,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       opts.manual,
       '本楼已有生图 tag，没有确认重新生成，本次未改动',
     );
-    if (!opts.manual) console.debug(`[柏宝绘] 第 ${floor} 楼已经含有 bbi_image tag，跳过自动分析`);
+    if (!opts.manual) console.debug(`[墨影] 第 ${floor} 楼已经含有 bbi_image tag，跳过自动分析`);
     return;
   }
   // replace / slot:分析都基于剔除旧 tag 后的正文。写回时 replace 让旧 tag 随之消失,
@@ -323,6 +414,24 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       : settings.autoTag;
     // 协议形态开跑时快照一次:写协议、验收与收尾同一份,用户中途拨开关也不会前后不一
     const profile = autoTagProfile();
+    // 素材候选的同分摇号种子:取自 identity(聊天+楼层+swipe+正文哈希)。
+    // 同一楼重试/重跑结果一致,换楼或换 swipe 就换一批同分服装/姿势候选——
+    // 否则同一句「她穿着职业装」每楼都召回同一批,模型当然每楼都挑第一件,看着就是永远一套衣服。
+    const loreSeed = Math.max(1, Number.parseInt(textHash(identity), 36) || 1);
+    // 正文外形与库中已建档角色逐项对上的,或正文中用尊称/简称(如「风阿姨」「千华」)指代已建档角色(「风千华」)的:
+    // 直接点名「这段就是她」,别让模型再编一张脸或用别称另写角色块。
+    // 只在上送给主请求前的快照上判,单槽重写同样适用(它也要照抄档案)。
+    const charReuse = buildCharReuseBlock(
+      findCharReuse(entriesBefore, preparedTarget.promptText),
+      findCharAliases(entriesBefore, preparedTarget.promptText),
+    );
+    // 服装现状:从前面楼层把每个人身上的衣服与穿脱程度读回来。
+    // 当前楼常常一句衣着都没写,模型每层都在从零决定穿什么,衣服自然乱飘;
+    // 有了这份账本它才有一个「已经发生的事实」可以继承。单槽重写也要用同一份。
+    // 账本只记变化,所以还要拿档案里的固定着装垫底——角色第一次出图时账本是空的,
+    // 那正是衣服最容易开始乱飘的时候。
+    const outfitStates = seedOutfitStates(latestOutfitStates(context.chat, floor), entriesBefore);
+    const outfitBlock = buildOutfitStateBlock(outfitStates);
     const messages = await buildAutoTagMessages(
       context,
       floor,
@@ -332,9 +441,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       anchors.text,
       slot ? buildSlotTaskNote(rawSource, slot.seq) : '',
       profile,
+      loreSeed,
+      charReuse,
+      outfitBlock,
     );
     const channel = getTagGenChannel();
-    messages.push({ role: 'user', content: `${SCENE_PROTOCOL}\n当前版本化人物/穿搭状态（只读）：\n${JSON.stringify(sceneBefore)}\n世界视觉档案：${JSON.stringify(world)}\n同名人物必须在 images.characters 中提供 characterId 或 work。默认世界服装仅补空白，剧情明确的现代穿越者/换装是例外，不可用默认规则覆盖。` });
+    messages.push({
+      role: 'user',
+      content: `${SCENE_PROTOCOL}\n当前版本化人物/穿搭状态（只读）：\n${JSON.stringify(sceneBefore)}\n世界视觉档案：${JSON.stringify(world)}\n同名人物必须在 images.characters 中提供 characterId 或 work。默认世界服装仅补空白，剧情明确的现代穿越者/换装是例外，不可用默认规则覆盖。`,
+    });
     // 失败重试:请求异常与「返回无法解析/校验不通过」都视为可重试的异常(后者常见于模型没遵守协议);
     // 中止信号立即收手,不消耗重试。parseImagePlan 对坏输出抛错,「无画面」则是正常返回空数组。
     // 解析/校验放进 validate 回调:不过则请求历史如实记为失败(而非「HTTP 拿到文本」的绿色成功),
@@ -342,22 +457,83 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const retries = Math.max(0, Math.floor(Number(settings.autoTag.retryCount) || 0));
     let plan: ImagePlan | null = null;
     let lastError = '';
+    // 上一次 attempt 是否被判为「被截断」:是则下一次重发时追加降载指令。
+    // 不增加重试次数(那是用户的成本上限),只让重试打在正确的点上。
+    let retryNote = '';
+    // 上一次是否被渠道侧拦过:是则后续重试改发「兼容版」提示词(露骨示例词换成中性占位),
+    // 并只保留最小结构要求。过滤发生在模型看到请求之前,加授权话术没用,只能把请求改淡。
+    let blockedOnce = false;
     for (let attempt = 0; attempt <= retries && !plan; attempt++) {
       if (controller.signal.aborted) {
         processed.delete(identity);
         return;
       }
+      const baseMessages = blockedOnce ? neutralizeMessages(messages) : messages;
+      const attemptMessages: ChatMsg[] = retryNote
+        ? [...baseMessages, { role: 'system', content: retryNote }]
+        : baseMessages;
       try {
         // parsed 用对象壳装着:validate 闭包写入,await 之后读取——请求成功 + 验收通过才非空。
         // (直接 let 会被 TS 收窄成 null:闭包内的赋值控制流分析看不见。)
         const parsed: { plan: ImagePlan | null } = { plan: null };
-        const validate = (raw: string) => {
+        const validate = (raw: string, meta?: { finishReason?: string | null }) => {
+          // 渠道拦截先判:它和「截断」的表现很像(空、半截、一段客气话),但修法相反——
+          // 截断要压输出,拦截要把请求本身改淡。判错方向会让重试打在错的地方。
+          const block = diagnoseBlock(raw, meta?.finishReason);
+          if (block.blocked) {
+            blockedOnce = true;
+            retryNote = BLOCK_RETRY_NOTE;
+            throw new Error(`被渠道内容过滤拦下(${block.reason})`);
+          }
+          const verdict = diagnoseTruncation(raw);
+          // 截断先尝试抢救:写完了几张图却断在下一张上,那几张是好的,补上收尾括号就能用。
+          // 救得回来就少发一次请求、少丢一张图;救不动再走重试。
+          let text = raw;
+          let salvaged = 0;
+          if (verdict.truncated) {
+            const repaired = salvageJsonObject(raw);
+            if (repaired) {
+              try {
+                // 抢救出来的图必然少于原计划(尾巴被截掉了),这里不卡下限:
+                // 「给 2 张」也比「整楼没有图」好。
+                parseImagePlan(repaired, preparedTarget.segments, 0, promptOptions.maxImages);
+                text = repaired;
+                salvaged = 1;
+              } catch {
+                salvaged = 0;
+              }
+            }
+            if (!salvaged) {
+              // 形态上就是被掐断的:重试要降载,而不是原样再发一遍同样长度的请求。
+              // 降的是图数(输出成本的主体),单独把字写短没用——图数不减照样在同一处断。
+              retryNote = truncationRetryNote(Math.max(1, promptOptions.minImages));
+              throw new Error(`输出被截断(${verdict.reason})`);
+            }
+            console.warn(
+              `[墨影] 第 ${floor} 楼输出被截断(${verdict.reason}),已救回可闭合的部分继续`,
+            );
+          }
           const candidate = parseImagePlan(
-            raw,
+            text,
             preparedTarget.segments,
-            promptOptions.minImages,
+            salvaged ? 0 : promptOptions.minImages,
             promptOptions.maxImages,
           );
+          // 称呼归并与外貌兜底:模型若在 characters[].name 或 changes[].name 里写了已建档角色的
+          // 别称/尊称/简称(如把「风千华」写成「风阿姨」「千华」),先唯一归并回档案主名,
+          // 并在因换称呼漏抄固定外貌时把档案核心外貌字段补进 character.tag。
+          normalizePlanCharacters(candidate.images, entriesBefore);
+          if (entriesBefore.length) {
+            const existingNames = new Set(entriesBefore.map(e => e.name.trim()));
+            candidate.changes = candidate.changes.filter(change => {
+              const canonical = resolveCanonicalCharName(change.name, entriesBefore);
+              if (canonical !== change.name) {
+                if (change.field === 'new' && existingNames.has(canonical)) return false;
+                change.name = canonical;
+              }
+              return true;
+            });
+          }
           // 单槽重写忽略本次 changes,不校验建档 nl —— 校验它会为一份会被丢弃的
           // changes 白白消耗重试次数。NAI 关了自然语言时协议不要 nl,也就不验。
           if (
@@ -368,6 +544,169 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           ) {
             throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
           }
+          // 空 images:协议上算正常返回,旧版直接放行,于是模型一句「没有值得插图的画面」
+          // 就能让整楼不生、阅读器干等超时。这里在还有重试次数时把它当可纠错误,
+          // 换一套口径逼它落到具体画面上;changes 非空(有建档要落)时不算空。
+          if (!slot && attempt < retries && !candidate.images.length && !candidate.changes.length) {
+            retryNote = EMPTY_PLAN_RETRY_NOTE;
+            throw new Error('返回了空 images');
+          }
+          // 落位重复:两张图挤在同一段,画出来是同一瞬间拍两遍。仅当可选位置
+          // 够分时才纠(席位数少于图数时重叠是必然的)。同样只在还有重试次数时纠。
+          if (attempt < retries) {
+            const dups = duplicatePositions(candidate.images, preparedTarget.segments.length);
+            if (dups.length) {
+              retryNote = duplicatePositionNote(dups);
+              throw new Error(`落位重复(${dups.join('、')})`);
+            }
+          }
+          // 落位紧邻:当正文句子充裕时,两张图落在紧挨着的前后两句话(如 P5 与 P6),
+          // 属于同一自然段的同一瞬间,会导致插图紧贴且画面雷同。
+          if (!slot && attempt < retries) {
+            const adj = adjacentPositions(candidate.images, preparedTarget.segments.length);
+            if (adj.length) {
+              retryNote = adjacentPositionNote(adj);
+              throw new Error(`落位紧邻(${adj.map(([a, b]) => `${a}-${b}`).join('、')})`);
+            }
+          }
+          // 景别过远:正文点名了具体部位,画面却拍成远景。这条排在缺项检查之前——
+          // 缺景别词只是「画面会平」,景别过远是「这张图白拍」,前者由后者一并带上。
+          // 同样只在还有重试次数时纠,没次数就放行。
+          if (attempt < retries) {
+            const segmentText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
+            const prevSegText = (pos: string): string => {
+              const m = /^P(\d+)$/i.exec(pos.trim());
+              if (!m) return '';
+              const n = Number.parseInt(m[1], 10);
+              return n > 1 ? (segmentText.get(`P${n - 1}`) ?? '') : '';
+            };
+            const seenGap = new Set<string>();
+            const farGaps = candidate.images
+              .map(image => {
+                const gap = diagnoseDistance(
+                  segmentText.get(image.position) ?? '',
+                  image.tag,
+                  (image.characters ?? []).map(character => character.tag),
+                  prevSegText(image.position),
+                );
+                if (!gap) return null;
+                const key = `${image.position}\u0000${gap.suggest}`;
+                if (seenGap.has(key)) return null;
+                seenGap.add(key);
+                return { position: image.position, ...gap };
+              })
+              .filter((gap): gap is NonNullable<typeof gap> => !!gap);
+            if (farGaps.length) {
+              retryNote = distanceRetryNote(farGaps);
+              throw new Error(
+                `景别过远(${farGaps.map(gap => `${gap.position} 应 ${gap.suggest}`).join('、')})`,
+              );
+            }
+          }
+          // 画面事实闭环:人数与道具落点。
+          // 「两个男的一个女的」画成一个人长双头肉棒、「毛笔在阴部写字」只画毛笔不画落点,
+          // 都是可判定的确定错,而且这类错图一眼废。排在构图缺项之前(缺项只是画面平)。
+          // 单槽重写不改画面事实,跳过。
+          if (!slot && attempt < retries) {
+            const segmentText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
+            const castGaps: CastGap[] = [];
+            const seenCast = new Set<string>();
+            for (const image of candidate.images) {
+              const text = segmentText.get(image.position) ?? '';
+              const aliasPresent = findCharAliases(entriesBefore, text).map(hit => hit.name);
+              const present = [
+                ...new Set([
+                  ...[...entriesBefore].map(entry => entry.name).filter(name => text.includes(name)),
+                  ...aliasPresent,
+                ]),
+              ];
+              const charTagList = (image.characters ?? []).map(character => character.tag);
+              const found = [
+                ...diagnoseCast(
+                  text,
+                  image.tag,
+                  image.characters ?? [],
+                  present,
+                  profile.naiCharPrompts,
+                ),
+                ...diagnosePropTarget(text, image.tag, charTagList),
+                ...diagnoseContact(
+                  text,
+                  image.tag,
+                  charTagList,
+                ),
+              ];
+              for (const gap of found) {
+                const key = `${image.position}\u0000${gap.detail}`;
+                if (seenCast.has(key)) continue;
+                seenCast.add(key);
+                castGaps.push(gap);
+              }
+            }
+            if (castGaps.length) {
+              retryNote = castRetryNote(castGaps);
+              throw new Error(`画面事实不符(${castGaps.map(gap => gap.kind).join('、')})`);
+            }
+          }
+          // 服装账本:衣服明明没变,穿脱程度却跳了(半脱→全裸、已脱→又穿回),
+          // 或者正文没写换装,整套衣服被换成另一套。
+          // 这条最伤连续性,而且模型自己看不出来——它没有上一层的画面。
+          if (!slot && attempt < retries && outfitStates.size) {
+            const outfitGaps: OutfitGap[] = [];
+            const outfitText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
+            const prevOutfitText = (pos: string): string => {
+              const m = /^P(\d+)$/i.exec(pos.trim());
+              if (!m) return '';
+              const n = Number.parseInt(m[1], 10);
+              return n > 1 ? (outfitText.get(`P${n - 1}`) ?? '') : '';
+            };
+            for (const image of candidate.images) {
+              outfitGaps.push(...diagnoseOutfit(image, outfitStates));
+              const windowText = [
+                prevOutfitText(image.position),
+                outfitText.get(image.position) ?? '',
+              ]
+                .filter(Boolean)
+                .join(' ');
+              outfitGaps.push(
+                ...diagnoseGarment(image, outfitStates, windowText),
+              );
+            }
+            if (outfitGaps.length) {
+              retryNote = outfitRetryNote(outfitGaps);
+              throw new Error(`服装状态跳变(${outfitGaps.map(gap => gap.name).join('、')})`);
+            }
+          }
+          // 构图缺项:只在还有重试次数时纠一次。没次数了就放行——
+          // 交一张景别平庸的图,好过因为「没写机位」整楼不生。
+          if (attempt < retries) {
+            const gaps = [
+              ...new Set(
+                candidate.images
+                  .map(image =>
+                    diagnoseShot(
+                      image.tag,
+                      (image.characters ?? []).map(character => character.tag),
+                    ),
+                  )
+                  .filter(diag => !diag.softOnly)
+                  .flatMap(diag => diag.missing),
+              ),
+            ];
+            if (gaps.length) {
+              retryNote = shotRetryNote(gaps);
+              throw new Error(`构图缺项(${gaps.join('、')})`);
+            }
+            if (!slot) {
+              const monoGaps = diagnoseMonotonousShots(candidate.images);
+              if (monoGaps.length) {
+                retryNote = monotonousShotRetryNote(monoGaps);
+                throw new Error(
+                  `构图雷同(${monoGaps.map(g => `${g.positions.join('/')} 均为 ${g.signature}`).join('、')})`,
+                );
+              }
+            }
+          }
           parsed.plan = candidate;
         };
         // 有重试时给 source 带上第几次,历史里两条记录一眼看出是重试关系
@@ -377,13 +716,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             ? `自动 tag(第 ${floor} 楼 · 第 ${attempt + 1} 次)`
             : `自动 tag(第 ${floor} 楼)`;
         if (channel) {
-          await requestCompletion(channel, messages, {
+          await requestCompletion(channel, attemptMessages, {
             signal: controller.signal,
             source,
             validate,
           });
         } else {
-          await requestViaMainApi(messages, {
+          await requestViaMainApi(attemptMessages, {
             signal: controller.signal,
             source,
             validate,
@@ -400,7 +739,14 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           return;
         }
         lastError = error instanceof Error ? error.message : String(error);
-        console.warn(`[柏宝绘] 第 ${floor} 楼第 ${attempt + 1}/${retries + 1} 次生成 tag 失败`, error);
+        // HTTP 层被拦时错误信息里带的是渠道原文(常见 400 + 「内容审核」),它进不了 validate
+        // (内容为空时 client 直接抛错),所以这里补判一次。空内容同样按被拦处理:
+        // 两者都要降载,判错方向的代价只是这一次重试更短,不会更差。
+        if (/空内容/.test(lastError) || diagnoseBlock(lastError).blocked) {
+          blockedOnce = true;
+          retryNote = BLOCK_RETRY_NOTE;
+        }
+        console.warn(`[墨影] 第 ${floor} 楼第 ${attempt + 1}/${retries + 1} 次生成 tag 失败`, error);
       }
     }
     if (!plan) {
@@ -408,8 +754,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       processed.delete(identity);
       toastr.error(
         `${lastError}${retries > 0 ? `(已自动重试 ${retries} 次)` : ''}`,
-        '柏宝绘自动 tag 失败',
+        '墨影自动 tag 失败',
       );
+      if (opts.headless) throw new Error(lastError || 'tag 分析未通过校验');
       return;
     }
 
@@ -424,7 +771,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // Stable records are no longer rewritten by free-form set operations. Changes require evidence-backed events.
     const previousDelta = readCharTagFloorDelta(message);
     const retainedDesigns = !slot && previousDelta?.swipe === (swipeId ?? 0)
-      ? previousDelta.ops.filter(op => op.kind === 'new' && !lockedNames.has(op.name) && !entriesBefore.some(e => e.name === op.name)) : [];
+      ? previousDelta.ops.filter(op => op.kind === 'new' && !lockedNames.has(op.name) && !entriesBefore.some(e => e.name === op.name))
+      : [];
     const effectiveOps = unlockedOps.filter(item => item.op.kind === 'new' && !entriesBefore.some(e => e.name === item.op.name)
       && !retainedDesigns.some(op => op.name === item.op.name));
     const floorOps = [...retainedDesigns, ...effectiveOps.map(item => item.op)];
@@ -518,31 +866,36 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         ? sceneAt(floor, oldFrame?.sourceLine ?? image.sourceLine)
         : applyConfirmations(applySceneEvents(sceneBefore, eventsForFrame, chatId, sceneRevision, floor, image.sourceLine));
       const warnings = compileSceneImage(image, scene, profile.naiCharPrompts, profile.nl, world);
-      sceneDelta.frames!.push({ sourceLine: image.sourceLine, tag: serializeImageTag(image), characters: scene.characters.filter(character =>
-        image.characters.some(prompt => resolveSceneCharacter(scene, prompt.name, prompt.work, prompt.characterId)?.characterId === character.characterId)),
-        warnings: [...scene.warnings, ...warnings] });
+      sceneDelta.frames!.push({
+        sourceLine: image.sourceLine,
+        tag: serializeImageTag(image),
+        characters: scene.characters.filter(character =>
+          image.characters.some(prompt => resolveSceneCharacter(scene, prompt.name, prompt.work, prompt.characterId)?.characterId === character.characterId)),
+        warnings: [...scene.warnings, ...warnings],
+      });
     }
     if (sceneDelta.rejected.length || sceneDelta.frames?.some(frame => frame.warnings.length)) {
       diagnostic('scene:validation', { rejected: sceneDelta.rejected, warnings: sceneDelta.frames?.flatMap(frame => frame.warnings) });
-      toastr.warning('部分人物或状态无法确认，已保留原状态；可在角色管理/生图详情查看追踪', '柏宝绘');
+      toastr.warning('部分人物或状态无法确认，已保留原状态；可在角色管理/生图详情查看追踪', '墨影');
     }
     if (unknownNames.size) {
       // 模型认为这是角色、却没给它建档 —— 该角色在图里将完全没有外貌。
       // 这是漏建档唯一的确定性信号,藏进控制台等于没有,必须让用户看见。
       const names = [...unknownNames].join('、');
-      console.warn('[柏宝绘] AI 引用了库里没有的角色占位符,已剥除:', names);
-      toastr.warning(`角色「${names}」没有建档，本次画面中缺少其外貌`, '柏宝绘');
+      console.warn('[墨影] AI 引用了库里没有的角色占位符,已剥除:', names);
+      toastr.warning(`角色「${names}」没有建档，本次画面中缺少其外貌`, '墨影');
     }
 
     // 单槽重写没给出新提示词:保留原提示词与原图,不替换(空 images 不是错误)。
     if (slot && !plan.images.length) {
-      toastr.info('模型没有给出新的提示词，本张保持原样', '柏宝绘');
+      toastr.info('模型没有给出新的提示词，本张保持原样', '墨影');
       return;
     }
     // 没有图片、没有角色变化、也没有旧楼层变化要清理时,保持原来的无写入早退。
+    if (!plan.images.length) opts.onNoImages?.();
     if (!plan.images.length && !floorOps.length && !sceneDelta.events.length && !previousDelta) {
-      if (opts.manual) toastr.info('模型认为本楼没有值得插图的画面', '柏宝绘');
-      else console.debug(`[柏宝绘] 第 ${floor} 楼无需插图`);
+      if (opts.manual) toastr.info('模型认为本楼没有值得插图的画面', '墨影');
+      else console.debug(`[墨影] 第 ${floor} 楼无需插图`);
       return;
     }
 
@@ -551,19 +904,32 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 单槽重写是用户在卡片上的显式意图(同提示词编辑弹窗的「应用并重新生成」),
     // 不受 autoTag.autoGenerate 开关约束,一律 force 出图。
     const markSwipeId = message.swipe_id ?? 0;
-    const marked = plan.images.length > 0 && (settings.autoTag.autoGenerate || !!slot);
+    const marked = !opts.headless && plan.images.length > 0 && (settings.autoTag.autoGenerate || !!slot);
+    if (!slot && opts.replace) {
+      cancelBackgroundFloorJobs(chatId, floor);
+    }
     if (marked) {
       if (slot) {
         markForAutoGenerate(chatId, floor, markSwipeId, slot.seq, 'force');
+        preclaimBackgroundSlots(chatId, floor, markSwipeId, [slot.seq]);
       } else {
+        const seqs: number[] = [];
         for (let seq = 0; seq < plan.images.length; seq++) {
           markForAutoGenerate(chatId, floor, markSwipeId, seq);
+          seqs.push(seq);
         }
+        preclaimBackgroundSlots(chatId, floor, markSwipeId, seqs);
       }
     }
     // 正文在 buildNext 里基于「落盘那一刻的真实正文」现算:分析期间别的插件对正文的修改
     // (翻译/润色/追加状态栏/改写句子)全部保留,tag 按叙事行重新定位后照常注入。
     let rebaseNote = '';
+    // 真正落进正文的那批插入项(重定位后的),供写盘成功后转交后台出图。
+    let writtenImages: ImageInsertion[] = [];
+    // 全量写入同时落两笔:角色增量与本楼的服装账本。账本按「本楼实际写出的画面」冻结,
+    // 下一楼读它当既成事实——没有这一笔,下一楼就又得从零猜她穿了什么、脱到哪一步。
+    // 注意:applyMessageText 的实参在进入 buildNext 之前就会求值,因此账本必须用 plan.images 计算!
+    const nextOutfits = nextOutfitState(outfitStates, plan.images);
     const result = await applyMessageText(
       floor,
       currentText => {
@@ -578,6 +944,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         // 开跑时快照的原文对不上 = 期间被用户/别的流程改过,放弃覆盖(同提示词编辑弹窗)。
         if (slot) {
           if (parseImageTags(currentText)[slot.seq] !== slotRawTag) return null;
+          writtenImages = [plan.images[0]];
           return replaceImageTagAt(currentText, slot.seq, serializeImageTag(plan.images[0]));
         }
         // replace 路径同样以当前正文为基底剔除旧 tag,不能用旧快照
@@ -593,6 +960,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         );
         if (!rebased) return null;
         rebaseNote = describeRebase(rebased.report);
+        writtenImages = rebased.images;
         return injectImageTags(base, rebased.images);
       },
       chatId,
@@ -601,51 +969,113 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       // 单槽不写法:本楼角色增量与其它槽位图片都不归它管,不传 extraUpdate 即保持原样。
       slot
         ? undefined
-        : {
-            key: BBI_CHAR_EXTRA_KEY,
-            value: makeCharTagFloorDelta(floorOps, swipeId ?? 0, sceneDelta,
-              previousDelta?.legacyBackup ?? (previousDelta && !previousDelta.scene ? message.extra?.[BBI_CHAR_EXTRA_KEY] : undefined)),
-          },
+        : [
+            {
+              key: BBI_CHAR_EXTRA_KEY,
+              value: makeCharTagFloorDelta(
+                floorOps,
+                swipeId ?? 0,
+                sceneDelta,
+                previousDelta?.legacyBackup ?? (previousDelta && !previousDelta.scene ? message.extra?.[BBI_CHAR_EXTRA_KEY] : undefined),
+              ),
+            },
+            {
+              key: BBI_OUTFIT_EXTRA_KEY,
+              value: buildOutfitStatePayload(nextOutfits, swipeId ?? 0),
+            },
+          ],
+      { render: !opts.headless },
     );
     if (result === 'saved') {
+      // 后台直跑:写盘成功就把这批槽位交给 floor/backgroundGen.ts。
+      // 它先抢标记——前台卡片若已经接手(标记被消费)它就直接让位,不会双跑;
+      // 手机上切后台或阅读器静默生非视口楼层时卡片不挂载,标记没人抢,于是由它跑完并反推界面。
+      //
+      // 必须直接从已落盘的 message.mes 按物理出现顺序(parseImageTags)构造 BackgroundJob:
+      // 1) writtenImages 保持的是模型返回的数组顺序(按重要性排序),而非 injectImageTags 按
+      //    sourceLine/charOffset 重排后的物理槽位顺序,直接用 index 当 seq 会与卡片槽位错位;
+      // 2) BackgroundJob.tag 必须是含 <bbi_image>…</bbi_image> 壳的完整原文(与 hydrate.ts /
+      //    Card.vue / storage.ts 的 promptHash 口径完全一致),绝不能传裸 image.tag!
+      if (marked && writtenImages.length) {
+        const savedRawTags = parseImageTags(message.mes ?? '');
+        const jobs = slot
+          ? (() => {
+              const rawTag = savedRawTags[slot.seq] ?? serializeImageTag(writtenImages[0]);
+              const content = parseImageTagContent(rawTag);
+              return [
+                {
+                  chatId,
+                  messageId: floor,
+                  swipeId: markSwipeId,
+                  seq: slot.seq,
+                  tag: rawTag,
+                  prompt: content.tag,
+                  nl: content.nl,
+                  negative: content.negative,
+                  characters: content.characters,
+                  size: content.size,
+                },
+              ];
+            })()
+          : savedRawTags.map((rawTag, seq) => {
+              const content = parseImageTagContent(rawTag);
+              return {
+                chatId,
+                messageId: floor,
+                swipeId: markSwipeId,
+                seq,
+                tag: rawTag,
+                prompt: content.tag,
+                nl: content.nl,
+                negative: content.negative,
+                characters: content.characters,
+                size: content.size,
+              };
+            });
+        void runBackgroundGenerations(jobs);
+      }
       if (slot) {
-        toastr.success(`已重写第 ${slot.seq + 1} 张的提示词，正在按新提示词出图`, '柏宝绘');
+        toastr.success(`已重写第 ${slot.seq + 1} 张的提示词，正在按新提示词出图`, '墨影');
         return;
       }
       recomputeCharTags();
-      if (rebaseNote) console.info(`[柏宝绘] 第 ${floor} 楼 tag 位置重定位:${rebaseNote}`);
+      if (rebaseNote) console.info(`[墨影] 第 ${floor} 楼 tag 位置重定位:${rebaseNote}`);
       if (plan.images.length) {
-        toastr.success(`已在第 ${floor} 楼插入 ${plan.images.length} 个生图 tag`, '柏宝绘');
+        toastr.success(`已在第 ${floor} 楼插入 ${plan.images.length} 个生图 tag`, '墨影');
       } else if (opts.manual) {
-        toastr.info('模型认为本楼没有值得插图的画面', '柏宝绘');
+        toastr.info('模型认为本楼没有值得插图的画面', '墨影');
       } else {
-        console.debug(`[柏宝绘] 第 ${floor} 楼无需插图`);
+        console.debug(`[墨影] 第 ${floor} 楼无需插图`);
       }
       return;
     }
+    if (opts.headless) throw new Error(ABANDON_REASON[result] || result);
     // 撤销标记只撤自己那一枚:clearAutoGenerateForFloor 会连累同楼其它槽位的待消费标记。
     if (marked) {
+      clearPreclaimedBackgroundSlots(chatId, floor);
       if (slot) consumeAutoGenerate(chatId, floor, markSwipeId, slot.seq);
       else clearAutoGenerateForFloor(chatId, floor);
     }
-    console.info(`[柏宝绘] 第 ${floor} 楼放弃写入生图 tag：${result}`);
+    console.info(`[墨影] 第 ${floor} 楼放弃写入生图 tag：${result}`);
     // 单槽重写的放弃原因与全量不同:正文其它部分改没改不重要,关键是这一条 tag 被改过
     if (slot && result === 'build-failed') {
-      toastr.warning('这张图的提示词在生成期间已被改动，本次没有覆盖它', '柏宝绘');
+      toastr.warning('这张图的提示词在生成期间已被改动，本次没有覆盖它', '墨影');
     } else {
-      toastr.warning(ABANDON_REASON[result] ?? '本次没有写入生图 tag', '柏宝绘');
+      toastr.warning(ABANDON_REASON[result] ?? '本次没有写入生图 tag', '墨影');
     }
   } catch (error) {
     // 请求失败或被切换聊天取消时允许同一正文在后续重新渲染后重试。
     processed.delete(identity);
     // 异常发生在挂标记之后时(如保存失败回滚),撤销本楼标记,不留残留。
     // 单槽只撤自己那一枚:clearAutoGenerateForFloor 会连累同楼其它槽位的待消费标记。
+    clearPreclaimedBackgroundSlots(chatId, floor);
     if (slot) consumeAutoGenerate(chatId, floor, swipeId ?? 0, slot.seq);
     else clearAutoGenerateForFloor(chatId, floor);
+    if (opts.headless) throw error;
     if (controller.signal.aborted) return;
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[柏宝绘] 第 ${floor} 楼自动生成 tag 失败`, error);
-    toastr.error(message, '柏宝绘自动 tag 失败');
+    console.error(`[墨影] 第 ${floor} 楼自动生成 tag 失败`, error);
+    toastr.error(message, '墨影自动 tag 失败');
   } finally {
     if (running.get(runKey) === controller) running.delete(runKey);
   }
@@ -692,6 +1122,16 @@ export async function requestFloorTags(floor: number, opts: { replace?: boolean 
  * 分析基底剔除全部旧 tag(AI 不该把 tag 当正文),强制输出 1 张;本楼其它 tag 与图片
  * 一字不动,旧图留在该槽位历史里。本次 AI 输出的 changes 一律忽略(首次全量分析时已建档)。
  */
+export async function requestNovelFloorTags(floor: number): Promise<{ status: 'tagged' | 'no-images' }> {
+  let noImages = false;
+  await runForFloor(floor, { manual: true, headless: true, onNoImages: () => { noImages = true; } });
+  if (noImages) return { status: 'no-images' };
+  if (!parseImageTags(getContext()?.chat[floor]?.mes || '').length) {
+    throw new Error('本次没有保存有效 tag，未自动重复提交');
+  }
+  return { status: 'tagged' };
+}
+
 export async function requestSlotTag(floor: number, seq: number): Promise<void> {
   await runForFloor(floor, { manual: true, slot: { seq } });
 }
@@ -700,6 +1140,12 @@ export async function requestSlotTag(floor: number, seq: number): Promise<void> 
 export function cancelFloorTags(floor: number): void {
   const chatId = getContext()?.getCurrentChatId?.() ?? '';
   running.get(`${chatId}\u0000${floor}`)?.abort();
+}
+
+/** 查询某楼是否正在跑自动生图 tag 分析 */
+export function isFloorTagRunning(floor: number): boolean {
+  const chatId = getContext()?.getCurrentChatId?.() ?? '';
+  return running.has(`${chatId}\u0000${floor}`);
 }
 
 /** Only pair automatic tagging with the final render of a real ST generation. */

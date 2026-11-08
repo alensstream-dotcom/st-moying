@@ -8,7 +8,9 @@ import Icon from '@/components/Icon.vue';
 import { confirmDialog } from '@/components/confirm';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { consumeAutoGenerate, shouldAutoGenerate } from '@/floor/autoGenerate';
+import { isBackgroundJobQueued } from '@/floor/backgroundGen';
 import { isCollapsed, setCollapsed } from '@/floor/collapseState';
+import { isNovelSlot } from '@/floor/novelOwnership';
 import { imageDownloadFileName, saveImageFile } from '@/floor/download';
 import {
   beginGen,
@@ -16,6 +18,7 @@ import {
   clearGen,
   failGen,
   getGenRecord,
+  hasActiveGen,
   isCurrentGen,
   reconcileGen,
   setGenPhase,
@@ -252,13 +255,13 @@ const barText = computed(() => {
 /** 无图且后端未就绪时,占位区中央的配置引导。 */
 const pendingHint = computed(() => {
   if (!comfyActive.value && !naiActive.value)
-    return '出图后端未选择,请到柏宝绘「渠道」页选择出图渠道';
+    return '出图后端未选择,请到墨影「渠道」页选择出图渠道';
   return naiActive.value
-    ? '未配置 NAI,请到柏宝绘「渠道」页填写 API Key'
-    : '未配置 ComfyUI,请到柏宝绘「渠道」页填写工作流';
+    ? '未配置 NAI,请到墨影「渠道」页填写 API Key'
+    : '未配置 ComfyUI,请到墨影「渠道」页填写工作流';
 });
 
-async function generate(): Promise<void> {
+async function generate(fresh = false): Promise<void> {
   if (busy.value || planning.value || !configured.value) return;
   const slot = key.value;
   const currentHash = hash.value;
@@ -275,17 +278,6 @@ async function generate(): Promise<void> {
     characters: props.characters.map(character => ({ ...character })),
     size: effectiveSize.value,
   };
-  const sceneDelta = readCharTagFloorDelta(getContext()?.chat[job.messageId])?.scene;
-  const frame = sceneDelta?.frames?.[job.seq];
-  const stateSourceValid = !sceneDelta || sceneDelta.revision === transcriptRevision(getContext()?.chat ?? [], job.messageId);
-  if (!stateSourceValid) toastr.warning('此图的剧情状态已过期。本次沿用已保存提示词；请重新生成该楼 tag 以重放状态', '柏宝绘');
-  const sceneTrace = frame?.tag === job.tag ? JSON.parse(JSON.stringify({
-    chatId: props.chatId, floor: job.messageId, swipe: job.swipeId, seq: job.seq, revision: sceneDelta?.revision,
-    stateSourceValid,
-    frame, events: sceneDelta?.events, rejected: sceneDelta?.rejected,
-  })) : { note: '本提示词没有匹配的状态快照（可能为旧图、手改或单槽重写），按已保存提示词出图' };
-  const referenceVibes = frame?.tag === job.tag ? frame.characters.flatMap(c => (c.visualBindings ?? [])
-    .filter(b => b.scope === 'appearance' || b.scope === 'all').flatMap(b => b.resolved.vibe ? [b.resolved.vibe] : [])) : [];
   // NAI 需要闸门排队 → 先显示「排队中」;ComfyUI 有服务端队列,直接进 generating
   const { signal, token } = beginGen(slot, currentHash, naiActive.value ? 'queued' : 'generating');
   // 历史记录 id:在 seed 确定后才登记(见下),故这里先置空,catch 里据此判断要不要收尾。
@@ -294,7 +286,7 @@ async function generate(): Promise<void> {
   try {
     // 发起时就确定种子(NAI 面板种子 > 0 时用固定值;否则随机),随结果落盘进 extra
     // (entry.seed),历史翻页可查/可复用。口径在 generate.ts,与公开接口同源。
-    const seed = decideSeed(settings.defaultBackend);
+    const seed = decideSeed(settings.defaultBackend, undefined, fresh);
     // 历史埋点:seed 已定、请求将发,此刻登记。图片本身不进 store(dataURL 会爆内存,
     // 且图随后就落盘进 ST 了)——只留元信息 + 楼层坐标,够回溯「这张图是怎么来的」。
     historyId = safeHistory(() =>
@@ -311,6 +303,17 @@ async function generate(): Promise<void> {
         seq: job.seq,
       }),
     );
+    const sceneDelta = readCharTagFloorDelta(getContext()?.chat?.[job.messageId])?.scene;
+    const frame = sceneDelta?.frames?.[job.seq];
+    const stateSourceValid = !sceneDelta || sceneDelta.revision === transcriptRevision(getContext()?.chat ?? [], job.messageId);
+    if (!stateSourceValid) toastr.warning('此图的剧情状态已过期。本次沿用已保存提示词；请重新生成该楼 tag 以重放状态', '墨影');
+    const sceneTrace = frame?.tag === job.tag ? JSON.parse(JSON.stringify({
+      chatId: props.chatId, floor: job.messageId, swipe: job.swipeId, seq: job.seq, revision: sceneDelta?.revision,
+      stateSourceValid,
+      frame, events: sceneDelta?.events, rejected: sceneDelta?.rejected,
+    })) : { note: '本提示词没有匹配的状态快照（可能为旧图、手改或单槽重写），按已保存提示词出图' };
+    const referenceVibes = frame?.tag === job.tag ? frame.characters.flatMap(c => (c.visualBindings ?? [])
+      .filter(b => b.scope === 'appearance' || b.scope === 'all').flatMap(b => b.resolved.vibe ? [b.resolved.vibe] : [])) : [];
     // 闸门、后端分派都在 generateImage 里(公开接口走同一条路,见 generate.ts);
     // 本组件只把进度回调接到自己的槽位运行态上。
     const { result, meta } = await generateImage({ ...job, seed, referenceVibes }, signal, {
@@ -436,7 +439,7 @@ async function removeEntry(
     target.generationId,
   );
   if (!removed) {
-    toastr.error('删除失败,聊天记录未能保存', '柏宝绘');
+    toastr.error('删除失败,聊天记录未能保存', '墨影');
     return;
   }
   const ctx = getContext();
@@ -465,8 +468,30 @@ onMounted(() => {
   // (本组件没有单测,留在这儿锁不住),口径见 floor/autoGenerate.ts。
   // 未配置后端时不跑(卡片维持 pending,显示配置引导);标记同样已消费掉。
   if (!props.chatId) return;
+  if (props.chatId === getContext()?.getCurrentChatId?.() && isNovelSlot(getContext()?.chat[props.messageId], props.swipeId, props.seq, hash.value)) return;
+  if (isBackgroundJobQueued(props.chatId, props.messageId, props.swipeId, props.seq)) {
+    consumeAutoGenerate(props.chatId, props.messageId, props.swipeId, props.seq);
+    return;
+  }
   const mode = consumeAutoGenerate(props.chatId, props.messageId, props.swipeId, props.seq);
-  if (!mode) return;
+  if (!mode) {
+    // 标记已被摘走 = 后台出图接手了。但后台那一侧也可能被跳过(僵尸记录、切过聊天、
+    // 启动期后端还没就绪),那样这一张就永远停在待生成、只能手动点一下 —— 而它通常
+    // 正好是本楼的第一张,因为它是第一个挂载、第一个被摘标记的。
+    // 给一次迟到的兜底:稍后再看，若这个槽位既没有图也没有在途任务，就自己跑。
+    if (!settings.autoTag.autoGenerate) return;
+    window.setTimeout(() => {
+      if (props.chatId !== (getContext()?.getCurrentChatId?.() ?? '')) return;
+      if (isNovelSlot(getContext()?.chat[props.messageId], props.swipeId, props.seq, hash.value)) return;
+      if (shownEntry.value) return;
+      if (hasActiveGen(key.value)) return;
+      if (isBackgroundJobQueued(props.chatId, props.messageId, props.swipeId, props.seq)) return;
+      if (!configured.value) return;
+      console.debug(`[墨影] 兜底出图：第 ${props.messageId} 楼第 ${props.seq + 1} 张（未被后台接手）`);
+      void generate();
+    }, 1500);
+    return;
+  }
   if (!shouldAutoGenerate(mode, phase.value)) return;
   if (!configured.value) return;
   void generate();
@@ -537,7 +562,7 @@ onMounted(() => {
 
       <!-- 无图且空闲:生成入口 / 配置引导 -->
       <div v-if="!imageSrc && !busy" class="bbi-figure__pending">
-        <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate">
+        <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate()">
           <Icon name="palette" :size="15" />
           {{ phase === 'error' ? '重试' : '生成图片' }}
         </button>
@@ -573,8 +598,8 @@ onMounted(() => {
             class="bbi-fab"
             type="button"
             :disabled="!configured"
-            :title="configured ? '重绘' : '请先在柏宝绘「渠道」页完成配置'"
-            @click="menuOpen = false; generate()"
+            :title="configured ? '重绘' : '请先在墨影「渠道」页完成配置'"
+            @click="menuOpen = false; generate(true)"
           >
             <Icon name="refresh" :size="15" />
           </button>
@@ -636,7 +661,7 @@ onMounted(() => {
     <!-- 状态行:仅出错 / 提示词已改时出现,平时零占位 -->
     <p v-if="phase === 'error'" class="bbi-figure__status bbi-figure__status--error">
       {{ error
-      }}<button v-if="configured" class="bbi-figure__retry" type="button" @click="generate">
+      }}<button v-if="configured" class="bbi-figure__retry" type="button" @click="generate()">
         重试
       </button>
     </p>

@@ -426,7 +426,7 @@ describe('managed bbi image-tag regex registration', () => {  it('registers both
     const unrelated = { id: 'user-rule', scriptName: '用户规则' };
     const legacy = {
       id: IMAGE_TAG_HIDE_REGEX_ID,
-      scriptName: '柏宝绘 · 隐藏生图标签',
+      scriptName: '墨影 · 隐藏生图标签',
       findRegex: '/old/g',
       markdownOnly: true,
       promptOnly: true,
@@ -449,7 +449,7 @@ describe('managed bbi image-tag regex registration', () => {  it('registers both
     // 旧单条 hide 规则被原位升级为 promptOnly 版本（不再双开），用户字段保留
     const hide = list.find(s => s.id === IMAGE_TAG_HIDE_REGEX_ID);
     expect(hide).toMatchObject({
-      scriptName: '柏宝绘 · 隐藏生图标签',
+      scriptName: '墨影 · 隐藏生图标签',
       markdownOnly: false,
       promptOnly: true,
       placement: [1, 2, 3],
@@ -460,7 +460,7 @@ describe('managed bbi image-tag regex registration', () => {  it('registers both
     const slots = list.filter(s => s.id === IMAGE_TAG_SLOT_REGEX_ID);
     expect(slots).toHaveLength(1);
     expect(slots[0]).toMatchObject({
-      scriptName: '柏宝绘 · 生图标签占位',
+      scriptName: '墨影 · 生图标签占位',
       markdownOnly: true,
       promptOnly: false,
       placement: [1, 2, 3],

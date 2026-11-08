@@ -96,14 +96,14 @@ describe('sidecar naming', () => {
   });
 
   it('derives the sidecar path from an image path', () => {
-    expect(sidecarPathFor('/user/images/柏宝绘_a/bbi_abc_0_h-g1.png')).toBe(
+    expect(sidecarPathFor('/user/images/墨影_a/bbi_abc_0_h-g1.png')).toBe(
       '/user/files/bbi_abc_0_h-g1.json',
     );
   });
 
   it('returns empty for files this plugin did not name', () => {
     // 外来文件算出来的侧写名必然 404,不该白发请求
-    expect(sidecarPathFor('/user/images/柏宝绘_a/photo.png')).toBe('');
+    expect(sidecarPathFor('/user/images/墨影_a/photo.png')).toBe('');
     expect(sidecarPathFor('/user/files/bbi-vibe-thumb-x.jpg')).toBe('');
     expect(sidecarPathFor('')).toBe('');
   });
@@ -300,7 +300,7 @@ describe('saveImageResult', () => {
     const hash = promptHash(tag);
     const legacyEntry = fakeEntry();
     message.extra = { [BBI_IMAGE_EXTRA_KEY]: appendEntry({}, 0, hash, legacyEntry) };
-    const storedPath = `/user/images/柏宝绘_${storedName}/bbi_seeded.png`;
+    const storedPath = `/user/images/墨影_${storedName}/bbi_seeded.png`;
     const saveChat = vi.fn(async () => undefined);
     const fetchMock = vi.fn(async () => {
       expect(saveChat).not.toHaveBeenCalled();
@@ -330,7 +330,7 @@ describe('saveImageResult', () => {
       body: JSON.stringify({
         image: 'AAAA',
         format: 'png',
-        ch_name: `柏宝绘_${characterName}`,
+        ch_name: `墨影_${characterName}`,
         filename: imageName,
       }),
     });
@@ -401,7 +401,7 @@ describe('saveImageResult', () => {
   it('keeps the image when the sidecar upload fails', async () => {
     const message = fakeMessage();
     const tag = '<bbi_image>a</bbi_image>';
-    const storedPath = '/user/images/柏宝绘_c/bbi_seeded.png';
+    const storedPath = '/user/images/墨影_c/bbi_seeded.png';
     const saveChat = vi.fn(async () => undefined);
     // 图片上传成功、侧写 500:图必须照常存下,只是没有提示词可看
     const fetchMock = vi.fn(async (url: string) =>
@@ -460,9 +460,9 @@ describe('saveExternalImage', () => {
     settings.storage.saveAsJpeg = false;
   });
 
-  it('lands in the gallery: 柏宝绘_ folder + a name sidecarPathFor can recognize', async () => {
+  it('lands in the gallery: 墨影_ folder + a name sidecarPathFor can recognize', async () => {
     const tag = '<bbi_image>1girl<size>portrait</size></bbi_image>';
-    const storedPath = '/user/images/柏宝绘_小雪/bbi_seeded.png';
+    const storedPath = '/user/images/墨影_小雪/bbi_seeded.png';
     const fetchMock = vi.fn(async (url: string) =>
       url === '/api/files/upload'
         ? new Response('{}', { status: 200 })
@@ -481,10 +481,10 @@ describe('saveExternalImage', () => {
       filename: string;
     };
     // 目录前缀是图库列图的唯一依据:换个前缀,图存下去了但图库里看不见
-    expect(upload.ch_name).toBe('柏宝绘_小雪');
+    expect(upload.ch_name).toBe('墨影_小雪');
     // 文件名必须过 sidecarPathFor 的正则,否则图库压根不去请求侧写——
     // 症状是图在、提示词空白、且没有任何报错
-    expect(sidecarPathFor(`/user/images/柏宝绘_小雪/${upload.filename}`)).toBe(
+    expect(sidecarPathFor(`/user/images/墨影_小雪/${upload.filename}`)).toBe(
       `/user/files/${sidecarFileName(upload.filename)}`,
     );
 
@@ -497,9 +497,9 @@ describe('saveExternalImage', () => {
     ).toMatchObject({ v: 2, character: '小雪', prompt: tag, seed: 123 });
   });
 
-  it('falls back to 未命名角色 rather than writing a 柏宝绘_ folder with an empty name', async () => {
+  it('falls back to 未命名角色 rather than writing a 墨影_ folder with an empty name', async () => {
     const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ path: '/user/images/柏宝绘_未命名角色/bbi_x.png' }), { status: 200 }),
+      new Response(JSON.stringify({ path: '/user/images/墨影_未命名角色/bbi_x.png' }), { status: 200 }),
     );
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('window', {
@@ -512,13 +512,13 @@ describe('saveExternalImage', () => {
     const upload = JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body)) as {
       ch_name: string;
     };
-    expect(upload.ch_name).toBe('柏宝绘_未命名角色');
+    expect(upload.ch_name).toBe('墨影_未命名角色');
   });
 
   it('does not write any chat record (the image belongs to no floor)', async () => {
     const saveChat = vi.fn(async () => undefined);
     vi.stubGlobal('fetch', vi.fn(async () =>
-      new Response(JSON.stringify({ path: '/user/images/柏宝绘_c/bbi_x.png' }), { status: 200 }),
+      new Response(JSON.stringify({ path: '/user/images/墨影_c/bbi_x.png' }), { status: 200 }),
     ));
     vi.stubGlobal('window', {
       SillyTavern: {
@@ -534,8 +534,8 @@ describe('saveExternalImage', () => {
 
 describe('deleteImageResult', () => {
   it.each([
-    '/user/images/柏宝绘_c/bbi_a.png',
-    'user/images/柏宝绘_c/bbi_a.png',
+    '/user/images/墨影_c/bbi_a.png',
+    'user/images/墨影_c/bbi_a.png',
   ])('deletes %s only after saving the chat and leaves legacy entries intact', async path => {
     const message = fakeMessage();
     const operations: string[] = [];
@@ -577,7 +577,7 @@ describe('deleteImageResult', () => {
 
   it('deletes the sidecar alongside a real generated image', async () => {
     const message = fakeMessage();
-    const path = '/user/images/柏宝绘_c/bbi_abc_0_h-g1.png';
+    const path = '/user/images/墨影_c/bbi_abc_0_h-g1.png';
     const saveChat = vi.fn(async () => undefined);
     message.extra = { [BBI_IMAGE_EXTRA_KEY]: appendEntry({}, 0, 'h', fakeEntry({ path })) };
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
@@ -624,7 +624,7 @@ describe('deleteImageResult', () => {
   it('does not delete the image if saving the chat fails', async () => {
     const message = fakeMessage();
     message.extra = {
-      [BBI_IMAGE_EXTRA_KEY]: appendEntry({}, 0, 'h', fakeEntry({ path: '/user/images/柏宝绘_c/bbi_a.png' })),
+      [BBI_IMAGE_EXTRA_KEY]: appendEntry({}, 0, 'h', fakeEntry({ path: '/user/images/墨影_c/bbi_a.png' })),
     };
     const saveChat = vi.fn(async () => { throw new Error('Save failed'); });
     const fetchMock = vi.fn();
@@ -648,13 +648,13 @@ describe('deleteImageFileOnly', () => {
       SillyTavern: { getContext: () => ({ getRequestHeaders: () => ({}) }) },
     });
 
-    const src = `/user/images/${encodeURIComponent('柏宝绘_测试角色')}/bbi_abc_0_h-g1.png`;
+    const src = `/user/images/${encodeURIComponent('墨影_测试角色')}/bbi_abc_0_h-g1.png`;
     await deleteImageFileOnly(src);
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/images/delete', {
       method: 'POST',
       headers: {},
-      body: JSON.stringify({ path: 'user/images/柏宝绘_测试角色/bbi_abc_0_h-g1.png' }),
+      body: JSON.stringify({ path: 'user/images/墨影_测试角色/bbi_abc_0_h-g1.png' }),
     });
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/files/delete', {
       method: 'POST',

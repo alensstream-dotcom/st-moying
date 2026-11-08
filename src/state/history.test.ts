@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   beginImage,
   beginLlm,
+  captureLlmResponse,
   clearHistory,
   failImage,
   failLlm,
@@ -218,5 +219,27 @@ describe('safeHistory', () => {
 
   it('正常时原样返回结果', () => {
     expect(safeHistory(() => 42)).toBe(42);
+  });
+});
+
+describe('capturing invalid JSON replies for diagnostics', () => {
+  it('keeps the response, usage and stop metadata after validation fails', () => {
+    const id = llm();
+    captureLlmResponse(id, {
+      response: '{"changes":[]}',
+      promptTokens: 1200,
+      completionTokens: 400,
+      tokensEstimated: false,
+      finishReason: 'length',
+      nativeFinishReason: 'max_tokens',
+    });
+    failLlm(id, 'AI 返回的 JSON 缺少 images 数组');
+    const rec = records[0] as LlmRecord;
+    expect(rec.status).toBe('error');
+    expect(rec.response).toBe('{"changes":[]}');
+    expect(rec.promptTokens).toBe(1200);
+    expect(rec.completionTokens).toBe(400);
+    expect(rec.finishReason).toBe('length');
+    expect(rec.nativeFinishReason).toBe('max_tokens');
   });
 });

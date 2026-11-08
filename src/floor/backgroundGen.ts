@@ -388,7 +388,7 @@ export async function runBackgroundGenerations(jobs: BackgroundJob[]): Promise<v
 
 /** 页面重新可见时把续跑队列里的任务补一遍。幂等绑定,只挂一次。 */
 export function bindResumeListener(): void {
-  if (resumeBound || typeof document === 'undefined') return;
+  if (resumeBound || typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
   resumeBound = true;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;

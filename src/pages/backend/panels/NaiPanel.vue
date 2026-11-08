@@ -69,7 +69,21 @@ import {
   type NaiEndpoint,
   type NaiVibe,
 } from '@/state/settings';
-import { computed, nextTick, onMounted, ref } from 'vue';
+import {
+  activeGenPreset,
+  bindArtistGenPreset,
+  captureIntoGenPreset,
+  inferPresetForArtistName,
+  markLoreGenPreset,
+  presetForArtist,
+  removeGenPreset,
+  renameGenPreset,
+  selectArtistWithPreset,
+  snapshotGenPreset,
+  switchGenPreset,
+  upsertGenPreset,
+} from '@/state/genPresets';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 /** 本渠道是否为当前出图渠道;「使用此渠道」按钮与设置页选择器、页签徽标同属一个开关。 */
 const inUse = computed(() => settings.defaultBackend === 'nai');
@@ -195,9 +209,103 @@ const artistOptions = computed(() => [
 const activeArtistId = computed<string>({
   get: () => artist.value?.id ?? NO_ARTIST,
   set: id => {
-    settings.nai.activeArtistId = id;
+    const prevPresetId = settings.activeGenPreset;
+    const linked = selectArtistWithPreset(id);
+    if (linked && linked.id !== prevPresetId) {
+      flashPreset(`已随画师串自动切到参数预设「${linked.name}」（${modelLabelOf(linked.model)}）`);
+    }
   },
 });
+
+function modelLabelOf(model: string): string {
+  return NAI_MODELS.find(m => m.value === model)?.label ?? model;
+}
+
+const currentModelLabel = computed(() => modelLabelOf(settings.nai.model));
+
+const currentSamplerLabel = computed(() => {
+  const list = naiSamplers(settings.nai.model);
+  return list.find(s => s.value === settings.nai.sampler)?.label ?? settings.nai.sampler;
+});
+
+/** 画师串内绑定的「配套参数预设」下拉选项（排除素材库专用预设，避免主出图误绑到预览专用）。 */
+const ARTIST_GEN_PRESET_OPTIONS = computed(() => [
+  { value: '', label: '不固定（保持当前参数 / 按名称自动识别 4.5 与 V5）' },
+  ...settings.genPresets
+    .filter(preset => !preset.forLore)
+    .map(preset => ({
+      value: preset.id,
+      label: `${preset.name}（${modelLabelOf(preset.model)} · ${preset.steps}步 · Scale ${preset.scale}）`,
+    })),
+]);
+
+/** 当前画师串绑定的参数预设 id（支持多条画师串共用同一套参数预设）。 */
+const activeArtistPresetLink = computed<string>({
+  get: () => {
+    const cur = artist.value;
+    if (!cur) return '';
+    if (cur.genPresetId && settings.genPresets.some(p => p.id === cur.genPresetId)) {
+      return cur.genPresetId;
+    }
+    return '';
+  },
+  set: presetId => {
+    const cur = artist.value;
+    if (!cur || isBuiltinArtist.value) return;
+    bindArtistGenPreset(cur.id, presetId);
+    if (presetId) {
+      const target = settings.genPresets.find(p => p.id === presetId);
+      if (target) {
+        flashPreset(`已将「${cur.name}」绑定到「${target.name}」（${modelLabelOf(target.model)}）`);
+      }
+    } else {
+      flashPreset(`已解除「${cur.name}」的固定参数绑定`);
+    }
+  },
+});
+
+/** 当前画师串对应的参数联动说明（显示在画师串下方，一眼看清切到它时会用哪套模型和参数）。 */
+const artistPresetHint = computed<string>(() => {
+  const cur = artist.value;
+  if (!cur) return '';
+  if (activeArtistPresetLink.value) {
+    const target = settings.genPresets.find(p => p.id === activeArtistPresetLink.value);
+    if (target) {
+      return `已绑定「${target.name}」：切到本画师串时自动切换为 ${modelLabelOf(target.model)}（${target.steps}步 / Scale ${target.scale} / ${target.sampler}）。多条 4.5 或 V5 画师串可共用同一套参数预设。`;
+    }
+  }
+  const inferred = inferPresetForArtistName(cur.name);
+  if (inferred) {
+    return `名称含版本标记，未手动绑定时会自动匹配「${inferred.name}」（${modelLabelOf(inferred.model)}）；也可在上方下拉显式指定一套参数预设。`;
+  }
+  return `未固定参数预设（当前生图使用「${genPreset.value.name}」· ${currentModelLabel.value}）。若这条画师串专用于 NAI 4.5 或 NAI 5，可在上方选择配套参数，切换画师串时模型与参数会自动跟着换。`;
+});
+
+/** 检测当前画师串名称中的 4.5 / V5 标记是否与当前模型代际不一致，给出醒目的一键修正提示。 */
+const artistModelMismatchPreset = computed(() => {
+  const cur = artist.value;
+  if (!cur) return null;
+  const recommended = presetForArtist(cur.id);
+  if (!recommended) return null;
+  const want45 = recommended.model.includes('4-5');
+  const cur45 = settings.nai.model.includes('4-5');
+  if (want45 !== cur45 || recommended.id !== settings.activeGenPreset) {
+    return recommended;
+  }
+  return null;
+});
+
+function applyRecommendedArtistPreset() {
+  const cur = artist.value;
+  const rec = artistModelMismatchPreset.value;
+  if (!cur || !rec) return;
+  if (!isBuiltinArtist.value) {
+    bindArtistGenPreset(cur.id, rec.id);
+  } else {
+    switchGenPreset(rec.id, { keepArtist: true });
+  }
+  flashPreset(`已切到「${rec.name}」（${modelLabelOf(rec.model)}）`);
+}
 
 /** 改名/复制/删除都只对「真的选中了一条」有意义;选「不使用」时一律禁用。 */
 const hasArtist = computed(() => artist.value !== null);
@@ -214,6 +322,91 @@ const artistNameInput = ref<HTMLInputElement | null>(null);
 const artistDeleteOpen = ref(false);
 /** 管理器弹窗:搜索/预览图/勾选批量删除都在那边,下拉这里只留高频切换。 */
 const artistManagerOpen = ref(false);
+
+/* ---- 生图配置预设:一整组「默认参数」= 一套预设 ---- */
+
+/** 下拉项:素材库专用的那套后面括注,免得和主出图的那套混淆。 */
+const GEN_PRESET_OPTIONS = computed(() =>
+  settings.genPresets.map(preset => ({
+    value: preset.id,
+    label: preset.forLore ? `${preset.name} · 素材库` : preset.name,
+  })),
+);
+
+const genPreset = computed(() => activeGenPreset());
+
+const presetNotice = ref('');
+function flashPreset(text: string) {
+  presetNotice.value = text;
+  window.setTimeout(() => {
+    if (presetNotice.value === text) presetNotice.value = '';
+  }, 2400);
+}
+
+const genPresetSel = computed<string>({
+  get: () => settings.activeGenPreset,
+  set: id => {
+    if (!switchGenPreset(id)) flashPreset('这套预设不见了,已忽略');
+  },
+});
+
+const renamingPreset = ref(false);
+const presetNameDraft = ref('');
+const presetNameInput = ref<HTMLInputElement | null>(null);
+
+function addGenPreset() {
+  const preset = snapshotGenPreset(`预设 ${settings.genPresets.length + 1}`);
+  upsertGenPreset(preset);
+  switchGenPreset(preset.id);
+  flashPreset(`已新建「${preset.name}」,点铅笔改名`);
+}
+
+function startRenameGenPreset() {
+  presetNameDraft.value = genPreset.value.name;
+  renamingPreset.value = true;
+  nextTick(() => presetNameInput.value?.select());
+}
+
+/** 失焦与 Enter 都会走到这里,靠 renamingPreset 挡住第二次。 */
+function commitRenamePreset() {
+  if (!renamingPreset.value) return;
+  renamingPreset.value = false;
+  const name = presetNameDraft.value.trim();
+  if (name && renameGenPreset(genPreset.value.id, name)) flashPreset('已改名');
+}
+
+function removeGenPresetCurrent() {
+  if (settings.genPresets.length <= 1) return flashPreset('至少要留一套预设');
+  if (!window.confirm(`删除预设「${genPreset.value.name}」?`)) return;
+  flashPreset(removeGenPreset(genPreset.value.id) ? '已删除' : '删除失败');
+}
+
+function toggleLorePreset() {
+  if (genPreset.value.forLore) {
+    markLoreGenPreset('');
+    flashPreset('已取消素材库标记:素材库改用当前预设');
+    return;
+  }
+  markLoreGenPreset(genPreset.value.id);
+  flashPreset(`「${genPreset.value.name}」已设为素材库专用`);
+}
+
+function saveCurrentGenPreset() {
+  flashPreset(
+    captureIntoGenPreset(genPreset.value.id) ? '已把当前参数存进这套预设' : '这套预设不见了',
+  );
+}
+
+/** 换画师串时若它有配套预设（或名称带 4.5/V5 智能匹配），整套切过去；keepArtist 防止反向清空画师串。 */
+watch(
+  () => settings.nai.activeArtistId,
+  artistId => {
+    const preset = presetForArtist(artistId);
+    if (preset && preset.id !== settings.activeGenPreset) {
+      switchGenPreset(preset.id, { keepArtist: true });
+    }
+  },
+);
 
 function startRenameArtist() {
   if (!artist.value || isBuiltinArtist.value) return; // 内置只读(按钮已禁用,双保险)
@@ -246,6 +439,7 @@ function duplicateArtist() {
     prompt: src.prompt,
     quality: src.quality,
     negative: src.negative,
+    genPresetId: src.genPresetId,
   };
   settings.nai.artistPresets.push(preset);
   settings.nai.activeArtistId = preset.id;
@@ -288,7 +482,7 @@ const chatu8ArtistDetect = ref<Chatu8ArtistDetectInfo>({ found: false, total: 0 
 /** 弹窗打开时算一次的预览结果(纯函数,不落盘);plans 逐条带徽标状态。 */
 const artistImportResult = ref<Chatu8ArtistImportResult | null>(null);
 const artistImportOpen = ref(false);
-/** 导入后是否把智绘姬当前使用的预设设为柏宝绘当前画师串。 */
+/** 导入后是否把智绘姬当前使用的预设设为墨影当前画师串。 */
 const switchActiveArtist = ref(true);
 
 const chatu8ActiveRef = computed(() => artistImportResult.value?.plans.find(p => p.active) ?? null);
@@ -797,6 +991,58 @@ async function removeVibe(vibe: NaiVibe) {
       NovelAI 生图接口。地址默认为官方,填第三方兼容站(镜像/转发)即走第三方,协议一致。
     </p>
 
+    <!-- 当前生图生效方案总览:不展开任何折叠区也能一眼确认当前用的是哪个画师串、哪套参数预设、哪个模型 -->
+    <div class="nai-live-card" role="region" aria-label="当前生图生效方案">
+      <div class="nai-live-head">
+        <span class="nai-live-title">当前生图生效方案</span>
+        <span class="nai-live-pill" :class="{ 'is-v45': !isV5Model }">
+          {{ currentModelLabel }}
+        </span>
+        <span class="nai-live-meta">
+          {{ settings.nai.steps }}步 · Scale {{ settings.nai.scale }} · {{ currentSamplerLabel }} ·
+          {{ settings.nai.naturalLanguage ? '自然语言开' : '仅Tag' }}
+        </span>
+      </div>
+      <div class="nai-live-grid">
+        <div class="nai-live-item">
+          <span class="nai-live-label">当前画师串</span>
+          <BbiSelect
+            class="nai-live-select"
+            v-model="activeArtistId"
+            :options="artistOptions"
+            aria-label="快速切换当前画师串"
+          />
+        </div>
+        <div class="nai-live-item">
+          <span class="nai-live-label">当前默认参数</span>
+          <BbiSelect
+            class="nai-live-select"
+            v-model="genPresetSel"
+            :options="GEN_PRESET_OPTIONS"
+            aria-label="快速切换生图配置预设"
+          />
+        </div>
+      </div>
+      <div v-if="artistModelMismatchPreset" class="nai-live-mismatch">
+        <span>
+          当前画师串「{{ artist?.name }}」推荐搭配
+          <b>{{ artistModelMismatchPreset.name }}（{{ modelLabelOf(artistModelMismatchPreset.model) }}）</b>，
+          而当前模型为 <b>{{ currentModelLabel }}</b>
+        </span>
+        <button
+          class="bbi-btn bbi-btn-sm bbi-btn-primary"
+          type="button"
+          @click="applyRecommendedArtistPreset"
+        >
+          一键切到 {{ artistModelMismatchPreset.name }}
+        </button>
+      </div>
+      <p v-if="presetNotice" class="nai-live-notice">{{ presetNotice }}</p>
+      <p v-else class="bbi-field-hint nai-live-foot">
+        生图始终使用上方显示的「画师串 + 默认参数」。在下方「提示词」里为画师串指定配套默认参数后，切换画师串时模型（NAI 4.5 / NAI 5）与步数/Scale 会自动跟着切换。
+      </p>
+    </div>
+
     <div class="bbi-sections">
       <Collapsible title="配置" :open="false">
         <!-- 接入点库:公益站换着用的人不止一个出口,但换站只换地址+密钥,
@@ -1049,6 +1295,35 @@ async function removeVibe(vibe: NaiVibe) {
           <p v-if="isBuiltinArtist" class="bbi-field-hint art-hint">
             内置画师串随插件版本更新,不可直接改;点上方复制按钮建一条自己的再改。
           </p>
+
+          <!-- 画师串正向绑定默认参数预设:多条 4.5 画师串可共用同一套「NAI 4.5 常用」参数 -->
+          <div class="bbi-select-row art-preset-link-row">
+            <span class="bbi-field-label">配套默认参数</span>
+            <BbiSelect
+              class="be-select"
+              v-model="activeArtistPresetLink"
+              :options="ARTIST_GEN_PRESET_OPTIONS"
+              :disabled="isBuiltinArtist"
+              aria-label="当前画师串配套的生图参数预设"
+            />
+          </div>
+          <p class="bbi-field-hint art-hint">
+            {{ artistPresetHint }}
+          </p>
+          <div v-if="artistModelMismatchPreset" class="nai-live-mismatch art-mismatch-inline">
+            <span>
+              检测到「{{ artist.name }}」对应
+              <b>{{ artistModelMismatchPreset.name }}（{{ modelLabelOf(artistModelMismatchPreset.model) }}）</b>
+            </span>
+            <button
+              class="bbi-btn bbi-btn-sm bbi-btn-primary"
+              type="button"
+              @click="applyRecommendedArtistPreset"
+            >
+              立即切换并绑定
+            </button>
+          </div>
+
           <!-- 仅 V5 模型下提醒:V5 与 4.5 的画师串响应差异大,4.5 及以下不需要这条噪音 -->
           <p v-if="isV5Model" class="bbi-field-hint art-hint art-hint-warn">
             NAI 5 对画师串的响应与 4.5 差异很大,旧画师串直接套用效果可能跑偏,建议重新调试。
@@ -1095,6 +1370,83 @@ async function removeVibe(vibe: NaiVibe) {
       </Collapsible>
 
       <Collapsible title="默认参数" :open="false">
+        <!-- 预设:下面这一整组参数都属于当前这套,切换即换一整套 -->
+        <div class="art-row">
+          <span class="bbi-field-label">生图配置</span>
+          <input
+            v-if="renamingPreset"
+            ref="presetNameInput"
+            class="bbi-input"
+            type="text"
+            v-model="presetNameDraft"
+            placeholder="预设名称"
+            spellcheck="false"
+            title="Enter 确认，Esc 取消"
+            @keydown.enter.prevent="commitRenamePreset"
+            @keydown.esc.stop.prevent="renamingPreset = false"
+            @blur="commitRenamePreset"
+          />
+          <BbiSelect
+            v-else
+            class="art-select"
+            v-model="genPresetSel"
+            :options="GEN_PRESET_OPTIONS"
+            aria-label="生图配置预设"
+          />
+          <span v-if="!renamingPreset" class="art-ops">
+            <button
+              class="bbi-icon-btn art-op"
+              type="button"
+              title="新建一套(以当前参数为底)"
+              aria-label="新建预设"
+              @click="addGenPreset"
+            >
+              <Icon name="plus" :size="14" />
+            </button>
+            <button
+              class="bbi-icon-btn art-op"
+              type="button"
+              title="重命名当前预设"
+              aria-label="重命名预设"
+              @click="startRenameGenPreset"
+            >
+              <Icon name="edit" :size="14" />
+            </button>
+            <button
+              class="bbi-icon-btn art-op"
+              type="button"
+              :title="genPreset.forLore ? '取消素材库专用标记' : '设为素材库配图专用'"
+              aria-label="素材库专用"
+              @click="toggleLorePreset"
+            >
+              <Icon name="star" :size="14" />
+            </button>
+            <button
+              class="bbi-icon-btn art-op"
+              type="button"
+              title="把当前参数存进这套预设"
+              aria-label="保存当前参数"
+              @click="saveCurrentGenPreset"
+            >
+              <Icon name="check" :size="14" />
+            </button>
+            <button
+              class="bbi-icon-btn art-op"
+              type="button"
+              title="删除当前预设"
+              aria-label="删除预设"
+              @click="removeGenPresetCurrent"
+            >
+              <Icon name="trash" :size="14" />
+            </button>
+          </span>
+        </div>
+        <p class="bbi-field-hint">
+          下面这一整组都是「{{ genPreset.name }}」的参数:改哪一项都自动存回这套,换预设等于换一整套,
+          不会互相覆盖。标了星的那套只给素材库配图用,不动这里的主出图参数。
+        </p>
+        <p v-if="presetNotice" class="bbi-field-hint">{{ presetNotice }}</p>
+
         <!-- 语义配对紧凑行:双字段行两列、数字参数行四列;说明统一收进行下的一行 hint -->
         <div class="bbi-field">
           <div class="bbi-field-head">
@@ -1538,7 +1890,7 @@ async function removeVibe(vibe: NaiVibe) {
           </button>
         </header>
         <p class="bbi-modal-label">
-          将把智绘姬的 {{ chatu8Detect.total }} 个 vibe 复制到柏宝绘 Vibe
+          将把智绘姬的 {{ chatu8Detect.total }} 个 vibe 复制到墨影 Vibe
           库，只是创建副本，不会改动智绘姬的数据。内容相同的会自动跳过，重复迁移不会产生重复条目。
         </p>
         <p class="bbi-modal-label">
@@ -1562,7 +1914,7 @@ async function removeVibe(vibe: NaiVibe) {
           </button>
         </header>
         <p class="bbi-modal-label">
-          把智绘姬的全部 {{ artistImportResult?.plans.length ?? 0 }} 个提示词预设复制到柏宝绘，只建副本、不改动智绘姬的数据。
+          把智绘姬的全部 {{ artistImportResult?.plans.length ?? 0 }} 个提示词预设复制到墨影，只建副本、不改动智绘姬的数据。
           映射：前置固定正向 → 画师串，后置固定正向 → 正面质量词，固定负向 → 负面提示词（前面自动拼上当前模型的官方基线）。
           同名条目会覆盖更新（之前导入过的可直接重新导入修复），内容完全相同的自动跳过。
         </p>
@@ -2216,7 +2568,98 @@ async function removeVibe(vibe: NaiVibe) {
   color: var(--bbi-accent);
   border-color: var(--bbi-accent);
 }
+
+/* 当前生图生效方案总览卡 */
+.nai-live-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--bbi-line-strong);
+  border-radius: var(--bbi-radius);
+  background: var(--bbi-surface-2);
+}
+.nai-live-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.nai-live-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bbi-ink);
+}
+.nai-live-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--bbi-radius-pill);
+  background: var(--bbi-accent-soft);
+  color: var(--bbi-accent);
+}
+.nai-live-pill.is-v45 {
+  background: var(--bbi-warn-soft, rgba(217, 119, 6, 0.14));
+  color: var(--bbi-warn, #d97706);
+}
+.nai-live-meta {
+  font-size: 12px;
+  color: var(--bbi-ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.nai-live-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.nai-live-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.nai-live-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--bbi-ink-muted);
+}
+.nai-live-select {
+  width: 100%;
+}
+.nai-live-mismatch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--bbi-radius-sm);
+  border: 1px solid var(--bbi-warn, #d97706);
+  background: var(--bbi-warn-soft, rgba(217, 119, 6, 0.1));
+  font-size: 12px;
+  color: var(--bbi-ink);
+}
+.art-preset-link-row {
+  margin-top: 8px;
+}
+.art-mismatch-inline {
+  margin-top: 6px;
+}
+.nai-live-notice {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--bbi-accent);
+}
+.nai-live-foot {
+  margin: 0;
+}
+
 @media (max-width: 640px) {
+  .nai-live-grid {
+    grid-template-columns: 1fr;
+  }
   /* 窄屏:组头两行——组名一行,操作另起一行靠右,避免按钮把组名挤成一条缝 */
   .vibe-group-ops {
     width: 100%;

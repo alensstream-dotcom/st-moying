@@ -78,7 +78,6 @@ type Tab = 'wardrobe' | 'pose' | 'face';
 
 const TABS: { value: Tab; label: string }[] = [
   { value: 'wardrobe', label: '服装' },
-  { value: 'pose', label: '姿势' },
   { value: 'face', label: '面相' },
 ];
 
@@ -1461,14 +1460,6 @@ function clearCustom() {
             @click="switchRollKind('wardrobe')"
           >
             服装搭配
-          </button>
-          <button
-            class="bbi-seg"
-            :class="{ 'is-on': rollKind === 'pose' }"
-            type="button"
-            @click="switchRollKind('pose')"
-          >
-            姿势构图
           </button>
           <button
             class="bbi-seg"

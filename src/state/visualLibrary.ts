@@ -19,7 +19,7 @@ export function normalizeMaterial(raw: unknown): VisualMaterial | null {
   const item = raw as Record<string, unknown>;
   if (!string(item.name) || !['character', 'outfit', 'style'].includes(string(item.kind))) return null;
   const appearance = Object.fromEntries(Object.entries(item.appearance && typeof item.appearance === 'object' ? item.appearance : {})
-    .filter(([k, v]) => ['fandom', 'hair', 'eyes', 'skin', 'body', 'extra'].includes(k) && typeof v === 'string').map(([k, v]) => [k, string(v)]));
+    .filter(([k, v]) => ['fandom', 'age', 'hair', 'eyes', 'skin', 'body', 'extra'].includes(k) && typeof v === 'string').map(([k, v]) => [k, string(v)]));
   const garments = Array.isArray(item.garments) ? item.garments.slice(0, 30).flatMap(rawGarment => {
     if (!rawGarment || typeof rawGarment !== 'object') return [];
     const g = rawGarment as Record<string, unknown>;

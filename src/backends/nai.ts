@@ -258,11 +258,20 @@ export interface NaiGenerateValues {
  * - id 用 bi_ 前缀(用户条目恒为 art_*),永不与用户库相撞;
  * - 只读:面板不给改名/删除,要自定义走「复制」建成用户条目再改;
  * - quality/negative 与用户条目同一条回落链,留空 = 跟随渠道级;
- * - 新用户默认选中第一条(见 settings.ts 的 naiDefaults);老用户的
+ * - 新用户使用 naiDefaults 指定的内置条目;老用户的
  *   activeArtistId 存在 settings 里,不受这里影响;
  * - 要下线某条内置配方,至少留一个版本再删:正选中它的用户会走既有
  *   「id 悬空 → 清成不使用」逻辑,画风静默变掉,需慎重。
  */
+/** Built-in narrative preset, selectable without overwriting old user-created artist presets. */
+export const NAI_STORY_ARTIST_ID = 'bi_story_cinematic';
+
+export const NAI_STORY_POSITIVE_QUALITY =
+  '1.2::masterpiece, best quality, amazing quality, very aesthetic::, {ultra-detailed, absurdres}, 1.1::clean lineart, sharp lineart, ultra fine lineart, delicate linework, detailed linework, variable line weight::, 1.12::detailed face, detailed eyes, expressive eyes::, 1.32::detailed skin, realistic skin texture, natural skin texture, smooth skin::, soft skin glow, soft shading, gentle shading, 0.25::rim lighting::';
+
+export const NAI_STORY_NEGATIVE =
+  'lowres, worst quality, low quality, bad quality, normal quality, jpeg artifacts, compression artifacts, blurry, out of focus, scan artifacts, unfinished, incomplete, upscaled, interpolated, text, logo, watermark, signature, username, bad anatomy, distorted anatomy, anatomical errors, bad proportions, bad limb, bad legs, bad feet, bad hands, mutated hands, extra fingers, missing fingers, fused fingers, extra limbs, missing limbs, mutation, deformed, disfigured, fused body, deformed face, asymmetrical face, deformed eyes, bad eyes, blank eyes, cloudy eyes, cross-eyed, lazy eye, uneven eyes, low detail eyes, unnatural pupils, unnatural hair, messy lines, sketch lines, rough lines, style mix, artist collaboration, mixed styles, inconsistent style, conflicting styles, bad composition, distorted composition, bad perspective, multiple views, split screen, animation error, chromatic aberration, vertical banding, moire pattern, halftone, dithering, screentones, monochrome, greyscale, variant set, character sheet, turnaround, reference sheet, comic, toon, chibi, dated, 1990s (style), neck abnormality, long neck';
+
 export const BUILTIN_NAI_ARTISTS: readonly NaiArtistPreset[] = [
   {
     id: 'bi_default',
@@ -271,6 +280,14 @@ export const BUILTIN_NAI_ARTISTS: readonly NaiArtistPreset[] = [
       '0.8::nnmbpx::,0.8::artist:yalmyu::,0.1::smilesmile1312,::,  artist:sh_(shinh), 0.4::chen bin::,0.4::dayama::,healthyman,bacheally,',
     quality: '',
     negative: '',
+  },
+  {
+    id: NAI_STORY_ARTIST_ID,
+    name: '剧情原味·电影感半写实（二创推荐）',
+    prompt:
+      '1.5::semi-realistic anime::, 1.35::cinematic illustration::, year 2025, year 2026, 1.2::artist:kurono_mitsuki::, 1.1::artist:ahonoko::, 0.7::artist:ogipote::, 1.2::artist:zhiyan_li::, 1.05::artist:boninit::, 0.75::artist:kyokucho::, 0.58::artist:nixeu::, 0.9::artist:inoue_kiyoshirou::, 0.7::artist:ogre_(illustogre)::, canvas (medium), 1.28::blender (medium)::',
+    quality: NAI_STORY_POSITIVE_QUALITY,
+    negative: NAI_STORY_NEGATIVE,
   },
 ];
 
@@ -666,15 +683,15 @@ export async function generateNaiImage(
       );
     } catch (error) {
       warnings.push(`Vibe「${vibe.name}」读取失败，本次未使用该参考`);
-      console.warn(`[柏宝绘] 读取 vibe「${vibe.name}」失败:`, error);
+      console.warn(`[墨影] 读取 vibe「${vibe.name}」失败:`, error);
     }
   }
   const { applied, skipped } = applyVibes(params, values.capabilities?.vibes === false ? { ...nai, vibes: [] } : nai, loaded);
   if (skipped.length) {
     const reason = naiSupportsVibes(nai.model) ? '缺当前模型编码' : '当前模型不支持 Vibe Transfer';
     warnings.push(`Vibe「${skipped.join('、')}」${reason}，已跳过`);
-    console.warn(`[柏宝绘] 以下 vibe 因${reason}被跳过:`, skipped);
-    toastr.warning(`vibe「${skipped.join('、')}」${reason},已跳过`, '柏宝绘');
+    console.warn(`[墨影] 以下 vibe 因${reason}被跳过:`, skipped);
+    toastr.warning(`vibe「${skipped.join('、')}」${reason},已跳过`, '墨影');
   }
 
   const body = {
@@ -694,27 +711,49 @@ export async function generateNaiImage(
   recordRequest(body);
   // 只把「发请求 + 解包」包进重试:上面拼参数、读 vibe 数据的活是一次性的,
   // 重跑它们既白费功夫,也会把 vibe 缺编码的 toastr 警告重复弹出来。
+  const NAI_ATTEMPT_TIMEOUT_MS = 120_000;
   const result = await runNaiWithRetry(
     async () => {
-      const resp = await fetch(naiEndpoint(nai.url, 'generate-image'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${nai.key.trim()}`,
-        },
-        body: JSON.stringify(body),
-        signal,
-      });
-      if (!resp.ok) throw await naiHttpError(resp, 'NAI 生图失败');
+      const attemptCtrl = new AbortController();
+      let timedOut = false;
+      const onOuterAbort = () => attemptCtrl.abort(signal?.reason);
+      if (signal) {
+        if (signal.aborted) throw signal.reason ?? new DOMException('已取消', 'AbortError');
+        signal.addEventListener('abort', onOuterAbort, { once: true });
+      }
+      const timer = setTimeout(() => {
+        timedOut = true;
+        attemptCtrl.abort();
+      }, NAI_ATTEMPT_TIMEOUT_MS);
+      try {
+        const resp = await fetch(naiEndpoint(nai.url, 'generate-image'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${nai.key.trim()}`,
+          },
+          body: JSON.stringify(body),
+          signal: attemptCtrl.signal,
+        });
+        if (!resp.ok) throw await naiHttpError(resp, 'NAI 生图失败');
 
-      const { base64, filename } = unzipNaiImage(await resp.arrayBuffer());
-      const format = filename.split('.').pop()?.toLowerCase() || 'png';
-      return {
-        url: `data:image/${format === 'jpg' ? 'jpeg' : format};base64,${base64}`,
-        filename: `nai-${Date.now()}.${format}`,
-        format,
-        revoke() {},
-      };
+        const { base64, filename } = unzipNaiImage(await resp.arrayBuffer());
+        const format = filename.split('.').pop()?.toLowerCase() || 'png';
+        return {
+          url: `data:image/${format === 'jpg' ? 'jpeg' : format};base64,${base64}`,
+          filename: `nai-${Date.now()}.${format}`,
+          format,
+          revoke() {},
+        };
+      } catch (err) {
+        if (timedOut && !signal?.aborted) {
+          throw new NaiError('NAI 生图请求超时(120s)，可能是手机后台网络连接中断', 504);
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onOuterAbort);
+      }
     },
     { signal, onRetry: opts.onRetry },
   );

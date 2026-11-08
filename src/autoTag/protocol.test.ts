@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { injectImageTags, parseImagePlan as parseImagePlanWithRange } from '@/autoTag/protocol';
 
 const segments = [
-  { id: 'P1', sourceLine: 0, text: '第一幕结束' },
-  { id: 'P2', sourceLine: 2, text: '第二幕结束' },
+  { id: 'P1', sourceLine: 0, charOffset: 0, text: '第一幕结束' },
+  { id: 'P2', sourceLine: 2, charOffset: 0, text: '第二幕结束' },
 ];
 
 /** 大部分协议测试关注内容解析,沿用允许 0 张的默认范围;数量下限另列专门用例。 */
@@ -23,7 +23,7 @@ describe('auto tag position protocol', () => {
 \`\`\``;
     expect(parseImagePlan(raw, segments, 1)).toEqual({
       images: [
-        { position: 'P1', sourceLine: 0, tag: 'first scene', nl: '', negative: '', characters: [], size: 'portrait' },
+        { position: 'P1', sourceLine: 0, charOffset: 0, tag: 'first scene', nl: '', negative: '', characters: [], size: 'portrait' },
       ],
       changes: [],
     });
@@ -64,9 +64,29 @@ describe('auto tag position protocol', () => {
     expect(parseImagePlan(raw, segments, 1).changes[0].nl).toBe('A Chinese fixed-appearance description.');
   });
 
-  it('accepts the legacy prompt key as an alias of tag', () => {
-    expect(parseImagePlan('{"images":[{"position":"P1","prompt":"scene"}]}', segments, 1)).toEqual({
-      images: [{ position: 'P1', sourceLine: 0, tag: 'scene', nl: '', negative: '', characters: [], size: 'portrait' }],
+  it('把建档里的中文年龄归一成规范词,岁数保留', () => {
+    const raw = JSON.stringify({
+      images: [],
+      changes: [{
+        name: 'A', field: 'new', position: 'P1',
+        fields: { hair: 'long black hair', eyes: 'blue eyes', age: '刚毕业的大学生，22岁' },
+      }],
+    });
+    expect(JSON.parse(parseImagePlan(raw, segments, 1).changes[0].value).age).toBe('young adult, 22岁');
+  });
+
+  it('age 走 set 在计划阶段归一(协议层原样透传,runner 才是归一点)', () => {
+    const raw = JSON.stringify({
+      images: [],
+      changes: [{ name: 'A', field: 'age', value: '熟女', position: 'P1' }],
+    });
+    // 协议层只做形状校验,不做归一;归一在 runner 的 planChangeOps 里,两条路都覆盖,
+    // 所以这里断言原样透传——写成归一过反而会把「谁负责归一」钉错地方。
+    expect(parseImagePlan(raw, segments, 1).changes[0].value).toBe('熟女');
+  });
+
+  it('accepts the legacy prompt key as an alias of tag', () => {    expect(parseImagePlan('{"images":[{"position":"P1","prompt":"scene"}]}', segments, 1)).toEqual({
+      images: [{ position: 'P1', sourceLine: 0, charOffset: 0, tag: 'scene', nl: '', negative: '', characters: [], size: 'portrait' }],
       changes: [],
     });
   });
@@ -78,6 +98,7 @@ describe('auto tag position protocol', () => {
         {
           position: 'P1',
           sourceLine: 0,
+          charOffset: 0,
           tag: '1girl',
           nl: 'A girl. She smiles.',
           negative: '',
@@ -113,7 +134,7 @@ describe('auto tag position protocol', () => {
     const raw = '{"images":[{"position":"P1","tag":"2girls","size":"landscape"}]}';
     expect(parseImagePlan(raw, segments, 1)).toEqual({
       images: [
-        { position: 'P1', sourceLine: 0, tag: '2girls', nl: '', negative: '', characters: [], size: 'landscape' },
+        { position: 'P1', sourceLine: 0, charOffset: 0, tag: '2girls', nl: '', negative: '', characters: [], size: 'landscape' },
       ],
       changes: [],
     });
@@ -144,6 +165,7 @@ describe('auto tag position protocol', () => {
     expect(parseImagePlan('{"images":[{"id":"p2","tag":"scene"}]}', segments, 1).images[0]).toMatchObject({
       position: 'P2',
       sourceLine: 2,
+      charOffset: 0,
     });
   });
 
@@ -200,8 +222,8 @@ describe('auto tag position protocol', () => {
   it('inserts multiple tags after the same line in array order', () => {
     expect(
       injectImageTags('第一行\n第二行', [
-        { position: 'P1', sourceLine: 0, tag: 'prompt a', nl: '', negative: '', characters: [], size: 'portrait' },
-        { position: 'P1', sourceLine: 0, tag: 'prompt b', nl: '', negative: '', characters: [], size: 'landscape' },
+        { position: 'P1', sourceLine: 0, charOffset: 0, tag: 'prompt a', nl: '', negative: '', characters: [], size: 'portrait' },
+        { position: 'P1', sourceLine: 0, charOffset: 0, tag: 'prompt b', nl: '', negative: '', characters: [], size: 'landscape' },
       ]),
     ).toBe(
       '第一行\n<bbi_image>prompt a<size>portrait</size></bbi_image>\n<bbi_image>prompt b<size>landscape</size></bbi_image>\n第二行',
@@ -214,6 +236,7 @@ describe('auto tag position protocol', () => {
         {
           position: 'P1',
           sourceLine: 0,
+          charOffset: 0,
           tag: '1girl, moonlight',
           nl: 'A girl in moonlight.',
           negative: '',
@@ -232,6 +255,7 @@ describe('auto tag position protocol', () => {
         {
           position: 'P1',
           sourceLine: 0,
+          charOffset: 0,
           tag: '1girl',
           nl: '',
           negative: 'extra people, duplicate character',
@@ -247,7 +271,7 @@ describe('auto tag position protocol', () => {
 
   it('serializes V5 character prompts as a JSON sub-tag', () => {
     const output = injectImageTags('line', [{
-      position: 'P1', sourceLine: 0, tag: '1girl', nl: 'base', negative: '',
+      position: 'P1', sourceLine: 0, charOffset: 0, tag: '1girl', nl: 'base', negative: '',
       characters: [{ name: 'A', tag: 'girl, black hair', nl: 'left' }], size: 'portrait',
     }]);
     expect(output).toContain('<characters>[{"name":"A","tag":"girl, black hair","nl":"left"}]</characters>');
@@ -256,8 +280,8 @@ describe('auto tag position protocol', () => {
   it('preserves CRLF and appends correctly after the final line', () => {
     expect(
       injectImageTags('第一行\r\n\r\n第三行', [
-        { position: 'P1', sourceLine: 0, tag: 'prompt a', nl: '', negative: '', characters: [], size: 'portrait' },
-        { position: 'P2', sourceLine: 2, tag: 'prompt c', nl: '', negative: '', characters: [], size: 'portrait' },
+        { position: 'P1', sourceLine: 0, charOffset: 0, tag: 'prompt a', nl: '', negative: '', characters: [], size: 'portrait' },
+        { position: 'P2', sourceLine: 2, charOffset: 0, tag: 'prompt c', nl: '', negative: '', characters: [], size: 'portrait' },
       ]),
     ).toBe(
       '第一行\r\n<bbi_image>prompt a<size>portrait</size></bbi_image>\r\n\r\n第三行\r\n<bbi_image>prompt c<size>portrait</size></bbi_image>',
@@ -360,5 +384,58 @@ describe('changes parsing', () => {
       images: [],
       changes: [],
     });
+  });
+});
+
+
+describe('JSON image-plan candidate selection', () => {
+  it('ignores an explanatory JSON object preceding the actual images', () => {
+    const raw = '例子 {"name":"甲","field":"new"}\n{"images":[{"position":"P1","tag":"1girl, corridor"}],"changes":[]}';
+    expect(parseImagePlan(raw, segments, 1).images[0].tag).toBe('1girl, corridor');
+  });
+
+  it('selects an image plan among separate fenced JSON objects', () => {
+    const raw = '```json\n{"field":"new","name":"甲"}\n```\n```json\n{"images":[{"position":"P2","tag":"2girls"}]}\n```';
+    expect(parseImagePlan(raw, segments, 1).images[0].position).toBe('P2');
+  });
+
+  it('still reports missing images when no image plan is present', () => {
+    expect(() => parseImagePlan('{"changes":[]}', segments, 1)).toThrow('缺少 images 数组');
+  });
+
+  it('钉在被选中的那句话后面,而不是整段末尾', () => {
+    // 一行两句:图该夹在两句之间,读起来才是「先说这句、再出图、再说下一句」
+    const line = '他撩开她的裙摆。她低呼一声。';
+    const output = injectImageTags(line, [
+      {
+        position: 'P1',
+        sourceLine: 0,
+        charOffset: 8,
+        tag: '1girl, skirt lift',
+        nl: '',
+        negative: '',
+        characters: [],
+        size: 'portrait',
+      },
+    ]);
+    expect(output).toBe(
+      '他撩开她的裙摆。\n<bbi_image>1girl, skirt lift<size>portrait</size></bbi_image>\n她低呼一声。',
+    );
+  });
+
+  it('未知行内偏移时退回整段行尾(兼容旧数据与手工编辑)', () => {
+    const output = injectImageTags('一句话。', [
+      {
+        position: 'P1',
+        sourceLine: 0,
+        charOffset: 0,
+        tag: 'fallback',
+        nl: '',
+        negative: '',
+        characters: [],
+        size: 'portrait',
+      },
+    ]);
+    expect(output).toBe('一句话。\n<bbi_image>fallback<size>portrait</size></bbi_image>');
   });
 });

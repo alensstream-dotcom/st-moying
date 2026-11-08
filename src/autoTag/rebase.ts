@@ -134,7 +134,14 @@ export function rebaseImagePositions(
   const newSegments = prepareTargetText(currentText, stripTags).segments;
   if (!newSegments.length) return null;
 
-  const oldByLine = new Map(plannedSegments.map((segment, index) => [segment.sourceLine, index]));
+  const segmentKey = (sourceLine: number, charOffset: number): string => `${sourceLine}:${charOffset}`;
+  // 一行可能切出多个句子级段,故先用「行号:行内偏移」精确定位,定位不到再退回按行号取首个。
+  const oldIndexByKey = new Map<string, number>();
+  const oldIndexByLine = new Map<number, number>();
+  plannedSegments.forEach((segment, index) => {
+    oldIndexByKey.set(segmentKey(segment.sourceLine, segment.charOffset ?? 0), index);
+    if (!oldIndexByLine.has(segment.sourceLine)) oldIndexByLine.set(segment.sourceLine, index);
+  });
   const mapped = alignSegments(
     plannedSegments.map(segment => segment.text),
     newSegments.map(segment => segment.text),
@@ -142,7 +149,9 @@ export function rebaseImagePositions(
 
   const out: ImageInsertion[] = [];
   for (const image of images) {
-    const oldIndex = oldByLine.get(image.sourceLine);
+    const oldIndex =
+      oldIndexByKey.get(segmentKey(image.sourceLine, image.charOffset ?? 0)) ??
+      oldIndexByLine.get(image.sourceLine);
     // sourceLine 本就来自 plannedSegments,对不上说明调用方传错了列表
     if (oldIndex === undefined) return null;
     const direct = mapped[oldIndex];
@@ -152,10 +161,14 @@ export function rebaseImagePositions(
     if (direct < 0) report.drifted += 1;
     else if (newSegments[target].text === plannedSegments[oldIndex].text) report.anchored += 1;
     else report.remapped += 1;
-    out.push({ ...image, sourceLine: newSegments[target].sourceLine });
+    out.push({
+      ...image,
+      sourceLine: newSegments[target].sourceLine,
+      charOffset: newSegments[target].charOffset ?? 0,
+    });
   }
 
-  // 升序保证叙事顺序单调;sort 稳定,落到同一行的图片保持模型给出的原相对顺序
-  out.sort((left, right) => left.sourceLine - right.sourceLine);
+  // 升序保证叙事顺序单调;sort 稳定,落到同一位置的图片保持模型给出的原相对顺序
+  out.sort((left, right) => left.sourceLine - right.sourceLine || (left.charOffset || 0) - (right.charOffset || 0));
   return { images: out, report };
 }

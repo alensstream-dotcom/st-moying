@@ -2,6 +2,7 @@ import { getContext } from '@/st/context';
 import type { ApiChannel } from '@/state/settings';
 import {
   beginLlm,
+  captureLlmResponse,
   failLlm,
   finishLlm,
   patchLlmTokens,
@@ -31,6 +32,11 @@ export class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+/** 把 finish_reason 拼进错误信息;空/无则返回空串。 */
+function finishTag(reason: unknown): string {
+  return typeof reason === 'string' && reason ? `(finish_reason=${reason})` : '';
 }
 
 /**
@@ -67,7 +73,7 @@ export interface RequestOptions {
    * 看历史的人会误以为成功也重复调用。验收抛错 = 记为失败并把错误原样抛出,
    * 由调用方决定重试/放弃。
    */
-  validate?: (content: string) => void;
+  validate?: (content: string, meta?: { finishReason?: string | null }) => void;
 }
 
 /* ============ 请求历史埋点(纯辅助,绝不允许影响主流程) ============ */
@@ -105,7 +111,7 @@ async function estimateTokens(id: number, messages: ChatMsg[], response: string)
       ),
     );
   } catch (e) {
-    console.debug('[柏宝绘] token 估算失败(已忽略)', e);
+    console.debug('[墨影] token 估算失败(已忽略)', e);
   }
 }
 
@@ -281,11 +287,14 @@ async function requestCompletionAtUrl(
 
       // 流式:按 SSE 增量拼接;非流式:直接解析 JSON。
       if (stream) {
-        const streamed = await readSseContent(resp);
-        if (!streamed) throw new ApiError('副 API 返回空内容');
+        const finish = { finishReason: null as string | null, nativeFinishReason: null as string | null };
+        const streamed = await readSseContent(resp, finish);
+        // 空内容带上 finish_reason:被渠道过滤时它往往是 content_filter,空串本身看不出区别,
+        // 而调用方要靠它决定「重发同一份」还是「改淡了再发」。
+        if (!streamed) throw new ApiError(`副 API 返回空内容${finishTag(finish.finishReason)}`);
         // 流式无 usage:ST 构造上游请求体是字段白名单,不含 stream_options,
         // 没法让上游在末尾回 usage chunk。只能事后本地估算。
-        return { content: streamed, usage: { prompt: null, completion: null } };
+        return { content: streamed, usage: { prompt: null, completion: null }, ...finish };
       }
 
       const data = await resp.json();
@@ -294,13 +303,30 @@ async function requestCompletionAtUrl(
       }
 
       const parsed = extractContent(data);
-      if (!parsed) throw new ApiError('副 API 返回空内容');
       // ST 代理非流式分支是 response.send(json) 原样透传,故 usage 是上游真值。
-      return { content: parsed, usage: readUsage(data) };
+      const choice = data?.choices?.[0];
+      if (!parsed) throw new ApiError(`副 API 返回空内容${finishTag(choice?.finish_reason)}`);
+      return {
+        content: parsed,
+        usage: readUsage(data),
+        finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : null,
+        nativeFinishReason: typeof choice?.native_finish_reason === 'string' ? choice.native_finish_reason : null,
+      };
     });
 
-    // 验收在记历史之前:验收不过 → 落进 catch 记失败,不给「HTTP 成功」的假象
-    opts.validate?.(result.content);
+    // Preserve the raw answer and finish metadata before validation: failed JSON is diagnostic evidence.
+    if (historyId !== null) {
+      safeHistory(() => captureLlmResponse(historyId, {
+        response: result.content,
+        promptTokens: result.usage.prompt,
+        completionTokens: result.usage.completion,
+        tokensEstimated: false,
+        finishReason: result.finishReason,
+        nativeFinishReason: result.nativeFinishReason,
+      }));
+    }
+    // A response is still marked successful only after caller validation passes.
+    opts.validate?.(result.content, { finishReason: result.finishReason });
 
     if (historyId !== null) {
       const hasReal = result.usage.prompt !== null;
@@ -331,11 +357,19 @@ async function requestCompletionAtUrl(
  * 推理模型的思维链增量(delta.reasoning 等)单独缓冲:只有 content 全空时才回退用它,
  * 避免在 content 正常时把思维链混进正文。
  */
-export async function readSseContent(resp: Response): Promise<string> {
+export async function readSseContent(
+  resp: Response,
+  finish?: { finishReason: string | null; nativeFinishReason: string | null },
+): Promise<string> {
   const reader = resp.body?.getReader();
   if (!reader) {
     // 无法流式读取(理论上不会):退回当作整体 JSON 处理
     const data = await resp.json().catch(() => null);
+    const choice = data?.choices?.[0];
+    if (finish) {
+      if (typeof choice?.finish_reason === 'string') finish.finishReason = choice.finish_reason;
+      if (typeof choice?.native_finish_reason === 'string') finish.nativeFinishReason = choice.native_finish_reason;
+    }
     return data ? extractContent(data) : '';
   }
   const decoder = new TextDecoder();
@@ -358,6 +392,10 @@ export async function readSseContent(resp: Response): Promise<string> {
         const json = JSON.parse(payload);
         if (json?.error) throw new ApiError(json.error.message || '副 API 返回错误');
         const choice = json?.choices?.[0];
+        if (finish) {
+          if (typeof choice?.finish_reason === 'string') finish.finishReason = choice.finish_reason;
+          if (typeof choice?.native_finish_reason === 'string') finish.nativeFinishReason = choice.native_finish_reason;
+        }
         const src = choice?.delta ?? choice?.message;
         const piece = textOf(src?.content) || textOf(choice?.text);
         if (piece) out += piece;

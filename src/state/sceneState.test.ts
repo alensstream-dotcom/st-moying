@@ -21,6 +21,11 @@ function save(chat: STMessage[], floor: number, events: SceneEvent[]) {
 }
 
 describe('versioned character and outfit state', () => {
+  it('blocks compilation across unloaded native-host history instead of silently resetting clothing', () => {
+    const chat = [message('既有剧情'), null, message('当前剧情')] as unknown as STMessage[];
+    expect(() => transcriptRevision(chat, 2)).not.toThrow();
+    expect(() => replayScene([entry()], chat, 2, 'a')).toThrow('尚未载入');
+  });
   it('accepts named identity quotes from provided cards/worldbooks but never static clothing resets', () => {
     const identity: SceneEvent = { name: '小雪', kind: 'identity', sourceLine: 0, evidence: '小雪是女子', evidenceSource: 'card', gender: 'female' };
     expect(validateSceneEvents([identity], '她继续交谈', { card: '小雪是女子' }).events).toHaveLength(1);

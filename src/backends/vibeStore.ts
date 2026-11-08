@@ -4,7 +4,7 @@ import type { NaiVibe, NaiVibeData, NaiVibeEncodings } from '@/state/settings';
 import { randomUuid } from '@/randomUuid';
 
 const FETCH_TIMEOUT_MS = 20_000;
-const LOCAL_DB_NAME = 'baibai_image_vibes';
+const LOCAL_DB_NAME = 'moying_image_vibes';
 const LOCAL_DB_VERSION = 1;
 const LOCAL_STORE_NAME = 'vibes';
 const LOCAL_PATH_PREFIX = 'idb:';
@@ -150,7 +150,7 @@ export async function saveVibeFiles(
     return await saveServerVibeFiles(data, current, localKey);
   } catch (error) {
     if (current) throw error;
-    console.warn('[柏宝绘] Vibe 写入 ST 文件存储失败，回退浏览器 IndexedDB:', error);
+    console.warn('[墨影] Vibe 写入 ST 文件存储失败，回退浏览器 IndexedDB:', error);
     return { dataPath: await writeLocalData(localKey, data), thumbnailPath: '' };
   }
 }

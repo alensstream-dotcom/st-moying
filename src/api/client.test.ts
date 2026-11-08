@@ -5,6 +5,7 @@ import { buildRequestBody, extractContent, readSseContent, requestCompletion } f
 /** 历史层全部 mock 掉:这里要断的正是「什么时候记成功/失败」 */
 const h = vi.hoisted(() => ({
   beginLlm: vi.fn(() => 1),
+  captureLlmResponse: vi.fn(),
   finishLlm: vi.fn(),
   failLlm: vi.fn(),
   patchLlmTokens: vi.fn(),
@@ -13,6 +14,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@/state/history', () => ({
   FOLLOW_MAIN_API: '跟随主 API',
   beginLlm: h.beginLlm,
+  captureLlmResponse: h.captureLlmResponse,
   finishLlm: h.finishLlm,
   failLlm: h.failLlm,
   patchLlmTokens: h.patchLlmTokens,
@@ -241,6 +243,7 @@ describe('readSseContent:流式', () => {
 describe('validate:历史「成功」= 调用方验收通过', () => {
   beforeEach(() => {
     h.beginLlm.mockClear();
+    h.captureLlmResponse.mockClear();
     h.finishLlm.mockClear();
     h.failLlm.mockClear();
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(okPayload)));
@@ -273,6 +276,7 @@ describe('validate:历史「成功」= 调用方验收通过', () => {
       }),
     ).rejects.toThrow('协议不合法');
     expect(h.finishLlm).not.toHaveBeenCalled();
+    expect(h.captureLlmResponse).toHaveBeenCalledWith(1, expect.objectContaining({ response: '答案文本' }));
     expect(h.failLlm).toHaveBeenCalledWith(1, '协议不合法', false);
   });
 
@@ -285,5 +289,39 @@ describe('validate:历史「成功」= 调用方验收通过', () => {
     await expect(requestCompletion(channel, messages, { validate })).rejects.toThrow('500');
     expect(validate).not.toHaveBeenCalled();
     expect(h.failLlm).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('upstream finish metadata', () => {
+  it('captures finish_reason on a rejected non-streaming reply', async () => {
+    const payload = {
+      choices: [{
+        message: { content: '{"changes":[]}' },
+        finish_reason: 'length',
+        native_finish_reason: 'max_tokens',
+      }],
+      usage: { prompt_tokens: 90, completion_tokens: 20 },
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(payload)));
+    await expect(requestCompletion(channel, messages, {
+      validate: () => { throw new Error('缺少 images 数组'); },
+    })).rejects.toThrow('缺少 images 数组');
+    expect(h.captureLlmResponse).toHaveBeenCalledWith(1, expect.objectContaining({
+      response: '{"changes":[]}',
+      finishReason: 'length',
+      nativeFinishReason: 'max_tokens',
+      completionTokens: 20,
+    }));
+  });
+
+  it('collects stream finish metadata without affecting the extracted content', async () => {
+    const meta = { finishReason: null as string | null, nativeFinishReason: null as string | null };
+    const stream = [
+      'data: {"choices":[{"delta":{"content":"hello"}}]}',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop","native_finish_reason":"eos"}]}',
+      'data: [DONE]', '',
+    ].join('\n');
+    expect(await readSseContent(sseResponse(stream), meta)).toBe('hello');
+    expect(meta).toEqual({ finishReason: 'stop', nativeFinishReason: 'eos' });
   });
 });

@@ -1,5 +1,6 @@
 import { getContext } from '@/st/context';
 import { reactive } from 'vue';
+import { readCompatibleData } from '@/state/legacyCompatibility';
 import {
   findCharTag,
   normalizeCharTagStore,
@@ -25,7 +26,7 @@ import {
  * setGlobalCharTagSource 注入的只读 getter,不成模块环。
  */
 
-const GLOBAL_KEY = 'baibai_image_char_global';
+const GLOBAL_KEY = 'moying_image_char_global';
 const GLOBAL_EVENT = 'st-baibai-image:char-global-changed';
 const SCHEMA_VERSION = 1;
 
@@ -78,7 +79,7 @@ function persist(): void {
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     window.dispatchEvent(
       new CustomEvent(GLOBAL_EVENT, {
-        detail: { revision: store.revision, source: 'ST-BaiBai-Image' },
+        detail: { revision: store.revision, source: 'moying' },
       }),
     );
   }
@@ -113,7 +114,7 @@ export function initGlobalCharTags(): void {
   setGlobalCharTagSource(() => globalCharTagLib.entries);
   const ctx = getContext();
   if (ctx?.extensionSettings) {
-    const store = readStore(ctx.extensionSettings[GLOBAL_KEY]);
+    const store = readStore(readCompatibleData(ctx.extensionSettings, GLOBAL_KEY, 'baibai_image_char_global'));
     if (store) applyStore(store);
   }
   bindListener();

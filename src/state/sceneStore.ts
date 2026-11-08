@@ -55,7 +55,8 @@ export function sceneAt(floor: number, line = Infinity): SceneState {
   return applyConfirmations(replayScene(charTagsBeforeFloor(0), ctx.chat, floor, ctx.getCurrentChatId?.() ?? '', line, manualEvents()));
 }
 export function refreshSceneStore(): void {
-  sceneStore.current = sceneAt((getContext()?.chat.length ?? 0) - 1);
+  try { sceneStore.current = sceneAt((getContext()?.chat.length ?? 0) - 1); }
+  catch (error) { sceneStore.current = { characters: [], warnings: [error instanceof Error ? error.message : '历史状态暂不可用'] }; }
 }
 export function confirmIdentity(character: SceneCharacter, gender: Gender, isHeroine: boolean, aliases?: string[], work?: string): void {
   const ctx = getContext();

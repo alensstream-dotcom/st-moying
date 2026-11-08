@@ -22,6 +22,7 @@ function state(): SceneState {
 }
 function image(): ImageInsertion {
   return { position: 'P1', sourceLine: 0, tag: '1girl, blue hanfu, blonde hair, forest, portrait', nl: 'wearing blue hanfu', negative: '', size: 'portrait',
+    charOffset: 0,
     characters: [{ name: '小雪', tag: '1girl, blonde hair, green eyes, blue hanfu, closed robe, smile', nl: 'blonde wearing closed robe' }] };
 }
 afterEach(() => vi.unstubAllGlobals());

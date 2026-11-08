@@ -258,7 +258,7 @@ export async function runNaiWithRetry<T>(
       const waitMs = Math.max(retryDelayMs(attempt, retryAfterMs), naiPacingDelayMs());
       onRetry?.({ attempt, max: maxRetries, waitMs, error });
       console.warn(
-        `[柏宝绘] NAI 请求失败,${Math.round(waitMs / 1000)}s 后重试(第 ${attempt}/${maxRetries} 次):`,
+        `[墨影] NAI 请求失败,${Math.round(waitMs / 1000)}s 后重试(第 ${attempt}/${maxRetries} 次):`,
         error,
       );
       await delay(waitMs, signal);

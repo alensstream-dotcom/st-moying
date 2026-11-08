@@ -4,7 +4,7 @@ import { openPanel, ui } from '@/state/ui';
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 
 /**
- * 悬浮球 —— 柏宝绘伸进宿主页面的「书签坠」。
+ * 悬浮球 —— 墨影伸进宿主页面的「书签坠」。
  *
  * 形态:竖向缎带 + 底部燕尾缺口(clip-path),呼应品牌的 bookmark 图标;自定义图片也被
  * 切成同一书签轮廓,任意图都收进统一形状(这是与「又一个圆 fab」拉开差距的签名手法)。
@@ -141,7 +141,7 @@ function onUp(e: PointerEvent) {
   activePointer = null;
 
   if (moved < CLICK_SLOP) {
-    // 视为点击 → 打开柏宝绘(贴边态保持)
+    // 视为点击 → 打开墨影(贴边态保持)
     openPanel();
     return;
   }
@@ -182,7 +182,7 @@ onUnmounted(() => window.removeEventListener('resize', onResize));
     :style="orbStyle"
     role="button"
     tabindex="0"
-    aria-label="打开柏宝绘"
+    aria-label="打开墨影"
     @pointerdown="onDown"
     @pointermove="onMove"
     @pointerup="onUp"

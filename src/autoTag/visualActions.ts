@@ -56,7 +56,7 @@ export async function drawVisualPreview(material: VisualMaterial, imageSeed?: nu
       let binary = ''; for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
       base64 = btoa(binary);
     }
-    snapshot.previewPath = await uploadUserImage('柏宝绘_视觉素材', `${snapshot.id}-${seed}-${Date.now()}`, base64, result.format);
+    snapshot.previewPath = await uploadUserImage('墨影_视觉素材', `${snapshot.id}-${seed}-${Date.now()}`, base64, result.format);
     return { material: snapshot, imageSeed: seed };
   } finally { result.revoke(); }
 }
@@ -73,7 +73,7 @@ export async function recompileFloorVisuals(floor: number): Promise<void> {
   const scene: SceneDelta = { ...(previous?.scene ?? { v: 1, revision, events: [], rejected: [] }), frames: [], world: cloneVisual(world) };
   const rewritten = tags.map((raw, index) => {
     const sourceLine = previous?.scene?.frames?.[index]?.sourceLine ?? 0;
-    const content = { ...parseImageTagContent(raw), sourceLine, position: '' };
+    const content = { ...parseImageTagContent(raw), sourceLine, charOffset: 0, position: '' };
     const state = sceneAt(floor, sourceLine);
     const warnings = compileSceneImage(content, state, profile.naiCharPrompts, profile.nl, world);
     const tag = serializeImageTag(content);

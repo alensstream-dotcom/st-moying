@@ -66,8 +66,8 @@ export function stateHash(text: string): string {
   return (a >>> 0).toString(16) + (b >>> 0).toString(16);
 }
 export function storyText(text: string): string {
-  // Tag insertion adds blank lines; ignore empty lines, but retain all narrative text.
-  return stripImageTags(text).replace(/\r\n?/g, '\n').split('\n').filter(line => line.trim()).join('\n').trim();
+  // 必须剥离行内插入的 tag 换行，还原为物理行。
+  return stripImageTags(text.replace(/[\r\n]+<bbi_image>[\s\S]*?<\/bbi_image>[\r\n]*/gi, '')).replace(/\r\n?/g, '\n').split('\n').filter(line => line.trim()).join('\n').trim();
 }
 export function transcriptRevision(chat: STMessage[], floor: number, targetText?: string): string {
   return transcriptRevisions(chat, floor, targetText).at(-1) ?? stateHash('');
@@ -78,6 +78,10 @@ export function transcriptRevisions(chat: STMessage[], floor: number, targetText
   let prefix = '';
   for (let i = 0; i <= floor && i < chat.length; i++) {
     const m = chat[i];
+    if (!m) {
+      const revision = stateHash(prefix + JSON.stringify(['unloaded-message', i]));
+      revisions.push(revision); prefix = stateHash(revision); continue;
+    }
     const revision = stateHash(prefix + JSON.stringify([m.send_date ?? '', m.name ?? '', m.swipe_id ?? 0,
       storyText(i === floor && targetText !== undefined ? targetText : m.mes ?? '')]));
     revisions.push(revision);
@@ -88,7 +92,7 @@ export function transcriptRevisions(chat: STMessage[], floor: number, targetText
 }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const key = (value: string) => value.normalize('NFKC').trim().toLocaleLowerCase();
-const appearanceKeys = ['fandom', 'sex', 'hair', 'eyes', 'skin', 'body', 'extra'];
+const appearanceKeys = ['fandom', 'age', 'sex', 'hair', 'eyes', 'skin', 'body', 'extra'];
 
 export function legacyCharacter(entry: CharTagEntry, scope: string): SceneCharacter {
   // Only an explicit manual sex field is authoritative. Generated 1girl tags prove nothing.
@@ -153,7 +157,7 @@ export function parseSceneEvents(raw: unknown, positions: Map<string, number>): 
     if (typeof item.isHeroine === 'boolean') event.isHeroine = item.isHeroine;
     if (item.appearance && typeof item.appearance === 'object') {
       event.appearance = Object.fromEntries(Object.entries(item.appearance).filter(([k, v]) =>
-        ['hair', 'eyes', 'skin', 'body', 'extra'].includes(k) && typeof v === 'string').map(([k, v]) => [k, text(v)]));
+        ['age', 'hair', 'eyes', 'skin', 'body', 'extra'].includes(k) && typeof v === 'string').map(([k, v]) => [k, text(v)]));
     }
     if (item.operation === 'change' || item.operation === 'patch') event.operation = item.operation;
     if (Array.isArray(item.garments)) event.garments = item.garments.slice(0, 30).flatMap(g => {
@@ -261,6 +265,7 @@ export function applySceneEvents(input: SceneState, events: SceneEvent[], scope:
 
 /** Read-only migration, replay only active and version-valid deltas. No global writes. */
 export function replayScene(seed: CharTagEntry[], chat: STMessage[], floor: number, scope: string, line = Infinity, manual: Record<number, SceneEvent[]> = {}): SceneState {
+  if (chat.slice(0, Math.max(0, floor + 1)).some(message => !message)) throw new Error('目标楼层之前存在尚未载入的历史消息，请先加载相关历史后再解析/编译；已保存人物和穿搭未改动');
   let state: SceneState = { characters: seed.map(entry => legacyCharacter(entry, scope)), warnings: [] };
   const revisions = transcriptRevisions(chat, floor);
   for (let i = 0; i <= floor && i < chat.length; i++) {
@@ -285,7 +290,7 @@ export function replayScene(seed: CharTagEntry[], chat: STMessage[], floor: numb
           outfitInstanceId: `outfit_${stateHash(`${character.characterId}\0legacy\0${i}\0${op.value}`)}`,
           design: op.value, garments: [], provenance: 'legacy_unparsed_design',
         };
-        else if (character && ['hair', 'eyes', 'skin', 'body', 'extra'].includes(op.field ?? '')) character.currentAppearance[op.field!] = op.value;
+        else if (character && ['age', 'hair', 'eyes', 'skin', 'body', 'extra'].includes(op.field ?? '')) character.currentAppearance[op.field!] = op.value;
         continue;
       }
       if (op.kind !== 'new' || !op.name || !op.fields) continue;

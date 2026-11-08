@@ -131,7 +131,7 @@ async function renderWorldInfoContent(
     const out = await ejs.evalTemplate(text, env);
     if (typeof out === 'string') text = out;
   } catch (e) {
-    console.log('[柏宝绘] 世界书 EJS 渲染失败(退回未执行文本):', e);
+    console.log('[墨影] 世界书 EJS 渲染失败(退回未执行文本):', e);
   }
   return text;
 }
@@ -199,7 +199,7 @@ export async function fetchWorldInfo(
     );
     return joinWorldInfoChunks(chunks);
   } catch (e) {
-    console.log('[柏宝绘] 世界书激活失败(降级为不带设定):', e);
+    console.log('[墨影] 世界书激活失败(降级为不带设定):', e);
     return '';
   }
 }

@@ -48,8 +48,8 @@ describe('actual runner persistence and compiled requests', () => {
   it('applies a versioned clothing binding at the selected paragraph, preserves state and can undo', async () => {
     const ctx = mocks.ctx!;
     ctx.chat.push(message('小雪是女子。小雪穿着青色外袍和白色内衫。\n小雪解开外袍系带。'));
-    response.images = [image('P1'), image('P2')];
-    (response.sceneEvents as unknown[]).push({ name: '小雪', kind: 'outfit', operation: 'patch', position: 'P2', evidence: '小雪解开外袍系带。', garments: [{ id: 'outer', state: { fastening: 'open' } }] });
+    response.images = [image('P1'), image('P3')];
+    (response.sceneEvents as unknown[]).push({ name: '小雪', kind: 'outfit', operation: 'patch', position: 'P3', evidence: '小雪解开外袍系带。', garments: [{ id: 'outer', state: { fastening: 'open' } }] });
     await requestFloorTags(0);
     const character = sceneAt(0).characters[0];
     const material = cloneVisual(BUILTIN_VISUAL_MATERIALS[0]); material.garments[0].design = 'black robe';
@@ -150,14 +150,14 @@ describe('actual runner persistence and compiled requests', () => {
   it('compiles before/after paragraph frames in narrative order and preserves the target frame on slot rewrite', async () => {
     const ctx = mocks.ctx!;
     ctx.chat.push(message('小雪是女子。小雪穿着青色外袍和白色内衫。\n小雪解开外袍系带。'));
-    response.images = [image('P2'), image('P1')];
-    (response.sceneEvents as unknown[]).push({ name: '小雪', kind: 'outfit', operation: 'patch', position: 'P2', evidence: '小雪解开外袍系带。', garments: [{ id: 'outer', state: { fastening: 'open' } }] });
+    response.images = [image('P3'), image('P1')];
+    (response.sceneEvents as unknown[]).push({ name: '小雪', kind: 'outfit', operation: 'patch', position: 'P3', evidence: '小雪解开外袍系带。', garments: [{ id: 'outer', state: { fastening: 'open' } }] });
     await requestFloorTags(0);
     const tags = parseImageTags(ctx.chat[0].mes).map(parseImageTagContent);
     expect(tags[0].characters[0].tag).not.toContain('open clothes');
     expect(tags[1].characters[0].tag).toContain('open clothes');
     const prior = JSON.stringify(readCharTagFloorDelta(ctx.chat[0]));
-    response = { images: [image('P2')], sceneEvents: [], changes: [] };
+    response = { images: [image('P3')], sceneEvents: [], changes: [] };
     await requestSlotTag(0, 0);
     expect(parseImageTagContent(parseImageTags(ctx.chat[0].mes)[0]).characters[0].tag).not.toContain('open clothes');
     expect(JSON.stringify(readCharTagFloorDelta(ctx.chat[0]))).toBe(prior);
