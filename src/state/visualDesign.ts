@@ -6,8 +6,10 @@ export const cloneVisual = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 export const defaultWorld = (): WorldVisualProfile => ({ v: 1, setting: 'auto', wardrobeDefaults: '', visualStyle: '', characterStylingDefaults: '', forbiddenByDefault: [], provenance: 'user' });
 export function inferWorld(source: string): VisualSetting {
   if (/仙侠|仙俠|修仙|修真|宗门|宗門|灵根|靈根|xianxia|cultivation/i.test(source)) return 'xianxia';
-  if (/古风|古風|古代|武侠|武俠|江湖|historical|wuxia/i.test(source)) return 'historical';
-  if (/赛博|賽博|星际|星際|科幻|cyberpunk|science fiction/i.test(source)) return 'scifi';
+  if (/古风|古風|古代|武侠|武俠|江湖|historical|wuxia|traditional|oriental/i.test(source)) return 'historical';
+  if (/赛博|賽博|星际|星際|科幻|cyberpunk|science fiction|scifi/i.test(source)) return 'scifi';
+  if (/西幻|魔法|剑与魔法|western fantasy|dnd|rpg|magic/i.test(source)) return 'western_fantasy';
+  if (/80年代|70年代|90年代|复古|retro|nostalgic|vintage/i.test(source)) return 'modern_retro';
   if (/现代|現代|都市|校园|校園|modern/i.test(source)) return 'modern';
   return 'auto';
 }
@@ -27,6 +29,8 @@ export const BUILTIN_VISUAL_MATERIALS = [
   builtin('builtin_xianxia_robe', '仙侠剑修交领长袍', ['xianxia', 'historical'], ['仙侠', '剑修', '汉服', '长袍'], 'hanfu, cross collar, wide sleeves, long robe, sash'),
   builtin('builtin_xianxia_layered', '仙侠分层窄袖衣裙', ['xianxia', 'historical'], ['仙侠', '剑修', '汉服', '裙'], 'hanfu, layered skirt, fitted sleeves, embroidered trim'),
   builtin('builtin_modern_uniform', 'JK 校服', ['modern'], ['JK', '制服', '校服'], 'school uniform, pleated skirt, sailor collar'),
+  builtin('builtin_modern_retro_suit', '80年代复古西装', ['modern_retro'], ['复古', '80年代', '西装'], '1980s style, power suit, shoulder pads, retro aesthetic, oversized blazer'),
+  builtin('builtin_western_fantasy_armor', '西幻皮革轻甲', ['western_fantasy'], ['西幻', '冒险', '轻甲'], 'leather armor, fantasy adventurer, tunic, cloak, adventurer attire'),
   builtin('builtin_scifi_suit', '科幻旅行服', ['scifi'], ['科幻', '旅行服'], 'science fiction outfit, utility jacket, trousers'),
 ];
 

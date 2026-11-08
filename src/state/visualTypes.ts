@@ -1,7 +1,7 @@
 import type { Garment } from './sceneState';
 import type { NaiVibe } from './settings';
 
-export type VisualSetting = 'auto' | 'xianxia' | 'historical' | 'modern' | 'scifi';
+export type VisualSetting = 'auto' | 'xianxia' | 'historical' | 'modern' | 'modern_retro' | 'scifi' | 'western_fantasy';
 export type VisualScope = 'appearance' | 'outfit' | 'style' | 'all';
 export interface WorldVisualProfile {
   v: 1;

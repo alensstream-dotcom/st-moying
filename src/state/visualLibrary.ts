@@ -101,9 +101,18 @@ export function worldProfile(): WorldVisualProfile {
   if (world.setting === 'auto') {
     const card = ctx?.characters?.[Number(ctx.characterId)];
     world.setting = inferWorld(JSON.stringify(card ?? {}));
-    world.provenance = `角色卡自动识别：${world.setting}（仅视觉补全）`;
+    if (world.setting === 'auto') {
+      const chat = ctx?.chat ?? [];
+      const recent = chat.slice(-3).map(m => m.msg).join('\n');
+      world.setting = inferWorld(recent);
+    }
+    world.provenance = `自动识别：${world.setting}`;
   }
   if ((world.setting === 'xianxia' || world.setting === 'historical') && !world.characterStylingDefaults.trim()) world.characterStylingDefaults = 'traditional hair ornament';
+  // 现代与复古配置
+  if (world.setting === 'modern_retro' && !world.characterStylingDefaults.trim()) world.characterStylingDefaults = '1980s retro hairstyle';
+  if (world.setting.startsWith('modern') && !world.forbiddenByDefault.length) world.forbiddenByDefault = ['oriental fantasy', 'classical chinese aesthetic', 'hanfu', 'robe', 'gufeng', 'sword'];
+  if ((world.setting === 'xianxia' || world.setting === 'historical') && !world.forbiddenByDefault.length) world.forbiddenByDefault = ['modern clothes', 'western modern clothing', 'school uniform', 'serafuku', 'suit', 'necktie', 't-shirt', 'jeans', 'sneakers', 'modern building', 'modern interior', 'electricity', 'smartphone'];
   return world;
 }
 export function saveWorldProfile(world: WorldVisualProfile): void {
