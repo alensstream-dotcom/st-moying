@@ -122,7 +122,8 @@ export function worldProfile(floor = Infinity): WorldVisualProfile {
     world.provenance = `自动识别：${world.setting}`;
   }
   if ((world.setting === 'xianxia' || world.setting === 'historical') && !world.characterStylingDefaults.trim()) world.characterStylingDefaults = 'traditional hair ornament';
-  if ((world.setting === 'xianxia' || world.setting === 'historical') && !world.visualStyle.trim()) world.visualStyle = 'traditional chinese aesthetic';
+  // Automatic era inference controls wardrobe, never the user's rendering recipe.
+  if (world.provenance !== 'user') world.visualStyle = '';
   // 现代与复古配置
   if (world.setting === 'modern_retro' && !world.characterStylingDefaults.trim()) world.characterStylingDefaults = '1980s retro hairstyle';
   if (world.setting.startsWith('modern') && !world.forbiddenByDefault.length) world.forbiddenByDefault = ['oriental fantasy', 'classical chinese aesthetic', 'hanfu', 'robe', 'gufeng', 'sword'];
@@ -132,6 +133,6 @@ export function worldProfile(floor = Infinity): WorldVisualProfile {
 export function saveWorldProfile(world: WorldVisualProfile): void {
   const ctx = getContext(); if (!ctx?.chatMetadata) throw new Error('请先打开聊天');
   if (ctx.chatMetadata[WORLD_KEY] && !ctx.chatMetadata[`${WORLD_KEY}_backup`]) ctx.chatMetadata[`${WORLD_KEY}_backup`] = cloneVisual(ctx.chatMetadata[WORLD_KEY]);
-  ctx.chatMetadata[WORLD_KEY] = cloneVisual(world); ctx.saveMetadataDebounced?.();
+  ctx.chatMetadata[WORLD_KEY] = { ...cloneVisual(world), provenance: 'user' }; ctx.saveMetadataDebounced?.();
 }
 export function visualConfigurationRevision(): string { return JSON.stringify([worldProfile(), latestMaterials()]); }

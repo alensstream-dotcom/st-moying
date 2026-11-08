@@ -19,12 +19,12 @@ export async function directVisuals(scene: SceneState, world: WorldVisualProfile
   const recalled = searchMaterials(materials, { query: source + ' ' + missing.flatMap(c => Object.values(c.baseAppearance)).join(' ') }).slice(0, 55).map(m => m.material);
   const pool = [...new Map([...recalled, ...materials.filter(m => m.id.startsWith('builtin_'))].map(m => [m.id, m])).values()];
   const messages: ChatMsg[] = [{ role: 'system', content: `你是自动视觉导演，只返回 JSON，不生成图片、不改变身份/性别/衣物状态。
-返回 {world:{setting,visualStyle,characterStylingDefaults},decisions:[{characterId,appearance:{hair,eyes,skin,body,extra},appearanceMaterial,outfitMaterial,garments:[{id,design}],reason}]}。
-setting 只能为 auto/xianxia/historical/modern/modern_retro/scifi/western_fantasy。根据角色卡、世界书、正文自动判断；仙侠/古风默认古装发饰和古风美术，但每个人眉眼、脸型、发型轮廓、特征须有区别。现代细分复古。明确的穿越者例外保留。
+返回 {world:{setting,characterStylingDefaults},decisions:[{characterId,appearance:{hair,eyes,skin,body,extra},appearanceMaterial,outfitMaterial,garments:[{id,design}],reason}]}。
+setting 只能为 auto/xianxia/historical/modern/modern_retro/scifi/western_fantasy。根据角色卡、世界书、正文自动判断；仙侠/古风默认古装发饰，但每个人眉眼、脸型、发型轮廓、特征须有区别。现代细分复古。明确的穿越者例外保留。
 只补缺失定妆、首次未知服装或把旧的整串服装拆成部件。英文 tag 写字段，reason 用中文。严禁重写已知颜色/形象、性别或当前穿脱状态，不根据 1girl 判断性别。男性不设计女主定妆。
 优先从提供的素材候选中选择 ID，原创角色可选相似同人作为外貌灵感，但必须符合明确发色/瞳色/时代，不可把同人身份姓名或服装带给原创人物；没有合适素材则补全简洁独立设计。禁止强行选不合时代的服装。
 服装 garments 只写衣物部件和设计，不含身体/脸/性别/姿势/穿脱状态。已存在服装时，仅拆解原设计，不能补回已移除衣物。已经有部件的穿搭无需返回服装。未知时首次补全款式，后续由程序继承。
-定妆要参考其他人物已固定外貌，避免所有女性同一组脸型和发型；extra 写少量可辨识脸型/眉眼/标志。不要把场景动作混进定妆。没有依据不编造身份事实。` },
+定妆要参考其他人物已固定外貌，避免所有女性同一组脸型和发型；extra 最多写 3 个可辨识外形特征，不写画风/画师/渲染/质量/审美词。整体画风、审美与质量完全由用户 NAI 配方决定，禁止另设画风。不要把场景动作混进定妆。没有依据不编造身份事实。` },
   { role: 'user', content: JSON.stringify({ world, current: scene.characters, missing: missing.map(c => c.characterId), staticContext: staticContext.slice(0, 22000), story: source.slice(0, 20000), materials: pool.map(m => ({ id: m.id, kind: m.kind, name: m.name, aliases: m.aliases, work: m.work, settings: m.settings, appearance: m.appearance, garments: m.garments, tags: m.tags })) }) }];
   const channel = getTagGenChannel();
   const raw = channel ? await requestCompletion(channel, messages, { signal, source: '自动定妆 / 世界识别 / 素材绑定' })
@@ -33,7 +33,7 @@ setting 只能为 auto/xianxia/historical/modern/modern_retro/scifi/western_fant
   const parsed = JSON.parse(clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1));
   const result: VisualDirection = { world: cloneVisual(world), decisions: [] };
   if (world.setting === 'auto' && ['xianxia','historical','modern','modern_retro','scifi','western_fantasy'].includes(parsed.world?.setting)) {
-    result.world = { ...world, setting: parsed.world.setting, visualStyle: typeof parsed.world.visualStyle === 'string' ? parsed.world.visualStyle.slice(0, 600) : '',
+    result.world = { ...world, setting: parsed.world.setting, visualStyle: '',
       characterStylingDefaults: typeof parsed.world.characterStylingDefaults === 'string' ? parsed.world.characterStylingDefaults.slice(0, 300) : '', provenance: 'LLM 自动识别角色卡/世界书' };
   }
   for (const item of Array.isArray(parsed.decisions) ? parsed.decisions.slice(0, 30) : []) {

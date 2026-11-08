@@ -248,7 +248,7 @@ async function runOne(job: BackgroundJob, signal?: AbortSignal): Promise<'ok' | 
     const scene = generationSceneSnapshot(job.messageId, job.swipeId, job.seq, fullTag);
     const { result, meta } = await generateImage(
       {
-        prompt: job.prompt,
+        prompt: scene.prompt ?? job.prompt,
         nl: job.nl,
         negative: job.negative,
         characters: job.characters,

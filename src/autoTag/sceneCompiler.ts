@@ -19,7 +19,7 @@ export function wornOutfit(character: SceneCharacter): { tags: string; nl: strin
   for (const garment of outfit.garments) {
     const location = garment.state.location ?? 'unknown';
     const design = clothingDesign(garment.design);
-    const label = `${garment.id}: ${design}`;
+    const label = design;
     if (location === 'absent' || location === 'removed') {
       sentences.push(`${label} is removed and is not worn.`); continue;
     }
@@ -35,8 +35,10 @@ export function wornOutfit(character: SceneCharacter): { tags: string; nl: strin
     if (state.leftSleeve === 'rolled_up' || state.rightSleeve === 'rolled_up') tags.push('sleeves rolled up');
     const arrangements: Record<string, string> = { lifted: /skirt|dress/i.test(design) ? 'skirt lifted' : 'clothes lifted', pulled_aside: 'clothes pulled aside', lowered: 'clothes down', around_waist: 'clothes around waist', around_ankles: 'clothes around ankles' };
     if (state.arrangement && arrangements[state.arrangement]) tags.push(arrangements[state.arrangement]);
-    const labels: Record<string, string> = { fastening: 'fastening', leftSleeve: 'left sleeve', rightSleeve: 'right sleeve' };
-    sentences.push(`${label} is ${location.replaceAll('_', ' ')}; ${Object.entries(state).filter(([k]) => k !== 'location').map(([k, v]) => `${labels[k] ?? k}: ${v.replaceAll('_', ' ')}`).join(', ')}.`);
+    const details = [state.fastening === 'open' ? 'unfastened' : '', state.fastening === 'loose' ? 'loosely fastened' : '',
+      state.leftSleeve === 'off_arm' ? 'left sleeve off the arm' : '', state.rightSleeve === 'off_arm' ? 'right sleeve off the arm' : '',
+      state.arrangement && arrangements[state.arrangement] ? arrangements[state.arrangement] : ''].filter(Boolean);
+    sentences.push(`Wearing ${label}${details.length ? `, ${details.join(', ')}` : ''}.`);
   }
   // Generic closed/open tags are not garment-specific: keep open and describe the closed inner layer in NL.
   return { tags: dedupe(tags.includes('open clothes') ? tags.filter(t => t !== 'closed clothes') : tags), nl: sentences.join(' ') };
@@ -114,6 +116,6 @@ export function compileSceneImage(image: ImageInsertion, state: SceneState, inde
     } else warnings.push('当前后端不支持独立人物提示；多人外貌/衣物未合并，需支持 character prompts 的 NAI 模型');
   }
   if (!image.characters.length && state.characters.length) warnings.push('模型未提供出镜人物名，无法确定性编译本图人物状态');
-  if (world?.visualStyle) image.tag = dedupe([...tokens(world.visualStyle).filter(t => !appearanceToken.test(t) && !clothesToken.test(t) && !genderToken.test(t)), ...tokens(image.tag)]);
+  if (world?.visualStyle && world.provenance === 'user') image.tag = dedupe([...tokens(world.visualStyle), ...tokens(image.tag)]);
   return warnings;
 }

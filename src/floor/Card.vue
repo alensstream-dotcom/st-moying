@@ -319,7 +319,7 @@ async function generate(fresh = false): Promise<void> {
     const referenceVibes = scene.referenceVibes;
     // 闸门、后端分派都在 generateImage 里(公开接口走同一条路,见 generate.ts);
     // 本组件只把进度回调接到自己的槽位运行态上。
-    const { result, meta } = await generateImage({ ...job, seed, referenceVibes }, signal, {
+    const { result, meta } = await generateImage({ ...job, prompt: scene.prompt ?? job.prompt, seed, referenceVibes }, signal, {
       onStart: () => setGenPhase(slot, token, 'generating'),
       onQueue: ahead => setQueueAhead(slot, token, ahead),
       onRetry: retry => setGenRetry(slot, token, retry),

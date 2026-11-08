@@ -363,9 +363,11 @@ export function globalStyleOnly(value: string): string {
   return value.split(',').map(t => t.trim()).filter(t => t && !/\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|bob cut|ahoge|breasts|hips|thighs|hanfu|robe|dress|uniform|shirt|jacket|skirt|stockings|panties|bra|sleeves|clothes|clothing|outfit)\b/i.test(t)
     && !/^\d+(?:girls?|boys?)$/i.test(t)).join(', ');
 }
-export function fullPositivePrompt(nai: NaiSettings, prompt: string, nl = '', managedCharacters = false): string {
-  const artist = managedCharacters ? globalStyleOnly(naiArtistPrompt(nai)) : naiArtistPrompt(nai);
-  const quality = managedCharacters ? globalStyleOnly(naiQualityTags(nai)) : naiQualityTags(nai);
+export function fullPositivePrompt(nai: NaiSettings, prompt: string, nl = '', _managedCharacters = false): string {
+  // User recipes are authoritative, including weighted syntax and appearance words.
+  // Scene continuity must never rewrite the configured artist/quality recipe.
+  const artist = naiArtistPrompt(nai);
+  const quality = naiQualityTags(nai);
   const tags = [artist, prompt.trim(), quality].filter(Boolean).join(', ');
   return naiSupportsCharacterPrompts(nai.model) && nl.trim() ? `${tags}. ${nl.trim()}` : tags;
 }
@@ -663,7 +665,6 @@ export async function generateNaiImage(
 
   // 画师串在发请求时解析一次，快照下来随图落盘：事后配方被删/改名也不丢。
   const artist = naiArtistUsage(nai);
-  if (artist && values.characters?.length) artist.prompt = globalStyleOnly(artist.prompt);
   const params = buildNaiParameters(nai, values);
   const activeVibes = naiSupportsVibes(nai.model) && values.capabilities?.vibes !== false ? nai.vibes.filter(vibe => vibe.enabled) : [];
   const loaded = new Map<string, NaiVibeData>();
