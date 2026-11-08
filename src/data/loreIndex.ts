@@ -19,7 +19,6 @@
  */
 
 import { WARDROBE_CATEGORIES, WARDROBE_ITEMS } from '@/data/wardrobe';
-import { POSE_CATEGORIES, POSE_ITEMS } from '@/data/poseBank';
 import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
 import { BODY_EXTRA, FACE_EXTRA, FANDOM_EXTRA } from '@/data/faceExtra';
 import { FANDOM_EXTRA_2 } from '@/data/fandomExtra2';
