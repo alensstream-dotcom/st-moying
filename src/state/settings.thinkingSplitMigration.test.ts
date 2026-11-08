@@ -17,7 +17,7 @@ vi.mock('@/st/context', () => ({
 
 async function hydrateWithAutoTag(autoTag: Record<string, unknown> | undefined) {
   mocks.context = {
-    extensionSettings: { moying_image: autoTag === undefined ? {} : { autoTag } },
+    extensionSettings: { baibai_image: autoTag === undefined ? {} : { autoTag } },
     saveSettingsDebounced: vi.fn(),
   };
   const { hydrateSettings, settings } = await import('@/state/settings');

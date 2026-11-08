@@ -20,7 +20,7 @@ vi.mock('@/st/context', () => ({
 
 async function hydrateWithComfy(comfyui: Record<string, unknown> | undefined) {
   mocks.context = {
-    extensionSettings: { moying_image: comfyui === undefined ? {} : { comfyui } },
+    extensionSettings: { baibai_image: comfyui === undefined ? {} : { comfyui } },
     saveSettingsDebounced: vi.fn(),
   };
   const { hydrateSettings, settings } = await import('@/state/settings');
@@ -120,7 +120,7 @@ describe('ComfyUI 工作流库迁移', () => {
   it('activeComfyPreset / effectiveComfyConn 取的是当前项', async () => {
     mocks.context = {
       extensionSettings: {
-        moying_image: {
+        baibai_image: {
           comfyui: {
             url: 'http://example:8188',
             workflows: [

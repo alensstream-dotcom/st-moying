@@ -8,7 +8,6 @@ function image(sourceLine: number, tag: string): ImageInsertion {
   return {
     position: `P${sourceLine}`,
     sourceLine,
-    charOffset: 0,
     tag,
     nl: '',
     negative: '',

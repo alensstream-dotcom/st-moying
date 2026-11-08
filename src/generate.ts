@@ -12,7 +12,7 @@
  * **闸门不可绕过**,这是本模块存在的首要理由:直接调 backends/nai.ts 的
  * generateNaiImage 会跑在 floor/genQueue.ts 的并发闸门与全局节奏之外,0.2.0 整版的
  * NAI 限流自愈(429 全局冷却、相邻请求最小间隔、退避重试)当场失效。第三方并发调用
- * 是常态,绕过去的症状是用户 NAI 账号吃一串密集 429 —— 而用户只会认为墨影坏了。
+ * 是常态,绕过去的症状是用户 NAI 账号吃一串密集 429 —— 而用户只会认为柏宝绘坏了。
  * 故公开接口与卡片共用本函数,闸门在这里包死。
  *
  * 本模块**刻意不碰**:楼层坐标、genState、extra、水合、请求历史埋点。
@@ -29,11 +29,13 @@ import { generateNaiImage, naiRandomSeed, naiSupportsCharacterPrompts } from '@/
 import { effectiveOrientation, parseSize, pickSize, type Orientation } from '@/backends/size';
 import { acquireNaiSlot } from '@/floor/genQueue';
 import type { GenerationMeta } from '@/generationMeta';
+import { capabilityOverride, resolveNaiCapabilities } from '@/backends/capabilities';
+import type { NaiVibe } from '@/state/settings';
 import { activeComfyPreset, activeNaiEndpoint, activeOrientationLock, effectiveComfyConn, effectiveNai, settings, type BackendId } from '@/state/settings';
-import { applyPresetToNaiConn, genPresetById } from '@/state/genPresets';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
+  referenceVibes?: NaiVibe[];
   /** 正向 danbooru 短 tag。 */
   prompt: string;
   /** 自然语言部分(可空)。 */
@@ -49,26 +51,6 @@ export interface GenerateInput {
   size?: Orientation;
   /** 本次种子。由调用方经 decideSeed() 先行确定(埋点要在发请求前拿到它)。 */
   seed: number;
-  /**
-   * 只对本次请求生效的后端覆盖(留空 = 用渠道默认)。
-   *
-   * 素材缩略图必须钉死 NAI:缩略图的提示词是 danbooru tag 串,拿去 ComfyUI 的
-   * SD 模型会出拼贴状碎片;而「跟随渠道当前模型」在用户把默认渠道设成 ComfyUI
-   * 时正好会踩这个坑。
-   */
-  backend?: BackendId;
-  /**
-   * 只对本次请求生效的 NAI 模型覆盖(留空 = 用渠道配置)。素材缩略图用它走
-   * `nai-diffusion-4-curated-preview` 这类不占额度的模型,免得为预览烧 Anlas。
-   */
-  naiModel?: string;
-  /**
-   * 只对本次请求生效的生图配置预设(留空 = 用渠道当前参数)。
-   *
-   * 素材库配图走这条:用户把「素材库配图」那套预设标成 forLore 之后,预览图按那套出,
-   * 不跟主出图参数走,也就不必为了配预览先把主配置改一遍。
-   */
-  genPresetId?: string;
 }
 
 /** 生成过程中的进度上报(卡片用它显示排队位置与退避进度)。 */
@@ -120,11 +102,13 @@ export interface BackendStatus {
  * ComfyUI 要按模式分别校验(custom 要工作流 JSON;simple 要模型/VAE/CLIP 选齐,
  * 与出图组装同一口径 validateSimpleConfig,避免「卡片能点、出图才报错」);NAI 要 url + key。
  */
-export function backendStatus(backend: BackendId = settings.defaultBackend): BackendStatus {
+export function backendStatus(): BackendStatus {
+  const backend = settings.defaultBackend;
+
   if (backend === 'nai') {
     const model = settings.nai.model;
     // 支持与否只看模型,与配没配齐无关:第三方要在出图前就知道该不该传 characters
-    const supportsCharacters = naiSupportsCharacterPrompts(model);
+    const supportsCharacters = naiSupportsCharacterPrompts(model) && resolveNaiCapabilities(model, capabilityOverride(activeNaiEndpoint().id)).characters;
     const base = { backend, model, supportsCharacters };
     // 地址与 key 取**当前接入点**那一份(见 effectiveNai);渠道级 nai.url/nai.key 是存量字段。
     // reason 里刻意**不带接入点名字**:它会经 getBackendStatus 原样递给第三方,而名字是用户
@@ -163,7 +147,7 @@ export function backendStatus(backend: BackendId = settings.defaultBackend): Bac
     configured: false,
     model: '',
     supportsCharacters: false,
-    reason: '出图后端未选择,请在墨影「渠道」页选择出图渠道',
+    reason: '出图后端未选择,请在柏宝绘「渠道」页选择出图渠道',
   };
 }
 
@@ -174,15 +158,9 @@ export function backendStatus(backend: BackendId = settings.defaultBackend): Bac
  * 口径:显式指定 > NAI 面板固定种子(>0)> 随机。
  * NAI 与 ComfyUI 的随机上界不同(各自协议的合法范围),故分开取。
  */
-/**
- * 决定这一张的种子。
- *
- * `fresh` 为重绘场景:面板里写死的种子在重绘时必须让位,否则每点一次「重新生成」
- * 都拿同一个 seed 求同一张图,用户会以为按钮坏了。
- */
-export function decideSeed(backend: BackendId, override?: number, fresh = false): number {
-  if (!fresh && override !== undefined && Number.isFinite(override) && override > 0) return Math.floor(override);
-  if (backend === 'nai') return !fresh && settings.nai.seed > 0 ? settings.nai.seed : naiRandomSeed();
+export function decideSeed(backend: BackendId, override?: number): number {
+  if (override !== undefined && Number.isFinite(override) && override > 0) return Math.floor(override);
+  if (backend === 'nai') return settings.nai.seed > 0 ? settings.nai.seed : naiRandomSeed();
   return randomSeed();
 }
 
@@ -200,14 +178,17 @@ export async function generateImage(
   signal?: AbortSignal,
   progress: GenerateProgress = {},
 ): Promise<GenerateOutput> {
-  const target = input.backend ?? settings.defaultBackend;
-  const status = backendStatus(target);
+  const status = backendStatus();
   // 兜底:卡片侧已用 configured 拦在按钮上,公开接口侧也会先报 not_configured。
   // 真漏到这里说明上游判据漂了,宁可明说也别发一个注定 401/404 的请求。
   if (!status.configured) throw new Error(status.reason || '出图后端未配置');
 
   const isNai = status.backend === 'nai';
   const characters = input.characters ?? [];
+  // Queue waits must not swap the model/endpoint/reference recipe underneath this job.
+  const naiSnapshot = isNai ? JSON.parse(JSON.stringify(effectiveNai())) as ReturnType<typeof effectiveNai> : null;
+  const capabilitiesSnapshot = isNai ? resolveNaiCapabilities(status.model, capabilityOverride(activeNaiEndpoint().id)) : null;
+  const referencesSnapshot = JSON.parse(JSON.stringify(input.referenceVibes ?? [])) as NaiVibe[];
   // 支持与否由后端说了算:ComfyUI 恒不支持;NAI 看模型是否 4.5/V5
   const charactersApplied = characters.length > 0 && status.supportsCharacters;
 
@@ -219,27 +200,34 @@ export async function generateImage(
 
     // 画幅锁在这里统一生效(卡片与公开接口同走本函数):只决定这一次用哪格尺寸,
     // tag 里记的方向原样不动——promptHash 吃 tag 原文,改写会让老图无辜变 stale。
-    const size = effectiveOrientation(activeOrientationLock(), input.size ?? 'portrait');
+    const size = effectiveOrientation(naiSnapshot?.orientationLock ?? activeOrientationLock(), input.size ?? 'portrait');
     let result: ComfyImageResult;
     let meta: GenerationMeta;
     if (isNai) {
-      // 单次覆盖模型:素材缩略图走 V4 试用模型(不占 Anlas),不该为此改动用户保存的渠道设置。
-      // effectiveNai() 返回的是浅拷贝,改它不会污染 settings。
-      const naiConn = effectiveNai();
-      // 预设先套、模型覆盖后套:后者是调用方最具体的意图(naiModel 明确点名就用它)。
-      const preset = input.genPresetId ? genPresetById(input.genPresetId) : null;
-      if (preset) applyPresetToNaiConn(naiConn, preset);
-      if (input.naiModel) naiConn.model = input.naiModel as typeof naiConn.model;
+      const capabilities = capabilitiesSnapshot!;
+      const configured = naiSnapshot!;
+      const references = referencesSnapshot.filter(v => v.dataPath);
+      const warnings: string[] = [];
+      if (characters.length > 1 && references.length) warnings.push('多人参考可能混合特征：已跳过人物绑定 Vibe，仅使用渠道画风参考');
+      const singleRefs = characters.length <= 1 && capabilities.vibes ? references : [];
+      if (singleRefs.length) warnings.push('人物参考使用共享 Vibe，不等同逐人物锁脸；可能与渠道画风参考混合');
+      if (!capabilities.characters && characters.length) warnings.push('当前模型/代理覆盖禁用独立人物提示，已降级');
+      if (!capabilities.vibes && (references.length || configured.vibes.some(v => v.enabled))) warnings.push('当前接入点禁用 Vibe，参考图未发送');
+      const fallback = !capabilities.characters && characters.length === 1;
+      const baseTags = input.prompt.split(',').map(t => t.trim()).filter(Boolean);
+      const characterTags = fallback ? characters[0].tag.split(',').map(t => t.trim()).filter(Boolean) : [];
+      const genderKnown = characterTags.some(t => /^1(?:boy|girl)$/i.test(t));
+      const sentPrompt = fallback ? [...new Set([...baseTags.filter(t => !(genderKnown && /^\d+(?:boys?|girls?)$/i.test(t))), ...characterTags])].join(', ') : input.prompt;
       const output = await generateNaiImage(
-        naiConn,
+        { ...configured, vibes: [...configured.vibes.filter(v => !singleRefs.some(r => r.id === v.id)), ...singleRefs.map(v => ({ ...v, enabled: true }))] },
         // characters 原样透传:不支持的模型由 buildNaiParameters 自己滤掉(同一口径
         // naiSupportsCharacterPrompts),在这儿再滤一遍只会多一处会漂的判据
-        { prompt: input.prompt, nl: input.nl ?? '', characters, seed: input.seed, size },
+        { prompt: sentPrompt, nl: fallback ? [input.nl, characters[0].nl].filter(Boolean).join(' ') : input.nl ?? '', characters, seed: input.seed, size, capabilities },
         signal,
         { onRetry: info => progress.onRetry?.({ attempt: info.attempt, max: info.max }) },
       );
       result = output.result;
-      meta = { backend: 'nai', model: status.model, ...output.usage };
+      meta = { backend: 'nai', model: status.model, ...output.usage, capabilities, warnings: [...(output.usage.warnings ?? []), ...warnings] };
     } else {
       const conn = effectiveComfyConn();
       result = await generateComfyImage(

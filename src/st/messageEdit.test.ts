@@ -12,20 +12,6 @@ function installContext(context: Record<string, unknown>): void {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('safe message editing', () => {
-  it('persists headless tags without querying DOM, emitting events or waiting on a render', async () => {
-    const message = { name: 'Char', is_user: false, is_system: false, mes: '原文' };
-    const emit = vi.fn();
-    const updateMessageBlock = vi.fn(() => new Promise(() => {}));
-    const saveChat = vi.fn(async () => {});
-    installContext({ chat: [message], getCurrentChatId: () => 'chat-a', saveChat, eventSource: { emit }, eventTypes: {}, updateMessageBlock });
-    vi.stubGlobal('document', { querySelector: () => { throw new Error('后台不得访问 DOM'); } });
-    // No active editor lookup is required for a data-only batch write.
-    await expect(applyMessageText(0, text => text + '<bbi_image>tag</bbi_image>', 'chat-a', null, message, undefined, { render: false })).resolves.toBe('saved');
-    expect(saveChat).toHaveBeenCalledOnce();
-    expect(emit).not.toHaveBeenCalled();
-    expect(updateMessageBlock).not.toHaveBeenCalled();
-  });
-
   it('updates mes and the active swipe, then emits edit/update events', async () => {
     const message = {
       name: 'Char',
@@ -55,67 +41,8 @@ describe('safe message editing', () => {
     expect(emit).toHaveBeenNthCalledWith(2, 'updated', 0);
   });
 
-  it('writes several extra keys in one save', async () => {
+  it('builds on the current text so another plugin\'s edit survives the write', async () => {
     const message = {
-      name: 'Char',
-      is_user: false,
-      is_system: false,
-      mes: '原文',
-      swipes: ['原文'],
-      swipe_id: 0,
-      extra: { keep: true },
-    };
-    const saveChat = vi.fn(async () => undefined);
-    installContext({
-      chat: [message],
-      getCurrentChatId: () => 'chat-a',
-      saveChat,
-      eventSource: {},
-      eventTypes: {},
-    });
-
-    await expect(
-      applyMessageText(0, () => '新正文', 'chat-a', 0, undefined, [
-        { key: 'bbiCharChanges', value: { v: 1 } },
-        { key: 'bbiOutfitState', value: { v: 1 } },
-      ]),
-    ).resolves.toBe('saved');
-    // 一次 saveChat 同时落两笔:中途失败不会留下只写了一半的楼层
-    expect(saveChat).toHaveBeenCalledOnce();
-    expect(message.extra).toEqual({ keep: true, bbiCharChanges: { v: 1 }, bbiOutfitState: { v: 1 } });
-  });
-
-  it('rolls back both extra keys when saving fails', async () => {
-    const message = {
-      name: 'Char',
-      is_user: false,
-      is_system: false,
-      mes: '原文',
-      swipes: ['原文'],
-      swipe_id: 0,
-      extra: { keep: true },
-    };
-    installContext({
-      chat: [message],
-      getCurrentChatId: () => 'chat-a',
-      saveChat: vi.fn(async () => {
-        throw new Error('save failed');
-      }),
-      eventSource: {},
-      eventTypes: {},
-    });
-
-    await expect(
-      applyMessageText(0, () => '新正文', 'chat-a', 0, undefined, [
-        { key: 'bbiCharChanges', value: { v: 1 } },
-        { key: 'bbiOutfitState', value: { v: 1 } },
-      ]),
-    ).rejects.toThrow('save failed');
-    expect(message.mes).toBe('原文');
-    expect(message.extra).toEqual({ keep: true });
-  });
-
-  it('builds on the current text so another plugin\'s edit survives the write', async () => {    const message = {
       name: 'Char',
       is_user: false,
       is_system: false,

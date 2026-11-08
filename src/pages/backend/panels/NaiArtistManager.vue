@@ -2,20 +2,13 @@
 import { computed, ref, watch } from 'vue';
 import { matchArtist, planArtistRemoval } from '@/backends/naiArtistLib';
 import { BUILTIN_NAI_ARTISTS } from '@/backends/nai';
-import BbiSelect from '@/components/BbiSelect.vue';
 import BbiTextarea from '@/components/BbiTextarea.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
 import { makeJpegThumbnail, readFileAsDataUrl } from '@/st/imageFile';
 import { ARTIST_PREVIEW_FOLDER, deleteUserImage, uploadUserImage } from '@/st/images';
-import {
-  bindArtistGenPreset,
-  genPresetById,
-  presetForArtist,
-  selectArtistWithPreset,
-} from '@/state/genPresets';
-import { NAI_MODELS, newNaiArtist, settings, type NaiArtistPreset } from '@/state/settings';
+import { newNaiArtist, settings, type NaiArtistPreset } from '@/state/settings';
 
 /**
  * 画师串库管理器(NAI 面板「管理」按钮唤起)。
@@ -27,7 +20,7 @@ import { NAI_MODELS, newNaiArtist, settings, type NaiArtistPreset } from '@/stat
  * - 点卡片主体 = 启用该条(再点当前条 = 停用,回「不使用」);
  * - 左上角勾选框 = 管理态多选,只服务于批量删除,与启用状态无关;
  * - 内置条(bi_*)随插件版本更新,只读:无勾选框、不可删改,「复制」是唯一自定义入口;
- * - 预览图上传后压成最长边 512 的 jpeg,落 user/images/墨影_画师串/<条目id>.jpg,
+ * - 预览图上传后压成最长边 512 的 jpeg,落 user/images/柏宝绘_画师串/<条目id>.jpg,
  *   路径记在条目 previewPath 上,不维护额外索引;换图同名覆盖,删条目时连带删文件。
  */
 
@@ -80,35 +73,10 @@ const allFilteredSelected = computed(
 
 const activeId = computed(() => settings.nai.activeArtistId);
 
-/** 点卡片:启用;再点当前条:停用(回「不使用」,是有意义的存储值),并自动联动配套参数预设。 */
+/** 点卡片:启用;再点当前条:停用(回「不使用」,是有意义的存储值)。 */
 function toggleActive(item: ManagerItem) {
-  const nextId = item.preset.id === activeId.value ? '' : item.preset.id;
-  const linked = selectArtistWithPreset(nextId);
-  if (nextId && linked) {
-    const modelLabel = NAI_MODELS.find(m => m.value === linked.model)?.label ?? linked.model;
-    toastr.info(`已同步切换到参数预设「${linked.name}」（${modelLabel}）`, '画师串联动');
-  }
+  settings.nai.activeArtistId = item.preset.id === activeId.value ? '' : item.preset.id;
 }
-
-function presetBadgeLabel(preset: NaiArtistPreset): string {
-  const target = presetForArtist(preset.id);
-  if (!target) return '';
-  const is45 = target.model.includes('4-5');
-  return `${target.name} · ${is45 ? '4.5' : 'V5'}`;
-}
-
-const artistGenPresetOptions = computed(() => [
-  { value: '', label: '不固定（保持当前参数 / 按名称自动识别 4.5 与 V5）' },
-  ...settings.genPresets
-    .filter(preset => !preset.forLore)
-    .map(preset => {
-      const modelLabel = NAI_MODELS.find(m => m.value === preset.model)?.label ?? preset.model;
-      return {
-        value: preset.id,
-        label: `${preset.name}（${modelLabel} · ${preset.steps}步 · Scale ${preset.scale}）`,
-      };
-    }),
-]);
 
 function toggleSelect(id: string) {
   const next = new Set(selected.value);
@@ -146,7 +114,6 @@ function duplicate(item: ManagerItem) {
     prompt: src.prompt,
     quality: src.quality,
     negative: src.negative,
-    genPresetId: src.genPresetId,
   };
   settings.nai.artistPresets.push(preset);
   toastr.success(`已复制为「${preset.name}」`, '画师串');
@@ -269,16 +236,11 @@ async function confirmDelete() {
 const editItem = ref<ManagerItem | null>(null);
 const editName = ref('');
 const editPrompt = ref('');
-const editGenPresetId = ref('');
 
 function openEdit(item: ManagerItem) {
   editItem.value = item;
   editName.value = item.preset.name;
   editPrompt.value = item.preset.prompt;
-  const direct = item.preset.genPresetId && genPresetById(item.preset.genPresetId)
-    ? item.preset.genPresetId
-    : '';
-  editGenPresetId.value = direct;
 }
 
 function closeEdit() {
@@ -290,7 +252,6 @@ function saveEdit() {
   if (!item || item.builtin) return; // 内置只读(按钮已隐藏,双保险)
   item.preset.name = editName.value.trim();
   item.preset.prompt = editPrompt.value;
-  bindArtistGenPreset(item.preset.id, editGenPresetId.value);
   closeEdit();
 }
 
@@ -432,9 +393,6 @@ function duplicateFromEdit() {
               <div class="am-prompt" :title="item.preset.prompt">
                 {{ item.preset.prompt || '(空)' }}
               </div>
-              <div v-if="presetBadgeLabel(item.preset)" class="am-preset-tag">
-                {{ presetBadgeLabel(item.preset) }}
-              </div>
               <div class="am-ops" @click.stop>
                 <button
                   class="am-op"
@@ -563,16 +521,6 @@ function duplicateFromEdit() {
           mono
           :readonly="editItem.builtin"
           placeholder="artist:xxx, artist:yyy"
-        />
-      </div>
-
-      <div class="bbi-modal-field">
-        <span class="bbi-modal-label">配套默认参数(切换画师串时自动切换模型与采样参数)</span>
-        <BbiSelect
-          v-model="editGenPresetId"
-          :options="artistGenPresetOptions"
-          :disabled="editItem.builtin"
-          aria-label="配套默认参数预设"
         />
       </div>
 
@@ -856,19 +804,6 @@ function duplicateFromEdit() {
   overflow: hidden;
   overflow-wrap: anywhere;
   min-height: 2.9em;
-}
-.am-preset-tag {
-  align-self: flex-start;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 1px 7px;
-  border-radius: var(--bbi-radius-pill);
-  background: var(--bbi-accent-soft);
-  color: var(--bbi-accent);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .am-ops {

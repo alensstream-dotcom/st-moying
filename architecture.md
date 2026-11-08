@@ -1,5 +1,7 @@
 # ST-BaiBai-Image(柏宝绘)架构说明
 
+> 0.4.0 增补：人物/穿搭现由 `sceneState.ts` / `sceneStore.ts` 按事件和版本回放，`sceneCompiler.ts` 编译；`visualTypes.ts` / `visualDesign.ts` / `visualLibrary.ts` 提供世界档案和素材版本绑定，`VisualStudio.vue` 与 `visualActions.ts` 提供界面及实际预览/应用，`capabilities.ts` 处理 NAI 接入点降级与预算。详细调用链、兼容键、测试和限制见 [REFACTOR-NOTES.md](./REFACTOR-NOTES.md)。下文保留原架构说明供定位；涉及“只让 LLM 照抄”“仅 swipe 校验”“UI 无测试”等旧描述，以增补说明和当前源码为准。
+
 > 给新聊天的 AI 快速定位代码用。先读本文,再按「任务定位索引」找文件;深入设计取舍见
 > `DESIGN.md`(总设计草案)、`GALLERY-STORAGE-DESIGN.md`(图库/画师串预览图存储)与
 > `NAI-PRESET-DESIGN.md`(NAI 预设化方案,待定稿)。
@@ -56,22 +58,7 @@ src/
 │   ├── bookMemory.ts  # 读「柏宝书」全局 API,解析成角色参考块
 │   ├── charAnchors.ts # 角色库:库文本注入 → 兜底替换残留 @占位符(AI 照抄字段值,不用占位符)
 │   ├── rebase.ts      # 插入位置重定位:请求时正文 → 落盘时正文(文本 LCS 骨架 + 顺延)
-│   ├── slotPlan.ts    # 单槽重写提示备注(只重写第 N 张 + 当前提示词锚点 + 其余画面清单)
-│   ├── shotGuide.ts   # 景别判据:正文点名部位 → 该离多近(推荐档/诊断过远/重试话术)
-│   ├── outfitState.ts # 服装账本:每人衣着与穿脱程度落 message.extra,跨楼继承 + 跳变诊断
-│   ├── castCheck.ts   # 画面事实闭环:人数对不上正文、道具没有落点(重试不再放行)
-│   ├── blockGuard.ts  # 渠道拦截:形态判定 + 兼容版降载重试(过滤不认授权话术,只认文本)
-│   ├── salvage.ts     # 半截 JSON 抢救:从后往前找可闭合处补括号,先保已写完的图再谈重试
-│   └── charReuse.ts   # 正文外形与已建档角色逐维对上 → 点名「这段就是她」,别重复建档
-├── data/              # 素材库(内置条目 + 召回打分;条目形状见 loreTypes.ts)
-│   ├── loreTypes.ts   # 条目契约:服装/姿势/脸型/体型/同人/自定义
-│   ├── loreIndex.ts   # 招式正文匹配 → 打分 → 分类限流 → 渲染成候选块(rollSeed 同分摇号)
-│   ├── loreMatch.ts   # 别名命中打分(命中词越长分越高 + quality)
-│   ├── lookMatch.ts   # 外形相似度:八维抽值比对 → 判定「就是这个人」直接复用
-│   ├── wardrobe*.ts   # 服装库(基础/补充/职场;条目带廓形差异,避免同职业撞衫)
-│   ├── pose*.ts       # 姿势库
-│   ├── faceBank.ts / faceExtra.ts   # 脸型 / 体型骨相指纹(同人条目也在这两个文件的 FANDOM_* 段)
-│   ├── fandomExtra2.ts              # 同人骨相扩容:韩漫/新番/新游女角,`character name (copyright name)` 权重串,tag 取自 animadex
+│   └── slotPlan.ts    # 单槽重写提示备注(只重写第 N 张 + 当前提示词锚点 + 其余画面清单)
 ├── backends/          # 出图后端(链路 B 的生成端)+ 共享尺寸工具
 │   ├── comfyui.ts     # ComfyUI:工作流模板 %占位符% 渲染、浏览器直连/ST 转发自动回退
 │   ├── comfyTemplates.ts # 简易模式:模板族(checkpoint/flux/anima) + 参数组装 API JSON(无占位符)
@@ -244,19 +231,7 @@ runForFloor(floor, opts)
      追加状态栏、改写八股句)全部保留,tag 重定位后照常注入。仅当当前正文清洗后一条叙事行
      都不剩、或写回前发现已存在 bbi_image 时才放弃(build-failed)。
      成功才 recomputeCharTags;失败撤销标记;仅 changes 无图片也走写回。
-     **extraUpdate 收数组**:一次落盘同时写角色增量(bbiCharChanges)与服装账本(bbiOutfitState),
-     分两次 saveChat 会在中途失败时留下只写了一半的楼层。单槽重写不改这两笔,不传 extraUpdate。
 ```
-
-**重试链的判据分工(validate 内,顺序即优先级)**:截断 → 协议解析 → 建档 nl → 景别过远 →
-画面事实不符(人数 / 道具落点) → 服装状态跳变 → 构图缺项。前几档是「画错了」,最后一档才是
-「画平了」,所以缺项排在最后、也允许在没重试次数时放行(交一张平庸图好过整楼不生)。
-- 人数与道具落点是**可判定**的确定错,不是审美:正文写了几个人、道具在谁身上动,和 tag 里的
-  人数与接触词对不上就是错。漏人尤其致命——两个男的一个女的只剩一个男的,肉棒就只能长在一个人身上。
-  男性不建档、数不了名字,故只认明确指向第二个男性的词;「两只手」这种弱信号只在已有 1boy 时
-  才提醒确认(女主自己撑床也是两只手,单人会误报)。
-- 服装状态只查两种确定错:账本半脱而画面写成全裸、账本已脱而又穿回整身。挑哪套衣服是规则 10
-  的事,不在这一层判。
 
 消息顺序(prompt.ts 固定):破限 system → 角色卡 system → persona system → 世界书 system →
 后端规范 system(ComfyUI/NAI 内置 spec,`{{nl}}` 宏与 `{{#nl}}`/`{{^nl}}` 条件段按「生成自然语言」开关展开)→ 固定协议
@@ -277,23 +252,6 @@ runForFloor(floor, opts)
 
 全部可编辑提示词(破限/规范/思维链)在 `state/settings.ts` 有内置默认常量
 (`DEFAULT_*_PROMPT`/`DEFAULT_*_SPEC`),留空回落默认 —— 改默认提示词内容先看这里。
-
-**破限 = 档位文本 + `prompts.jailbreak` 附加词**(`resolveJailbreakText(prompts, tierId)`,档位在前、
-附加词包进 `<operator_addendum>`;off 档只发附加词;留空回落 `DEFAULT_JAILBREAK_PROMPT`)。
-⚠ 历史坑:0.4.0 曾改成「只发档位文本」并下线 UI 入口,把用户自调的破限整段静默吃掉、
-`DEFAULT_JAILBREAK_PROMPT` 也变成没人引用的死常量;0.1.15 恢复叠加并补回 UI。
-
-**破限挡位只管这条副 API 请求,不进正文生成**(正文由 ST 主 API 出,插件塞不进任何提示词)。
-而渠道的内容过滤查的是请求与响应**文本**、不认授权话术,越露骨越容易被整条掐掉。所以
-`autoTag/blockGuard.ts` 做三件事:`diagnoseBlock` 把 `finish_reason=content_filter`、空回复、
-一段「抱歉,这段内容…」的客气话单独定性成「被渠道内容过滤拦下」(不再混进解析失败);
-命中后 runner 置 `blockedOnce`,后续重发改发 `neutralizeMessages` 处理过的兼容版(露骨示例词换成
-中性占位)+ `BLOCK_RETRY_NOTE`(压到最小结构);平时则在协议与思考清单里要求用英文 tag 短词描述
-身体与接触,少写中文长句——中文露骨长句是流式输出最先被斩断的地方。
-
-⚠ 拦截判定的形态优先:`content_filter` > 空内容 > 拒答散文,**任何一条出现花括号就交回解析器**
-(已经开始写 JSON 就属于协议问题,不是拦截问题)。这个先判顺序是必要的——截断要压输出、
-拦截要把请求改淡,判错方向会让重试打在错的地方。
 
 ⚠ **设置页只暴露两对规范/思维链:ComfyUI 与 NAI**,后者存在 `naiV5Spec` / `naiV5Thinking`
 (键名带 V5 是历史命名,内容对 4.5 同样适用,面板标签已改成不提代数的「NAI 规范/思维链」)。
@@ -655,27 +613,6 @@ genState 同构(chatId|messageId|swipeId|seq),重建后按 key 认领。手动�
 
 ## 7. 状态与持久化
 
-- **素材库注入(lore)**:`settings.autoTag.lore`。服装/姿势/人物外貌三类候选按正文命中注入,
-  条数由 `wardrobeLimit` / `poseLimit` / `faceLimit` 控制,`faces` 总开关。
-  - 召回是**纯本地渲染**:loreMatch 按别名命中打分(命中词越长分越高 + quality),
-    loreIndex 再按分类配额截断,同分用 `rollSeed` 摇号(`tieBreaker` 的 FNV 哈希;
-    种子 = 身份文本 hash,故同一楼稳定、换楼换一批)——不摇号的话同一句「事业女」永远
-    召回同一批条目,读者看到的就是「所有事业女穿同一件」。
-  - 人物外貌块**同人优先**:正文点名作品/角色(非泛词)时该条 +100 分排最前并给到 4 条,
-    只用发色瞳色擦边时只给弱分 3/词、只给 2 条;剩余配额给脸型体型。`GENERIC_ALIASES`
-    (长发/精灵/人妻…)不算点名。
-  - **外形重合直接复用(pinned)**:`data/lookMatch.ts` 按八个维度(发色/发长/发型/瞳色/瞳型/
-    体格/种族/印记)双向抽值比对,中英词表归一到同一规范值。命中 ≥3 维且零冲突时判「就是这个人」,
-    该条 +200+10×命中维数 压到第一位并标 `pinned`,渲染成「外形重合:发色、瞳色…|照抄」,
-    块头另加一段「不要再自己编脸」。只对上两维不算(会塞进不相干的脸);任一同维值撞车直接不认
-    (银发 vs 黑发是两个人)。阈值见 `LOOK_PIN_MIN_DIMENSIONS`。
-  - **已建档角色同样复用**:`autoTag/charReuse.ts` 拿同一套维度比对档案的 hair/eyes/body/extra/skin
-    (不含 outfit),达标且命中维度里含发色或瞳色才认,渲染成 `【本段正文已对上的建档角色】` 块,
-    要求照抄档案、不要重复 `field:"new"`,只有正文写明改动时走 `set`。该块由 runner 在请求前算好、
-    由 prompt.ts 放在外貌库之后候选之前(模型先知道「这段就是她」再读候选)。
-  - `faces` 的默认值与存量迁移:新版默认开;判据是「配置里没有 `faceLimit`」——缺它即升级前
-    配置,normalize 强制开一次。用户之后手动关会同时写下 `faceLimit`,不再被顶回。
-    (`settings.loreFacesMigration.test.ts` 锁住)
 - **settings(全局,跨设备)**:`state/settings.ts`。import 阶段以默认值建 reactive;
   ST 就绪后 `hydrateSettings()` 从 `extension_settings['baibai_image']` 载入
   (**normalize 逐字段容错 + 存量迁移**,如 resolution→横竖两格、webui 隐藏迁移);
@@ -843,27 +780,15 @@ genState 同构(chatId|messageId|swipeId|seq),重建后按 key 认领。手动�
   - **AI 楼层增量**:自动建档与 changes 写进目标消息 `extra['bbiCharChanges']`
     (CharTagFloorDelta: v/swipe/ops;op 分 new/set 两种),与正文同一 CAS 写回成功才落盘,
     楼层/swipe 删除时自然失效(增量带 swipe 匹配)。
-  - **服装账本(楼层事实,与角色库并列而不是角色库的一部分)**:`extra['bbiOutfitState']`
-    (OutfitFloorState: v/swipe/entries[{name,garment,wear,state}]),由 autoTag/outfitState.ts 读写成对。
-    每楼落盘时按本楼**实际写出的画面**冻结,下一楼开跑前 `latestOutfitStates` 从旧到新合并注入
-    【服装现状】。为什么不在角色库里:角色库的 outfit 是「她的衣橱/常态」,这里是「这场戏此刻穿到哪」,
-    半脱是逐楼变化的临时事实,写进档案会把长期设定污染掉。合并规则是后写覆盖、没提到的人保留——
-    她不会因为这一楼没被提及就自动穿回去。garment 的词取自服装库 tag 词表(纯颜色词黑名单掉),
-    不做自由文本抽取,发色体型表情混不进来。
-    swipe 不匹配或版本号不对的账本直接跳过,保证换 swipe 不会读到上一页的穿脱进度。
   - `charTagLib` 只是响应式派生缓存:合并种子(本聊天优先,全局补同名空缺,
     mergeCharTagSeed)+ 按楼层物理顺序重放增量(deriveCharTags,带锁定名过滤);
     `charTagsBeforeFloor(floor)` 取楼层时刻快照;MESSAGE_DELETED/MESSAGE_SWIPED 后重算。
   - 手动编辑/删除 = 用户接管:detachFromExistingFloors 清掉该角色在旧楼层里的同名操作
     (压进手动基线),之后新楼层仍可继续被 AI 变更。
   - 建档与后续维护都归主请求(changes 的 field="new"/字段更新),与选图同属一次推理;
-    外貌按字段(fandom/sex/age/hair/eyes/skin/body/extra/outfit)记录,拼接顺序即最终 tag,
+    外貌按字段(fandom/sex/hair/eyes/skin/body/extra/outfit)记录,拼接顺序即最终 tag,
     fandom(同人身份 tag,character name (copyright name))拼在首位;旧整串以 raw 兼容。
     建档必须带 hair 与 eyes(二次元身份锚点),缺任一项该条丢弃。
-    age 是四档规范词(child/teenager/young adult/mature female,normalizeCharAge 归一;老妇/老婆婆一律并入 mature female),
-    必须配骨架伴生词(charAgeBuild,写进 body/extra)——只写一个年龄词压不住画风,
-    四个年龄段会画成同一个年纪;age 与 body 分工是「骨架/身高」对「胸腰臀粗细」,互不污染。
-    年龄永久变化报 changes 的 field:"age" 并同时改 body 骨架词。
     同人身份 tag 必须写进档案:判定为同人的角色,field:"new" 建档时写 fields.fandom;
     已建档但缺 fandom 的用 field:"fandom" 的 changes 补档;画图时从档案照抄放首位。
     原创角色不写 fandom。ComfyUI 侧不照抄 fandom(括号转义规则不同,身份 tag 仍按
@@ -999,16 +924,6 @@ API 对象 `Object.freeze`,一个插件改不动下一个插件拿到的东西�
 | LLM 输出协议(JSON 形状/位置 ID/tag 格式) | src/autoTag/protocol.ts |
 | 世界书/角色卡/persona 装配 | src/autoTag/context.ts |
 | 柏宝书状态读取 | src/autoTag/bookMemory.ts |
-| 素材库(服装/姿势/脸型/体型/同人)召回打分与配额 | src/data/loreIndex.ts + loreMatch.ts + loreTypes.ts(条目本体在同目录 wardrobe*/pose*/face*/fandom*;**新增条目先看 loreTypes 的 tags/aliases 约定**,泛词别当 aliases) |
-| 同人骨相扩容表(近十年作品,身份 tag 口径由测试锁住) | src/data/fandomExtra2.ts(**只做定点 edit,整文件重写会覆盖掉 trigger 返修**;版权名取 franchise 原词,撇号条目用双引号包 tags) |
-| 素材条目同分摇号(同楼稳定/换楼换一批) | src/data/loreIndex.ts 的 `tieBreaker` / `rollSeed`,种子由 runner.ts 按身份文本 hash 传入 |
-| 外形重合直接复用(库内骨相 pinned / 已建档角色认人) | src/data/lookMatch.ts(八维词表 + 判据),召回接在 loreIndex.ts,档案侧在 autoTag/charReuse.ts,注入在 prompt.ts 的 charReuseBlock |
-| 景别远近判据(部位 → 该多近 / 过远诊断 / 重试话术) | src/autoTag/shotGuide.ts(POINT_RULES),诊断接在 runner.ts validate,文案在 prompt.ts 规则 12/12b |
-| 画面事实闭环(人数对不上正文 / 道具没有落点 → 重试) | src/autoTag/castCheck.ts(diagnoseCast + diagnosePropTarget),诊断接在 runner.ts validate,文案在 prompt.ts 规则 6b/6c/17 |
-| 服装跨楼账本(衣着 + 穿脱程度继承,跳变即重试) | src/autoTag/outfitState.ts,写回走 messageEdit.applyMessageText 的 extraUpdate 数组(runner 每次落盘同时写角色增量与账本),注入在 prompt.ts 的 outfitStateBlock |
-| 多人入画取舍(施受双方/接触点/道具落点必须进画面,可省项) | src/autoTag/prompt.ts 规则 6b + 6c,人数口径在规则 17 |
-| 渠道内容过滤(命中即定性 + 兼容版降载重试) | src/autoTag/blockGuard.ts(diagnoseBlock + neutralizeMessages + BLOCK_RETRY_NOTE),接入 runner.ts 的 validate 与 catch,blockedOnce 置位后所有重试走中性化提示词 |
-| 输出被截断(先抢救已写完的图,再砍图数重试) | src/autoTag/salvage.ts(salvageJsonObject,从后往前找可闭合位置)+ src/autoTag/truncation.ts(truncationRetryNote 按图数降载),接在 runner.ts validate 的截断分支 |
 | 角色库 v3(基线+楼层增量/changes ops/@占位符兜底/历史回滚) | src/autoTag/charAnchors.ts + src/state/charTags.ts + src/autoTag/runner.ts |
 | Vibe 分组 / 搜索 / 启用集合判定 | src/backends/vibeGroups.ts(纯逻辑)+ NaiPanel.vue(交互) |
 | 副 API 请求(代理/SSE/超时/测试) | src/api/client.ts |

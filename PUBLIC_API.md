@@ -77,7 +77,6 @@ for (const character of list.characters) {
       fields: {
         fandom: "",     // 同人身份
         sex: "1girl",
-        age: "young adult",  // 年龄段（四档规范词，可带岁数）
         hair: "short silver hair",
         eyes: "blue eyes",
         skin: "pale skin",
@@ -94,11 +93,7 @@ for (const character of list.characters) {
 }
 ```
 
-`tag` 是按固定顺序（同人身份→性别→年龄段→头发→眼睛→肤色→体型→标志特征→着装）拼好的，与柏宝绘自己出图用的串**完全一致**。不建议自己从 `fields` 拼——老条目可能只有整串原文，那条回落逻辑在 `tag` 里已经处理过了。
-
-`fields.age` 是新增字段（结构只增不改，`apiVersion` 不变）：四档规范词
-`child` / `teenager` / `young adult` / `mature female`，可能带岁数；老妇、老婆婆一类写法归一到 `mature female`。
-**老条目没有这个字段，值为空串**——要按年龄出图时别把它当必填，空串就按 `tag` 里原有的描述走。
+`tag` 是按固定顺序（同人身份→性别→头发→眼睛→肤色→体型→标志特征→着装）拼好的，与柏宝绘自己出图用的串**完全一致**。不建议自己从 `fields` 拼——老条目可能只有整串原文，那条回落逻辑在 `tag` 里已经处理过了。
 
 ### 读历史某一楼的角色档案
 

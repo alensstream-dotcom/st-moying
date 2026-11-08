@@ -168,6 +168,27 @@ describe('decideSeed', () => {
 });
 
 describe('generateImage', () => {
+  it('keeps the model and connection snapshot stable while the NAI queue is waiting', async () => {
+    naiReady();
+    vi.mocked(acquireNaiSlot).mockImplementationOnce(async () => {
+      settings.nai.model = 'nai-diffusion-3'; activeNaiEndpoint().key = 'changed-during-queue';
+      return () => {};
+    });
+    const out = await generateImage({ prompt: 'scene', seed: 1 });
+    expect(vi.mocked(generateNaiImage).mock.calls.at(-1)?.[0].model).toBe('nai-diffusion-4-5-full');
+    expect(vi.mocked(generateNaiImage).mock.calls.at(-1)?.[0].key).toBe('k');
+    expect(out.meta.model).toBe('nai-diffusion-4-5-full');
+  });
+  it('uses a single bound Vibe only for a single character and reports multi-person fallback', async () => {
+    naiReady();
+    const reference = { id: 'bound-vibe', name: '定妆参考', dataPath: '/user/files/ref.json', thumbnailPath: '', modelKeys: [], hasImage: true, fingerprint: '', strength: 0.6, enabled: false, group: '' };
+    const single = await generateImage({ prompt: 'scene', seed: 1, characters: [{ name: '小雪', tag: 'black hair', nl: '' }], referenceVibes: [reference] });
+    expect(vi.mocked(generateNaiImage).mock.calls.at(-1)?.[0].vibes.find(v => v.id === reference.id)?.enabled).toBe(true);
+    expect(single.meta.warnings?.join()).toContain('不等同逐人物锁脸');
+    const multi = await generateImage({ prompt: 'scene', seed: 2, characters: [{ name: '小雪', tag: 'black hair', nl: '' }, { name: '小雨', tag: 'red hair', nl: '' }], referenceVibes: [reference] });
+    expect(vi.mocked(generateNaiImage).mock.calls.at(-1)?.[0].vibes.some(v => v.id === reference.id)).toBe(false);
+    expect(multi.meta.warnings?.join()).toContain('跳过人物绑定');
+  });
   it('holds a NAI gate slot and always releases it — even when the request throws', async () => {
     naiReady();
     const release = vi.fn();
@@ -195,6 +216,7 @@ describe('generateImage', () => {
     await generateImage({ prompt: 'x', characters, seed: 5, size: 'landscape' });
     expect(vi.mocked(generateNaiImage).mock.calls[0][1]).toEqual({
       prompt: 'x', nl: '', characters, seed: 5, size: 'landscape',
+      capabilities: { characters: true, vibes: true, referenceMode: 'shared-vibe-only', maxPromptChars: 0, source: '模型协议 + 接入点用户覆盖；代理能力未自动验证' },
     });
   });
 
@@ -305,6 +327,8 @@ describe('generateImage', () => {
     expect(out.meta).toEqual({
       backend: 'nai',
       model: 'nai-diffusion-4-5-full',
+      capabilities: { characters: true, vibes: true, referenceMode: 'shared-vibe-only', maxPromptChars: 0, source: '模型协议 + 接入点用户覆盖；代理能力未自动验证' },
+      warnings: [],
       positive: 'artist:wlop, 1girl, masterpiece',
       negative: 'lowres',
       width: 832,

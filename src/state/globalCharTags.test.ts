@@ -70,7 +70,7 @@ describe('global char tag store', () => {
     expect(globalTags.globalCharTagLib.entries[0].history).toEqual([]);
     // 派生库(本聊天为空时)直接含全局条目
     expect(charTags.charTagLib.entries.map(e => e.name)).toEqual(['玩家']);
-    const stored = ctx.extensionSettings['moying_image_char_global'] as {
+    const stored = ctx.extensionSettings['baibai_image_char_global'] as {
       schemaVersion: number;
       entries: Array<{ name: string; history: unknown[] }>;
     };
@@ -99,7 +99,7 @@ describe('global char tag store', () => {
   });
 
   it('init 时领养 extensionSettings 里已有的全局库', async () => {
-    ctx.extensionSettings['moying_image_char_global'] = {
+    ctx.extensionSettings['baibai_image_char_global'] = {
       schemaVersion: 1,
       revision: 3,
       entries: [makeEntry('老玩家', { sex: '1girl' })],

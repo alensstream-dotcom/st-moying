@@ -26,7 +26,7 @@ function flush(): void {
     try {
       listener();
     } catch (error) {
-      console.error('[墨影] #chat 变更回调异常', error);
+      console.error('[柏宝绘] #chat 变更回调异常', error);
     }
   }
 }
@@ -43,11 +43,7 @@ export function ensureChatObserver(): boolean {
   observer = new MutationObserver(() => {
     if (scheduled) return;
     scheduled = true;
-    if (typeof document !== 'undefined' && (document.hidden || document.visibilityState === 'hidden')) {
-      setTimeout(flush, 16);
-    } else {
-      requestAnimationFrame(flush);
-    }
+    requestAnimationFrame(flush);
   });
   // 只要 childList+subtree:属性变更(/hide 翻 is_system、我们自己给锚点写 data-theme
   // 与内联样式)一律不进来。后者尤其关键——观察 attributes 会让自愈写属性的动作

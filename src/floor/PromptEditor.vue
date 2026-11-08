@@ -256,7 +256,7 @@ onBeforeUnmount(() => {
           :title="
             configured
               ? '让 AI 重读本楼正文，把这一张的提示词重写一遍'
-              : '请先在墨影「渠道」页完成配置'
+              : '请先在柏宝绘「渠道」页完成配置'
           "
           @click="rewrite"
         >
@@ -406,7 +406,7 @@ onBeforeUnmount(() => {
           class="bbi-btn bbi-btn-primary"
           type="button"
           :disabled="!canApply || !configured"
-          :title="configured ? '保存提示词并立即出图' : '请先在墨影「渠道」页完成配置'"
+          :title="configured ? '保存提示词并立即出图' : '请先在柏宝绘「渠道」页完成配置'"
           @click="apply(true)"
         >
           <Icon name="palette" /> 应用并重新生成

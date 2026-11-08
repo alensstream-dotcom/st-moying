@@ -1,5 +1,6 @@
 import { getContext, type STMessage } from '@/st/context';
 import { reactive } from 'vue';
+import { stateHash, transcriptRevisions, type SceneDelta } from '@/state/sceneState';
 
 /**
  * 角色固定外貌库。
@@ -13,21 +14,11 @@ import { reactive } from 'vue';
  * charTagLib 只是响应式派生缓存:合并基线(本聊天优先,全局补同名空缺) + 按楼层物理顺序重放自动变化。
  */
 
-export type CharTagField =
-  | 'fandom'
-  | 'sex'
-  | 'age'
-  | 'hair'
-  | 'eyes'
-  | 'skin'
-  | 'body'
-  | 'extra'
-  | 'outfit';
+export type CharTagField = 'fandom' | 'sex' | 'hair' | 'eyes' | 'skin' | 'body' | 'extra' | 'outfit';
 
 export const CHAR_TAG_FIELDS: readonly CharTagField[] = [
   'fandom',
   'sex',
-  'age',
   'hair',
   'eyes',
   'skin',
@@ -39,7 +30,6 @@ export const CHAR_TAG_FIELDS: readonly CharTagField[] = [
 export const CHAR_TAG_FIELD_LABELS: Record<CharTagField, string> = {
   fandom: '同人身份 tag',
   sex: '性别',
-  age: '年龄段',
   hair: '头发',
   eyes: '眼睛',
   skin: '肤色',
@@ -47,93 +37,6 @@ export const CHAR_TAG_FIELD_LABELS: Record<CharTagField, string> = {
   extra: '标志特征',
   outfit: '固定着装',
 };
-
-/**
- * 年龄段规范词。
- *
- * 为什么单独一档 age 而不是揉进 body:没有 age 时,「刚工作的大学生 / 熟女 / 高中生 / 小女孩」
- * 四个角色在档案里的唯一身体差异只剩 body 一句,模型每张图重新猜一次,于是四个年龄段
- * 会画成同一个年龄——这正是用户的原始抱怨。age 入库后跟着档案逐张照抄,年龄才锚得住。
- *
- * 词表只用 danbooru 真有的词,并各配一组「画面可分辨」的伴生骨架词:
- * 单写一个年龄词不足以改画风,必须同时把身高/骨架/胸部体量一起推到该年龄段。
- *
- * 只有四档:老的写法(old/老婆婆/奶奶)一律并进 mature female——成图里 40 岁与 60 岁
- * 本来就分不清,多开一档反而让模型在「熟女」与「old」之间摇摆,画出忽老忽少。
- */
-export interface CharAgeBand {
-  tag: string;
-  /** 中文说法,供归一化与 UI 提示。 */
-  labels: string[];
-  /** 与该年龄段配套的骨架词(建档时补进 body/extra,避免只改一个字)。 */
-  build: string;
-}
-
-export const CHAR_AGE_BANDS: readonly CharAgeBand[] = [
-  {
-    tag: 'child',
-    labels: ['child', '小女孩', '儿童', '幼女', '萝莉', '小学生', 'loli'],
-    build: 'child, loli, short stature, small frame, flat chest',
-  },
-  {
-    tag: 'teenager',
-    labels: ['teenager', '高中生', '中学生', '少女', '女高中生', 'jk', 'teen'],
-    build: 'teenager, youthful, slim figure, medium breasts',
-  },
-  {
-    tag: 'young adult',
-    labels: ['young adult', '大学生', '刚工作', '年轻女性', '二十多岁', 'young woman', 'adult'],
-    build: 'young adult, slim figure, medium breasts',
-  },
-  {
-    tag: 'mature female',
-    // old / 老婆婆 这些写法也并进这一档:用户不想看到老女人,四档之外不另开档。
-    labels: [
-      'mature female',
-      '熟女',
-      '人妻',
-      '三十多岁',
-      '四十岁',
-      'mature',
-      'milf',
-      '少妇',
-      'old',
-      '老年',
-      '老妇',
-      '奶奶',
-      '老婆婆',
-      'elderly',
-      'old woman',
-    ],
-    build: 'mature female, mature face, voluptuous, wide hips',
-  },
-];
-
-/** 反查:一个年龄段词对应的骨架伴生词(不在词表里返回空串)。 */
-export function charAgeBuild(tag: string): string {
-  const needle = tag.trim().toLowerCase();
-  if (!needle) return '';
-  return CHAR_AGE_BANDS.find(band => needle.includes(band.tag))?.build ?? '';
-}
-
-const AGE_NOISE = /[，,、;；/]+/g;
-
-/**
- * 把模型/用户写的年龄段归一成规范词。
- *
- * 保留原文里的岁数(`, 22 years old`)——它比任何骨架词都更能定住年龄,
- * 但规范词必须排在最前面,否则模型会挑后半句去理解。
- */
-export function normalizeCharAge(raw: string): string {
-  const text = raw.trim();
-  if (!text) return '';
-  const lower = text.toLowerCase();
-  const band = CHAR_AGE_BANDS.find(item => item.labels.some(label => lower.includes(label)));
-  // 「岁」不是 \w,后面不能挂 \b(否则永远匹配不上);用前瞻限定数字后不再接数字即可。
-  const years = text.match(/\d{1,3}\s*(?:岁|years?\s*old|yo)(?!\d)/i)?.[0]?.replace(/\s+/g, ' ').trim();
-  if (!band) return text.replace(AGE_NOISE, ', ').replace(/\s*,\s*/g, ', ').trim();
-  return [band.tag, years].filter(Boolean).join(', ');
-}
 
 export type CharTagSource = 'book' | 'manual' | 'ai';
 export type CharTagHistoryField = CharTagField | 'new' | 'raw' | 'nl';
@@ -149,6 +52,8 @@ export interface CharTagChangeRecord {
 }
 
 export interface CharTagEntry {
+  characterId?: string;
+  aliases?: string[];
   name: string;
   fields: Record<CharTagField, string>;
   raw: string;
@@ -185,10 +90,12 @@ export interface CharTagFloorDelta {
   v: 1;
   swipe: number;
   ops: CharTagAutoOp[];
+  scene?: SceneDelta;
+  legacyBackup?: unknown;
 }
 
 export const BBI_CHAR_EXTRA_KEY = 'bbiCharChanges';
-const META_KEY = 'moying_image_char_tags';
+const META_KEY = 'baibai_image_char_tags';
 const HISTORY_CAP = 50;
 
 interface CharTagStore {
@@ -249,7 +156,7 @@ export function lockedCharTagNames(): ReadonlySet<string> {
 }
 
 export function emptyCharFields(): Record<CharTagField, string> {
-  return { fandom: '', sex: '', age: '', hair: '', eyes: '', skin: '', body: '', extra: '', outfit: '' };
+  return { fandom: '', sex: '', hair: '', eyes: '', skin: '', body: '', extra: '', outfit: '' };
 }
 
 export function charFieldsEmpty(fields: Record<CharTagField, string>): boolean {
@@ -312,6 +219,8 @@ function normalizeEntry(raw: unknown): CharTagEntry | null {
   if (!rawTag && charFieldsEmpty(fields)) return null;
   return {
     name,
+    ...(typeof value.characterId === 'string' && value.characterId ? { characterId: value.characterId } : {}),
+    ...(Array.isArray(value.aliases) ? { aliases: value.aliases.filter((a): a is string => typeof a === 'string' && !!a.trim()).map(a => a.trim()) } : {}),
     fields,
     raw: rawTag,
     nl: typeof value.nl === 'string' ? value.nl.trim() : '',
@@ -324,6 +233,7 @@ function normalizeEntry(raw: unknown): CharTagEntry | null {
 function cloneEntry(entry: CharTagEntry): CharTagEntry {
   return {
     ...entry,
+    ...(entry.aliases ? { aliases: [...entry.aliases] } : {}),
     fields: { ...entry.fields },
     history: entry.history.map(record => ({ ...record })),
   };
@@ -387,7 +297,7 @@ export function readCharTagFloorDelta(message: STMessage | undefined): CharTagFl
   if (value.v !== 1 || !Array.isArray(value.ops)) return null;
   const swipe = typeof value.swipe === 'number' && Number.isInteger(value.swipe) ? value.swipe : 0;
   const ops = value.ops.map(normalizeAutoOp).filter((op): op is CharTagAutoOp => !!op);
-  return { v: 1, swipe, ops };
+  return { ...value, v: 1, swipe, ops };
 }
 
 function activeSwipe(message: STMessage): number {
@@ -495,10 +405,12 @@ export function deriveCharTags(
 ): CharTagEntry[] {
   let entries = seedEntries.map(cloneEntry);
   const end = Math.min(Math.max(0, upToExclusive), chat.length);
+  const revisions = transcriptRevisions(chat, end - 1);
   for (let floor = 0; floor < end; floor += 1) {
     const message = chat[floor];
     const delta = readCharTagFloorDelta(message);
     if (!delta || delta.swipe !== activeSwipe(message)) continue;
+    if (delta.scene && delta.scene.revision !== revisions[floor]) continue;
     entries = applyCharTagOps(entries, delta.ops, floor, locked);
   }
   return entries;
@@ -509,8 +421,8 @@ export function charTagsBeforeFloor(floor: number): CharTagEntry[] {
   return deriveCharTags(mergedSeedEntries(), chat, floor, lockedCharTagNames());
 }
 
-export function makeCharTagFloorDelta(ops: CharTagAutoOp[], swipe: number): CharTagFloorDelta | undefined {
-  return ops.length ? { v: 1, swipe, ops } : undefined;
+export function makeCharTagFloorDelta(ops: CharTagAutoOp[], swipe: number, scene?: SceneDelta, legacyBackup?: unknown): CharTagFloorDelta | undefined {
+  return ops.length || scene ? { v: 1, swipe, ops, ...(scene ? { scene } : {}), ...(legacyBackup ? { legacyBackup } : {}) } : undefined;
 }
 
 export function recomputeCharTags(): void {
@@ -548,8 +460,9 @@ function stripOpsFromExtra(extra: Record<string, unknown> | undefined, names: Se
     .map(normalizeAutoOp)
     .filter((op): op is CharTagAutoOp => !!op && !names.has(op.name));
   if (nextOps.length === value.ops.length) return false;
-  if (nextOps.length) {
+  if (nextOps.length || value.scene) {
     extra[BBI_CHAR_EXTRA_KEY] = {
+      ...value,
       v: 1,
       swipe: typeof value.swipe === 'number' ? value.swipe : 0,
       ops: nextOps,
@@ -577,7 +490,7 @@ function detachFromExistingFloors(...rawNames: Array<string | undefined>): void 
   }
   if (changed) {
     void context.saveChat?.().catch(error => {
-      console.warn('[墨影] 手动角色变更已生效,但清理旧楼层角色记录保存失败', error);
+      console.warn('[柏宝绘] 手动角色变更已生效,但清理旧楼层角色记录保存失败', error);
     });
   }
 }
@@ -600,6 +513,8 @@ export function upsertCharTag(
   const previous = findCharTag(oldName ?? name);
   const next: CharTagEntry = {
     name,
+    characterId: entry.characterId ?? previous?.characterId ?? `char_${stateHash(`${getContext()?.getCurrentChatId?.() ?? ''}\0${previous?.name ?? name}`)}`,
+    aliases: [...new Set([name, ...(entry.aliases ?? previous?.aliases ?? []), ...(oldName ? [oldName] : [])])],
     fields: normalizeFields(entry.fields),
     raw: entry.raw.trim(),
     nl: entry.nl.trim(),
@@ -691,5 +606,7 @@ export function bindCharTagSync(): void {
   if (context.eventTypes.MESSAGE_SWIPED) {
     context.eventSource.on(context.eventTypes.MESSAGE_SWIPED, recomputeLater);
   }
+  if (context.eventTypes.MESSAGE_UPDATED) context.eventSource.on(context.eventTypes.MESSAGE_UPDATED, recomputeLater);
+  if (context.eventTypes.MESSAGE_EDITED) context.eventSource.on(context.eventTypes.MESSAGE_EDITED, recomputeLater);
   hydrateCharTags();
 }

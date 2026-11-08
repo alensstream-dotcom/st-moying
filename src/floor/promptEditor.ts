@@ -93,12 +93,12 @@ async function writeBack(
 ): Promise<boolean> {
   const context = getContext();
   if (!context) {
-    toastr.error('SillyTavern 上下文不可用', '墨影');
+    toastr.error('SillyTavern 上下文不可用', '柏宝绘');
     return false;
   }
   const message = context.chat?.[at.messageId];
   if (!message) {
-    toastr.error('楼层已不存在,提示词未保存', '墨影');
+    toastr.error('楼层已不存在,提示词未保存', '柏宝绘');
     return false;
   }
 
@@ -127,13 +127,13 @@ async function writeBack(
   } catch (error) {
     // 撤销标记:只取回自己这一枚,不能用 clearAutoGenerateForFloor(会连累同楼兄弟槽位)
     if (regenerate) consumeAutoGenerate(at.chatId, at.messageId, at.swipeId, at.seq);
-    toastr.error(error instanceof Error ? error.message : String(error), '墨影');
+    toastr.error(error instanceof Error ? error.message : String(error), '柏宝绘');
     return false;
   }
 
   if (result !== 'saved') {
     if (regenerate) consumeAutoGenerate(at.chatId, at.messageId, at.swipeId, at.seq);
-    toastr.warning(failureReason(result), '墨影');
+    toastr.warning(failureReason(result), '柏宝绘');
     return false;
   }
 

@@ -33,7 +33,7 @@ beforeEach(() => {
 describe('registerPublicInterface', () => {
   it('publishes on globalThis and announces readiness (the two ways to find it)', async () => {
     const ready = vi.fn();
-    // 比墨影先加载的第三方只能靠事件——只给 globalThis 会逼它自己写轮询
+    // 比柏宝绘先加载的第三方只能靠事件——只给 globalThis 会逼它自己写轮询
     window.addEventListener(PUBLIC_READY_EVENT, ready);
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -56,25 +56,10 @@ describe('registerPublicInterface', () => {
     expect(ready).not.toHaveBeenCalled();
   });
 
-  // 接口不再冻结:测试桩要给 generate 打补丁、阅读器要直调楼层接口,冻结会让这些
-  // 赋值直接抛错。代价是别处能改它——所以这条锁住「改得动」这个新口径,happy path 由
-  // 后面各条分别覆盖。
-  it('lets a later plugin or a test double patch the api', () => {
-    const target = api() as unknown as { generate: unknown };
-    const patched = () => 'patched';
-    target.generate = patched;
-    expect((api() as unknown as { generate: unknown }).generate).toBe(patched);
-    // 补丁要能改回来,否则一条用例的桩会污染后面全部用例
-    target.generate = () => 'original';
+  it('freezes the api so one plugin cannot rewrite what the next one gets', () => {
+    const target = api() as unknown as Record<string, unknown>;
+    expect(() => { target.generate = () => {}; }).toThrow();
     expect(typeof api().generate).toBe('function');
-  });
-
-  it('exposes the floor and background entry points without UI popups', () => {
-    expect(typeof api().requestFloorTags).toBe('function');
-    expect(typeof api().cancelFloorTags).toBe('function');
-    expect(typeof api().isFloorTagRunning).toBe('function');
-    expect(typeof api().isBackgroundGenRunning).toBe('function');
-    expect(typeof api().resumeBackgroundPending).toBe('function');
   });
 
   it('hands out a fresh capabilities copy each read', () => {

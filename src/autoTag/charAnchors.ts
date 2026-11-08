@@ -70,7 +70,6 @@ const CONVERT_SPEC = `你是外貌 tag 转换器。把给出的角色中文外�
 
 字段与示例:
 - sex(性别):1girl / 1boy / androgynous 等
-- age(年龄段):child / teenager / young adult / mature female,可带岁数(如「young adult, 22 years old」);原文只给了身份时按身份推一档(大学生=young adult,高中生=teenager,小女孩=child,熟女/老婆婆=mature female)
 - hair(头发):long black hair / short silver hair 等
 - eyes(眼睛):red eyes / blue eyes 等
 - skin(肤色):tan / dark skin 等(没提就留空;白皙是默认肤色,不需要记录)
@@ -80,9 +79,8 @@ const CONVERT_SPEC = `你是外貌 tag 转换器。把给出的角色中文外�
 规则:
 1. 只提取固定基础特征;服装、饰品、状态、表情、动作、场景一律不写。
 2. hair 与 eyes 是二次元角色身份锚点：描述里只要出现发色、发型/长度或瞳色线索就必须写入对应字段，不得遗漏或塞进 extra；hair 尽量同时保留颜色和长度/发型，eyes 保留颜色。
-3. age 一律按上面的规范词归一,不要写「刚毕业的大学生」这种中文身份词。
-4. 描述里没提的细节不要脑补,对应字段留空字符串。
-5. 只返回一个 JSON 对象:{"角色名":{"sex":"...","age":"...","hair":"...","eyes":"...","skin":"...","body":"...","extra":"..."}},键与输入的角色名完全一致;不要 Markdown 代码块、不要解释。`;
+3. 描述里没提的细节不要脑补,对应字段留空字符串。
+4. 只返回一个 JSON 对象:{"角色名":{"sex":"...","hair":"...","eyes":"...","skin":"...","body":"...","extra":"..."}},键与输入的角色名完全一致;不要 Markdown 代码块、不要解释。`;
 
 /** 字段值清洗:换行压成空格、剥 bbi_image 系子标签字面量(防止污染注入格式)。 */
 function sanitizeTagValue(value: unknown): string {

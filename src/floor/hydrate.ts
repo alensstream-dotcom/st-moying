@@ -147,7 +147,7 @@ export function hydrateMessage(messageId: number, ctx: STContext): void {
         const anchors = [...mesText.querySelectorAll<HTMLElement>(BBI_SLOT_SELECTOR)];
         if (anchors.length !== tags.length) {
           console.warn(
-            `[墨影] 楼层 #${messageId} 锚点 ${anchors.length} 个 ≠ 生图 tag ${tags.length} 个,按少者配对`,
+            `[柏宝绘] 楼层 #${messageId} 锚点 ${anchors.length} 个 ≠ 生图 tag ${tags.length} 个,按少者配对`,
           );
         }
         const count = Math.min(anchors.length, tags.length);
@@ -291,7 +291,7 @@ function warnHiddenByHost(host: Element): void {
   if (hiddenWarned.has(id)) return;
   hiddenWarned.add(id);
   console.warn(
-    `[墨影] 楼层 #${floor ?? '?'} 的卡片已挂载但不可见:该楼 .mes_text 被 ST 的 ` +
+    `[柏宝绘] 楼层 #${floor ?? '?'} 的卡片已挂载但不可见:该楼 .mes_text 被 ST 的 ` +
       'inline_media 规则整段隐藏(本楼有附件图且 extra.inline_image 为 false)。' +
       '这是宿主的有意行为,插件不强行解除;如需看到卡片,请让该楼恢复显示正文。',
   );

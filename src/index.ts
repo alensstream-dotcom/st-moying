@@ -5,6 +5,7 @@ import { bindFloorHydration } from '@/floor/hydrate';
 import { injectMenuButton } from '@/menu';
 import { registerPublicInterface } from '@/public/register';
 import { bindCharTagSync } from '@/state/charTags';
+import { bindSceneSync } from '@/state/sceneStore';
 import { initGlobalCharTags } from '@/state/globalCharTags';
 import { hydrateSettings } from '@/state/settings';
 import { ui } from '@/state/ui';
@@ -99,6 +100,7 @@ async function hydrateWhenReady(attempt = 0) {
       // 全局库必须在 bindCharTagSync 之前初始化:首次重算就要把全局条目合进派生库
       initGlobalCharTags();
       bindCharTagSync();
+      bindSceneSync();
       ensureImageTagRegexRegistered();
       bindAutoTagging();
       bindFloorHydration();
@@ -108,9 +110,9 @@ async function hydrateWhenReady(attempt = 0) {
       // ready 事件里的 revision 已经对应真实角色库。
       registerPublicInterface();
       void checkForUpdate();
-      console.log(`[墨影] 已加载 v${__BBI_VERSION__},设置已同步`);
+      console.log(`[柏宝绘] 已加载 v${__BBI_VERSION__},设置已同步`);
     } catch (e) {
-      console.error('[墨影] 设置载入失败', e);
+      console.error('[柏宝绘] 设置载入失败', e);
     }
     return;
   }

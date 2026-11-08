@@ -22,31 +22,21 @@ export class ImageStoreError extends Error {
  * 常量名:CJK + 下划线经服务端 sanitize-filename 原样保留。
  * 动态角色目录名也由上传接口清洗，无需额外请求 sanitize-filename。
  */
-export const ARTIST_PREVIEW_FOLDER = '墨影_画师串';
+export const ARTIST_PREVIEW_FOLDER = '柏宝绘_画师串';
 
 async function postImage(
   endpoint: string,
   body: Record<string, unknown>,
-  timeoutMs = 45_000,
 ): Promise<{ ok: boolean; status: number; text: string }> {
   const ctx = getContext();
   if (!ctx) throw new ImageStoreError('SillyTavern 上下文不可用');
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    const fetchPromise = fetch(endpoint, {
-      method: 'POST',
-      headers: ctx.getRequestHeaders(),
-      body: JSON.stringify(body),
-    });
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new ImageStoreError(`图片请求超时 (${endpoint})`)), timeoutMs);
-    });
-    const response = await Promise.race([fetchPromise, timeoutPromise]);
-    const text = await response.text().catch(() => '');
-    return { ok: response.ok, status: response.status, text };
-  } finally {
-    if (timer !== null) clearTimeout(timer);
-  }
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: ctx.getRequestHeaders(),
+    body: JSON.stringify(body),
+  });
+  const text = await response.text().catch(() => '');
+  return { ok: response.ok, status: response.status, text };
 }
 
 /**

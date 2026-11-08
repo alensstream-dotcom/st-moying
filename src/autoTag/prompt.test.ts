@@ -66,20 +66,11 @@ describe('auto tag prompt', () => {
       maxImages: 3,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
-      prompts: prompts({ jailbreak: '被忽略的旧附加词' }),
+      prompts: prompts({ jailbreak: '附加规则' }),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
 
-    // 附加词恢复叠加(0.1.15):档位文本在前、自定义在后,包在 <operator_addendum> 里
-    expect(messages[0].content).toContain('<task_framing>');
-    expect(messages[0].content).toContain('<operator_addendum>');
-    expect(messages[0].content).toContain('被忽略的旧附加词');
-    // 顺序有意义:内置的转录定性必须先于用户附加词,否则自定义把它挤掉就没意义了
-    expect(messages[0].content.indexOf('<task_framing>')).toBeLessThan(
-      messages[0].content.indexOf('<operator_addendum>'),
-    );
+    expect(messages[0].content).toContain('附加规则');
     expect(messages.some(m => m.role === 'system' && m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))).toBe(true);
     expect(messages.some(m => m.content.includes('除一个 <thinking> 块和一个 JSON 对象外'))).toBe(true);
     expect(messages.some(m => m.content.includes('最终结果必须包含且只能包含一个可解析的 JSON 对象'))).toBe(true);
@@ -120,8 +111,6 @@ describe('auto tag prompt', () => {
       maxImages: 4,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -139,8 +128,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(
@@ -150,7 +137,7 @@ describe('auto tag prompt', () => {
       null,
       {
         promptText: '请求开始时的正文快照 ⟦P9⟧',
-        segments: [{ id: 'P9', sourceLine: 7, charOffset: 0, text: '请求开始时的正文快照' }],
+        segments: [{ id: 'P9', sourceLine: 7, text: '请求开始时的正文快照' }],
       },
     );
     const user = messages[messages.length - 1];
@@ -185,8 +172,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
 
@@ -220,8 +205,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -235,12 +218,12 @@ describe('auto tag prompt', () => {
     expect(thinkingMsg?.content).toContain('第二层｜逐张图槽位块');
     expect(thinkingMsg?.content).toContain('不得合并、不得跨图共用一份');
     expect(thinkingMsg?.content).toContain('第三层｜落笔前自查');
-    for (const slot of ['概括：', '人物：', '核心动作：', '景别：', '场景：', '环境光：', 'size：']) {
+    for (const slot of ['人物：', '核心动作：', '景别：', '场景：', '环境光：', 'size：']) {
       expect(thinkingMsg?.content).toContain(slot);
     }
-    expect(thinkingMsg?.content).toContain('<角色名>｜年龄档+骨架词｜表情｜视线｜本镜头可见服装｜服装状态（穿着/半脱到哪一步/已脱落）｜临时状态｜个人动作');
+    expect(thinkingMsg?.content).toContain('<角色名>｜表情｜视线｜本镜头可见服装｜临时状态｜个人动作');
     expect(thinkingMsg?.content).toContain('确实不适用的槽位写 "-"');
-    expect(thinkingMsg?.content).toContain('概括、核心动作、景别、年龄档、表情、视线、场景、环境光、size 九项永远不得为 "-"');
+    expect(thinkingMsg?.content).toContain('核心动作、景别、表情、视线、场景、环境光、size 七项永远不得为 "-"');
     // 表情/视线此前全库没有槽位,是「木脸」的根因;两个后端规范也要各带一份。
     expect(thinkingMsg?.content).toContain('两项都不得留空，面无表情也要主动填 expressionless');
     expect(thinkingMsg?.content).toContain('表情与视线填后端规范给出的标准 danbooru 词');
@@ -305,7 +288,7 @@ describe('auto tag prompt', () => {
     expect(messages.some(m => m.content.includes('navy school blazer, white collared shirt, red ribbon'))).toBe(true);
     expect(thinkingMsg?.content).toContain('镜头外不可见的部件可以省略，但省略不等于脱掉');
     expect(thinkingMsg?.content).toContain('没有散落的无主特征');
-    expect(messages.some(m => m.content.includes('女性**正式角色必须二选一'))).toBe(true);
+    expect(messages.some(m => m.content.includes('每个在场正式角色必须二选一'))).toBe(true);
     expect(messages.some(m => m.content.includes('禁止把两人的外貌特征散放成无法归属的一串公共 tag'))).toBe(true);
     expect(thinkingMsg?.content).toContain('定一套具体、自洽的时代/文明/视觉体系并全楼沿用');
     expect(messages.some(m => m.content.includes('必须先判断，并主动具体化'))).toBe(true);
@@ -325,8 +308,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts({ comfyThinking: '自定义清单' }),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -347,8 +328,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts({
         comfyThinking: 'COMFY-CHECKLIST',
         naiThinking: 'NAI-CHECKLIST',
@@ -390,7 +369,7 @@ describe('auto tag prompt', () => {
 
   // 身份 tag 与 NSFW 的思维链落点:0.1.16 的旧清单本来有(身份 tag 定词+自查 / NAI 专属
   // NSFW 条款+自查),三层重写时三份全丢——规则只在 spec 里、思考回路没有检查位,
-  // 漏写概率回升。这条核对思维链落点,同时确认独立系统的未成年人保护仍在。
+  // 漏写概率回升。这条钉死三份各自的落点口径,且 NSFW 不带年龄限定。
   it('keeps fandom identity and NSFW checkpoints inside each backend thinking', async () => {
     const options: AutoTagSettings = {
       enabled: true,
@@ -399,9 +378,8 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
-      prompts: prompts(),
+      // This test concerns backend thinking/spec only, not the independent default system prompt.
+      prompts: prompts({ jailbreak: '测试附加规则' }),
     };
     const oldBackend = settings.defaultBackend;
     const oldModel = settings.nai.model;
@@ -439,7 +417,7 @@ describe('auto tag prompt', () => {
       expect(text).toContain('若正文明确为显式 NSFW 场景');
       expect(text).toContain('若本图是显式 NSFW 场景');
       expect(text).not.toContain('若本图协议含 negative 键');
-      expect(text).toContain('NVWA 保护未成年人');
+      expect(text).not.toContain('成年人');
       // NAI 侧用户没有白痘问题,不引入这条禁令。
       expect(text).not.toContain('白皙肤色词');
       expect(text).not.toContain('白皙词一律禁止');
@@ -455,7 +433,7 @@ describe('auto tag prompt', () => {
       expect(text).toContain('若正文明确为显式 NSFW 场景');
       expect(text).toContain('若本图是显式 NSFW 场景');
       expect(text).not.toContain('若本图协议含 negative 键');
-      expect(text).toContain('NVWA 保护未成年人');
+      expect(text).not.toContain('成年人');
       expect(text).not.toContain('白皙肤色词');
     } finally {
       settings.defaultBackend = oldBackend;
@@ -473,8 +451,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -537,8 +513,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -608,8 +582,6 @@ describe('auto tag prompt', () => {
         maxImages: 2,
         retryCount: 1,
         autoGenerate: true,
-        jailbreakTier: 'strong',
-        lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
         prompts: prompts(),
       };
       const oldBackend = settings.defaultBackend;
@@ -623,10 +595,8 @@ describe('auto tag prompt', () => {
         const spec = messages.find(m => m.content.startsWith('[NovelAI'))!.content;
         const selection = thinking.split('E. 选段\n')[1].split('第二层｜')[0];
 
-        expect(contract).toContain('画面主体永远是女性主角');
-        expect(contract).toContain('不得单独出镜');
-        expect(contract).toContain('纯环境空镜一律不要');
-        expect(contract).toContain('不建立固定外貌档案');
+        expect(contract).toContain('优先表现正文中玩家主角和主要角色的表情、状态、行动及关系');
+        expect(contract).toContain('主要角色单独出镜同样成立');
         expect(contract).toContain('不得把不在场者加入画面');
         expect(contract).toContain('主要角色依据设定与剧情判断，不等同于所有已建档角色');
         expect(contract).toContain('仅仅在场不构成入画理由');
@@ -661,8 +631,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -703,8 +671,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -746,8 +712,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const library = '【角色固定外貌库(系统维护)】\n小雪: 1girl, long silver hair';
@@ -772,8 +736,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -791,8 +753,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(
@@ -818,8 +778,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -855,8 +813,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -892,8 +848,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -932,8 +886,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -968,8 +920,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -1012,8 +962,6 @@ describe('auto tag prompt', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -1077,8 +1025,6 @@ describe('NAI「生成自然语言」开关与渠道画幅锁', () => {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(overrides),
     };
   }
@@ -1272,213 +1218,5 @@ describe('NAI「生成自然语言」开关与渠道画幅锁', () => {
     } finally {
       state.restore();
     }
-  });
-});
-
-// 素材候选的轮转摇号:同一句身份词不能每楼都召回同一批,否则模型每楼都挑第一条,
-// 用户看到的就是「不管几个事业女,衣服永远同一套」。
-describe('素材候选摇号与同职业区分', () => {
-  function loreOptions(): AutoTagSettings {
-    return {
-      enabled: true,
-      contextMessages: 2,
-      minImages: 0,
-      maxImages: 2,
-      retryCount: 1,
-      autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: {
-        enabled: true,
-        maxNsfw: 3,
-        wardrobeLimit: 8,
-        poseLimit: 6,
-        faces: true,
-        faceLimit: 8,
-        thumbModel: '',
-        thumbIntervalMs: 10000,
-      },
-      prompts: prompts(),
-    };
-  }
-
-  /** 目标正文里带身份词,才会命中服装库;默认 fixture 两行都没有命中。 */
-  function officeContext(): STContext {
-    const base = context();
-    base.chat[1].mes = '她是公司里最年轻的事业女，推开办公室的门';
-    return base;
-  }
-
-  it('不同种子换出不同候选;同一种子可复现', async () => {
-    const seen = new Set<string>();
-    for (const seed of [3, 11, 27, 40]) {
-      const user = (await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, seed))
-        .at(-1)!.content;
-      const lines = user.split('\n').filter(line => line.includes('（命中：'));
-      seen.add(lines.join('\n'));
-    }
-    expect(seen.size).toBeGreaterThan(1);
-
-    const a = (await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5)).at(-1)!
-      .content;
-    const b = (await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5)).at(-1)!
-      .content;
-    expect(a).toBe(b);
-  });
-
-  it('契约里写清同职业不许撞衫,并点名「同一角色只有一套」', async () => {
-    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
-    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
-    expect(contract).toContain('同一角色的一致性高于多样性');
-    expect(contract).toContain('不同角色之间必须不一样');
-    expect(contract).toContain('不许让她们穿同一套');
-    expect(contract).toContain('同职业撞衫');
-  });
-
-
-  it('把「已对上的建档角色」块放在外貌库之后、候选之前', async () => {
-    const messages = await buildAutoTagMessages(
-      officeContext(),
-      1,
-      loreOptions(),
-      null,
-      undefined,
-      null,
-      '',
-      undefined,
-      5,
-      '【本段正文已对上的建档角色】[不要重新编脸]' + '\n' + '- 小雪（发色/瞳色等逐项对上：发色、瞳色、种族）',
-    );
-    const user = messages.at(-1)!.content;
-    expect(user).toContain('【本段正文已对上的建档角色】');
-    expect(user).toContain('小雪（发色/瞳色等逐项对上');
-    // 顺序:外貌库 → 复用块 → 候选块。模型得先知道「这段就是她」再读候选。
-    expect(user.indexOf('【角色固定外貌库】')).toBeLessThan(user.indexOf('【本段正文已对上的建档角色】'));
-    expect(user.indexOf('【本段正文已对上的建档角色】')).toBeLessThan(user.indexOf('【服装候选库】'));
-  });
-
-  it('复用块为空串时不多占位置', async () => {
-    const withEmpty = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5, '');
-    const without = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5);
-    expect(withEmpty.at(-1)!.content).toBe(without.at(-1)!.content);
-  });
-
-  it('契约要求「能复用就复用」并解释不许换说法', async () => {
-    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
-    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
-    expect(contract).toContain('能复用就复用');
-    expect(contract).toContain('外形重合');
-    expect(contract).toContain('银白→灰白');
-  });
-
-  it('把服装现状块放在复用块之后、候选之前', async () => {
-    const messages = await buildAutoTagMessages(
-      officeContext(),
-      1,
-      loreOptions(),
-      null,
-      undefined,
-      null,
-      '',
-      undefined,
-      5,
-      '【本段正文已对上的建档角色】\n- 小雪',
-      '【服装现状】[已经发生的事实,不是候选]\n- 小雪:穿着,white dress',
-    );
-    const user = messages.at(-1)!.content;
-    expect(user).toContain('【服装现状】');
-    expect(user).toContain('小雪:穿着,white dress');
-    // 结论先于证据:复用块 → 现状块 → 候选库。模型得先知道她穿着什么,再去读候选。
-    expect(user.indexOf('【本段正文已对上的建档角色】')).toBeLessThan(user.indexOf('【服装现状】'));
-    expect(user.indexOf('【服装现状】')).toBeLessThan(user.indexOf('【服装候选库】'));
-  });
-
-  it('服装现状块为空串时不多占位置', async () => {
-    const withEmpty = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5, '', '');
-    const without = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null, undefined, null, '', undefined, 5);
-    expect(withEmpty.at(-1)!.content).toBe(without.at(-1)!.content);
-  });
-
-  it('契约里有取景取舍与概括两道关', async () => {
-    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
-    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
-    // 漏人比多一个人难看:施受双方与接触点必须进画面,道具要带落点。
-    expect(contract).toContain('取景取舍');
-    expect(contract).toContain('施受双方');
-    expect(contract).toContain('道具与它的落点');
-    expect(contract).toContain('毛笔要落在阴部上');
-    // 先概括成人话再落 tag,并且不许塞满形容词。
-    expect(contract).toContain('说成人话');
-    expect(contract).toContain('25～40');
-    expect(contract).toContain('brush on pussy');
-  });
-
-  it('契约把半脱写成独立状态,不许直接 nude', async () => {
-    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
-    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
-    expect(contract).toContain('半脱是独立状态');
-    expect(contract).toContain('off shoulder');
-    expect(contract).toContain('露肩、露背、露臀的姿势不是裸体');
-    expect(contract).toContain('不许自己穿回去');
-  });
-
-  it('契约写明人数按身体数、省脸不省人', async () => {
-    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
-    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
-    expect(contract).toContain('在场的活人一个都不许省');
-    expect(contract).toContain('一个人两根肉棒');
-    expect(contract).toContain('不按有没有露脸');
-  });
-
-  it('契约要求描述用英文短词,少写中文长句(渠道输出过滤的口子)', async () => {
-    const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
-    const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
-    expect(contract).toContain('英文 tag 短词');
-    expect(contract).toContain('最先斩断');
-  });
-});
-
-// 截断的主因是思考太长。上限必须跟着图数走:V5 第二层是每张图 8 行槽位,
-// 固定值会在多图时逼模型要么超上限、要么漏槽位。
-describe('思考块预算上限', () => {
-  function mk(maxImages: number): AutoTagSettings {
-    return {
-      enabled: true,
-      contextMessages: 2,
-      minImages: 1,
-      maxImages,
-      retryCount: 0,
-      autoGenerate: true,
-      jailbreakTier: 'strong',
-      lore: {
-        enabled: false,
-        maxNsfw: 3,
-        wardrobeLimit: 0,
-        poseLimit: 0,
-        faces: false,
-        faceLimit: 0,
-        thumbModel: '',
-        thumbIntervalMs: 10000,
-      },
-      prompts: {} as AutoTagPrompts,
-    };
-  }
-
-  it('上限按图数长,不是固定值', async () => {
-    const one = (await buildAutoTagMessages(context(), 1, mk(1), null)).map(m => m.content).join('\n');
-    const three = (await buildAutoTagMessages(context(), 1, mk(3), null)).map(m => m.content).join('\n');
-    expect(one).toContain('<thinking_budget>');
-    // 1 张 = 12 + 8,3 张 = 36。上限固定的话多图时必然超。
-    expect(one).toContain('最多 20 行');
-    expect(three).toContain('最多 36 行');
-  });
-
-  it('针对 NAI V4.5 / V5 强化女主绝对主体与男主角色块局部无脸降权', async () => {
-    const all = (await buildAutoTagMessages(context(), 1, mk(2), null)).map(m => m.content).join('\n');
-    expect(all).toContain('boy, faceless male');
-    expect(all).toContain('严禁给男主编造发色、瞳色与正脸表情');
-    expect(all).toContain('显式情欲与体位接触锚点（最高优）');
-    expect(all).toContain('前戏半脱/诱惑姿态 → 核心体位推进 → 敏感点特写/高潮余韵');
-    expect(all).toContain('长段剧情五刀剔除法');
-    expect(all).toContain('三元闭环绑定公式');
   });
 });

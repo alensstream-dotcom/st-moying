@@ -63,17 +63,6 @@ export function getGenRecord(key: string): GenRecord | undefined {
   return records.get(key);
 }
 
-/**
- * 这个槽位是否真的有一个在途任务（有活的 controller）。
- *
- * 只有 record 不够用：重水合/旧相位会留下 phase 是 queued 或 generating、却早已
- * 没有 controller 的僵尸记录。后台出图若拿「有没有 record」当让位依据，就会被这种
- * 僵尸记录挡住，表现为某一张图永远要手动点一下。
- */
-export function hasActiveGen(key: string): boolean {
-  return controllers.has(key);
-}
-
 /** 单调递增的任务票据。 */
 let nextToken = 1;
 

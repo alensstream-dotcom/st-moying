@@ -55,10 +55,8 @@ export interface LlmRecord extends BaseRecord {
   stream: boolean;
   /** 完整提示词(已按 MAX_CONTENT 截断)。 */
   messages: ChatMsg[];
-  /** 返回正文(已截断),失败的协议回复也会保留。 */
+  /** 返回正文(已截断)。 */
   response: string;
-  finishReason: string | null;
-  nativeFinishReason: string | null;
   promptTokens: number | null;
   completionTokens: number | null;
   /**
@@ -176,8 +174,6 @@ export function beginLlm(info: LlmBegin): number {
     stream: info.stream,
     messages: truncateMessages(info.messages),
     response: '',
-    finishReason: null,
-    nativeFinishReason: null,
     promptTokens: null,
     completionTokens: null,
     tokensEstimated: false,
@@ -190,21 +186,6 @@ export interface LlmFinish {
   promptTokens: number | null;
   completionTokens: number | null;
   tokensEstimated: boolean;
-}
-
-/** Capture model output before JSON validation; keep it even when that validation fails. */
-export function captureLlmResponse(
-  id: number,
-  info: LlmFinish & { finishReason?: string | null; nativeFinishReason?: string | null },
-): void {
-  const record = find(id);
-  if (record?.kind !== 'llm') return;
-  record.response = truncate(info.response);
-  record.promptTokens = info.promptTokens;
-  record.completionTokens = info.completionTokens;
-  record.tokensEstimated = info.tokensEstimated;
-  record.finishReason = info.finishReason ?? null;
-  record.nativeFinishReason = info.nativeFinishReason ?? null;
 }
 
 export function finishLlm(id: number, info: LlmFinish): void {
@@ -321,7 +302,7 @@ export function safeHistory<T>(fn: () => T): T | null {
   try {
     return fn();
   } catch (e) {
-    console.debug('[墨影] 请求历史记录失败(已忽略)', e);
+    console.debug('[柏宝绘] 请求历史记录失败(已忽略)', e);
     return null;
   }
 }

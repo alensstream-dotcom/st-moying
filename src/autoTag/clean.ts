@@ -7,28 +7,6 @@
 const RE_THINK_BLOCK = /<think(?:ing)?\b[\s\S]*?<\/think(?:ing)?>/gi;
 const RE_START = /<bbs_start\b[^>]*>([\s\S]*?)<\/bbs_start>/gi;
 const RE_END = /<bbs_end\b[^>]*>([\s\S]*?)<\/bbs_end>/gi;
-/** Planning, options and review notes are not image-eligible story text. */
-const STORY_META_TAG_NAMES = ['cot', 'options', 'tucao', 'analysis', 'konatan_planning'] as const;
-const RE_CONTENT = /<content\b[^>]*>([\s\S]*?)<\/content\s*>/gi;
-
-function storyMetaRegexes(): RegExp[] {
-  return STORY_META_TAG_NAMES.map(tag =>
-    new RegExp('<' + tag + '(?=[\\s/>~])[^>]*>[\\s\\S]*?<\\/' + tag + '(?=[\\s/>~])[^>]*>', 'gi'),
-  );
-}
-
-function stripStoryMetaBlocks(text: string): string {
-  let result = text;
-  for (const pattern of storyMetaRegexes()) result = result.replace(pattern, '');
-  return result;
-}
-
-function unwrapStoryContent(text: string): string {
-  const blocks = [...text.matchAll(RE_CONTENT)];
-  return blocks.length
-    ? blocks.map(block => block[1]).join('\n\n')
-    : text.replace(/<\/?content\b[^>]*>/gi, '');
-}
 
 /**
  * 按标签名生成「整块删除」正则(含标签本身与内部内容)。tag 已由 sanitizeTagName 剔除正则元字符,
@@ -94,7 +72,6 @@ function clampToStoryBody(
     .replace(RE_THINK_BLOCK, noiseReplacement)
     .replace(/<!--[\s\S]+?-->/g, noiseReplacement)
     .replace(/<horae[\s\S]*?>[\s\S]*?<\/horae[\s\S]*?>/gi, noiseReplacement);
-  s = unwrapStoryContent(stripStoryMetaBlocks(s));
   s = replaceCustomTags(s, customTags, noiseReplacement);
   s = stripManagedTags(s);
 
@@ -134,14 +111,6 @@ export interface TargetSegment {
   id: string;
   /** 对应原始正文的物理行号(0-based，仅插件内部使用)。 */
   sourceLine: number;
-  /**
-   * 该段最后一个字符在**原始物理行内**的结束偏移(不含)。
-   *
-   * 为什么需要它:一段正文常常是「一行几百字、好几句话」,只按物理行落位的话,
-   * 一张本该配「他撩开她的裙摆」的图会掉到整段末尾、落在事后描写之后,看起来
-   * 就是「图和剧情对不上」。有了行内偏移,injectImageTags 能把 tag 插到**那句话**后面。
-   */
-  charOffset: number;
   /** 删除噪声后的该行叙事文本。 */
   text: string;
 }
@@ -213,75 +182,12 @@ function retainedLineText(source: string, line: SourceLineRange, ranges: Removal
   return pieces.join(' ').replace(/[ \t]+/g, ' ').trim();
 }
 
-/** 句末标点:在这里断开,让一张图能钉在「那句话」之后而不是整段之后。 */
-const SENTENCE_STOPS = new Set(['。', '！', '？', '…', '；', '!', '?', ';', '」', '』', '”']);
-/** 弱断点:只在累积太长时才断,避免把一句话切成两半。 */
-const WEAK_STOPS = new Set(['，', ',', '、', '：', ':']);
-/** 短于此长度的片段不单独成段(「嗯。」不该独占一个可选位置)。 */
-const MIN_SEGMENT_CHARS = 4;
-/** 长于此长度的片段遇到弱断点也断开:模型一次要看的位置不宜过长。 */
-const MAX_SEGMENT_CHARS = 110;
-/** 单行最多切几段:再长就合并,避免长段正文产生几十个位置 ID 把 prompt 顶爆。 */
-const MAX_SEGMENTS_PER_LINE = 8;
-
-/**
- * 把一行切成若干「句子级」段,并带上每段在原行内的结束偏移。
- *
- * 与 retainedLineText 的分工:那个给整行一份纯文本(历史清洗用),这个给落位用,
- * 所以必须保留「这一段在第几个字符结束」——位置精度全靠它。
- */
-function retainedLineSegments(
-  source: string,
-  line: SourceLineRange,
-  ranges: RemovalRange[],
-): Array<{ text: string; end: number }> {
-  const length = line.end - line.start;
-  if (length <= 0) return [];
-  // keep[i] = 该行第 i 个字符是否属于叙事文本(被删的噪声按空格处理)
-  const keep = new Uint8Array(length);
-  keep.fill(1);
-  for (const range of ranges) {
-    const from = Math.max(range.start, line.start) - line.start;
-    const to = Math.min(range.end, line.end) - line.start;
-    for (let i = Math.max(0, from); i < to && i < length; i += 1) keep[i] = 0;
-  }
-
-  const out: Array<{ text: string; end: number }> = [];
-  let buffer = '';
-  /** 行内偏移(相对本行行首),与 injectImageTags 里 line.text.slice 的口径必须一致。 */
-  let bufferEnd = 0;
-
-  const flush = () => {
-    const text = buffer.replace(/\s+/g, ' ').trim();
-    if (text) out.push({ text, end: bufferEnd });
-    buffer = '';
-  };
-
-  for (let i = 0; i < length; i += 1) {
-    if (!keep[i]) {
-      // 噪声位置补一个空格:两个被删块之间的两句话不会粘成一个词
-      if (buffer) buffer += ' ';
-      continue;
-    }
-    const char = source[line.start + i];
-    buffer += char;
-    bufferEnd = i + 1;
-    if (out.length >= MAX_SEGMENTS_PER_LINE) continue;
-    const trimmedLength = buffer.replace(/\s+/g, ' ').trim().length;
-    if (SENTENCE_STOPS.has(char) && trimmedLength >= MIN_SEGMENT_CHARS) flush();
-    else if (WEAK_STOPS.has(char) && trimmedLength >= MAX_SEGMENT_CHARS) flush();
-  }
-  flush();
-  return out;
-}
-
 function targetRemovalRanges(source: string, tags: string[]): RemovalRange[] {
   const noise: RemovalRange[] = [
     ...rangesForRegex(source, RE_THINK_BLOCK),
     ...rangesForRegex(source, /<!--[\s\S]+?-->/g),
     ...rangesForRegex(source, /<horae[\s\S]*?>[\s\S]*?<\/horae[\s\S]*?>/gi),
   ];
-  for (const pattern of storyMetaRegexes()) noise.push(...rangesForRegex(source, pattern));
   for (const tag of [...tags, 'bbs_items', 'bbs_vars']) {
     if (!tag) continue;
     for (const regex of blockStripRegexes(tag)) noise.push(...rangesForRegex(source, regex));
@@ -289,22 +195,6 @@ function targetRemovalRanges(source: string, tags: string[]): RemovalRange[] {
 
   const masked = maskedSource(source, noise);
   const crop: RemovalRange[] = [];
-  // Preserve original physical-line anchors: remove text outside <content> by masking.
-  const contentBlocks = [...masked.matchAll(RE_CONTENT)];
-  if (contentBlocks.length) {
-    let cursor = 0;
-    for (const block of contentBlocks) {
-      const start = block.index ?? 0;
-      const innerStart = start + block[0].indexOf('>') + 1;
-      const innerEnd = innerStart + block[1].length;
-      crop.push({ start: cursor, end: innerStart });
-      cursor = innerEnd;
-    }
-    crop.push({ start: cursor, end: source.length });
-  } else {
-    // Malformed wrapper: keep narrative but suppress the tag literals.
-    noise.push(...rangesForRegex(source, /<\/?content\b[^>]*>/gi));
-  }
   const startRe = /<bbs_start\b/gi;
   let lastStart = -1;
   for (let match = startRe.exec(masked); match; match = startRe.exec(masked)) lastStart = match.index;
@@ -340,13 +230,7 @@ export function prepareTargetText(mes: string, tags: string[]): PreparedTargetTe
   const source = String(mes ?? '');
   const ranges = targetRemovalRanges(source, tags);
   const segments = sourceLineRanges(source)
-    .flatMap(line =>
-      retainedLineSegments(source, line, ranges).map(piece => ({
-        sourceLine: line.index,
-        charOffset: piece.end,
-        text: piece.text,
-      })),
-    )
+    .map(line => ({ sourceLine: line.index, text: retainedLineText(source, line, ranges) }))
     .filter(segment => !!segment.text)
     .map((segment, index) => ({ id: `P${index + 1}`, ...segment }));
   return {

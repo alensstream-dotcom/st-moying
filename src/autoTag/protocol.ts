@@ -1,14 +1,16 @@
 import { normalizeOrientation, type Orientation } from '@/backends/size';
+import { parseSceneEvents, type SceneEvent } from '@/state/sceneState';
 import type { TargetSegment } from '@/autoTag/clean';
 import { FORBIDDEN_SUBTAG, serializeImageTag } from '@/st/imageTagRegex';
 import {
   CHAR_TAG_FIELDS,
-  normalizeCharAge,
   type CharTagField,
   type CharTagHistoryField,
 } from '@/state/charTags';
 
 export interface ImageCharacterPrompt {
+  characterId?: string;
+  work?: string;
   name: string;
   tag: string;
   nl: string;
@@ -19,11 +21,6 @@ export interface ImageInsertion {
   position: string;
   /** 位置 ID 对应的原始物理行(0-based，仅插件内部使用)。 */
   sourceLine: number;
-  /**
-   * 该位置对应的句子在**原始物理行内**的结束偏移(不含)。0 = 未知,退回行尾插入。
-   * injectImageTags 用它把 tag 插到那句话后面,而不是整段后面(见 clean.ts 的 TargetSegment)。
-   */
-  charOffset: number;
   /** danbooru 短 tag 部分(必填)。 */
   tag: string;
   /** 自然语言部分(可空;ComfyUI「生成自然语言」开启时由模型一并输出)。 */
@@ -36,6 +33,7 @@ export interface ImageInsertion {
 }
 
 export interface ImagePlan {
+  sceneEvents?: SceneEvent[];
   images: ImageInsertion[];
   /** AI 报告的角色库变更(建档/字段更新);调用方负责落库。 */
   changes: CharChange[];
@@ -62,7 +60,6 @@ export interface CharChange {
 const HISTORY_FIELDS: ReadonlySet<string> = new Set([
   'fandom',
   'sex',
-  'age',
   'hair',
   'eyes',
   'skin',
@@ -122,20 +119,16 @@ function jsonObjects(raw: string): string[] {
 }
 
 function parseObject(raw: string): Record<string, unknown> {
-  let firstObject: Record<string, unknown> | null = null;
   for (const candidate of jsonObjects(raw)) {
     try {
       const value: unknown = JSON.parse(candidate);
       if (value && typeof value === 'object' && !Array.isArray(value)) {
-        const object = value as Record<string, unknown>;
-        if (Array.isArray(object.images)) return object;
-        firstObject ??= object;
+        return value as Record<string, unknown>;
       }
     } catch {
       // 尝试下一个候选 JSON 块。
     }
   }
-  if (firstObject) return firstObject;
   throw new Error('AI 没有返回可解析的 JSON 对象');
 }
 
@@ -160,7 +153,10 @@ function sanitizeCharacters(value: unknown, imageIndex: number): ImageCharacterP
       const name = sanitizeContent(item.name, `characters[${index}].name`, imageIndex);
       const tag = sanitizeContent(item.tag ?? item.prompt, `characters[${index}].tag`, imageIndex);
       const nl = sanitizeContent(item.nl, `characters[${index}].nl`, imageIndex);
-      if (name && tag) characters.push({ name, tag, nl });
+      if (name && tag) characters.push({ name, tag, nl,
+        ...(typeof item.characterId === 'string' ? { characterId: item.characterId.trim() } : {}),
+        ...(typeof item.work === 'string' ? { work: item.work.trim() } : {}),
+      });
     } catch {
       // A malformed character prompt must not discard an otherwise valid image plan.
     }
@@ -196,8 +192,6 @@ export function parseImagePlan(
     Math.max(0, Math.floor(Number(minImages)) || 0),
   );
   const positions = new Map(segments.map(segment => [segment.id, segment.sourceLine]));
-  // 行内落位用:同一行可能切出多个句子级段,故按 id 取整段而不是只取行号。
-  const segmentById = new Map(segments.map(segment => [segment.id, segment]));
 
   const images: ImageInsertion[] = [];
   for (let index = 0; index < parsed.images.length; index += 1) {
@@ -207,11 +201,10 @@ export function parseImagePlan(
     }
     const entry = item as Record<string, unknown>;
     const position = sanitizePosition(entry.position ?? entry.id, index);
-    const segment = segmentById.get(position);
-    if (!segment) {
+    const sourceLine = positions.get(position);
+    if (sourceLine === undefined) {
       throw new Error(`images[${index}].position=${position} 不在目标正文可选位置中`);
     }
-    const sourceLine = segment.sourceLine;
     // 兼容模型按旧协议/习惯返回 prompt 键的情况
     const tag = sanitizeContent(entry.tag ?? entry.prompt, 'tag', index);
     if (!tag) throw new Error(`images[${index}].tag 不能为空`);
@@ -220,16 +213,7 @@ export function parseImagePlan(
     const characters = sanitizeCharacters(entry.characters, index);
     // 兼容模型按习惯返回 orientation / aspect 键
     const size = normalizeOrientation(entry.size ?? entry.orientation ?? entry.aspect);
-    images.push({
-      position,
-      sourceLine,
-      charOffset: segment.charOffset ?? 0,
-      tag,
-      nl,
-      negative,
-      characters,
-      size,
-    });
+    images.push({ position, sourceLine, tag, nl, negative, characters, size });
   }
 
   const limitedImages = images.slice(0, normalizedMax);
@@ -238,8 +222,10 @@ export function parseImagePlan(
       `AI 返回了 ${limitedImages.length} 张图片，少于设置的最少图片数 ${normalizedMin}`,
     );
   }
+
   return {
     images: limitedImages,
+    ...(Array.isArray(parsed.sceneEvents) ? { sceneEvents: parseSceneEvents(parsed.sceneEvents, positions) } : {}),
     changes: parseChanges(parsed.changes, positions),
   };
 }
@@ -264,12 +250,7 @@ function firstPosition(positions: Map<string, number>): { position: string; sour
   return { position: '', sourceLine: 0 };
 }
 
-/**
- * 建档字段:hair 与 eyes 是二次元身份锚点,缺任一条则该条建档不可用(调用方丢弃)。
- *
- * age 在此归一成规范词(`teenager`、`mature female`);模型常直接抄正文里的
- * 「刚毕业的大学生」,不归一会让每张图各猜一个年龄。
- */
+/** 建档字段:hair 与 eyes 是二次元身份锚点,缺任一条则该条建档不可用(调用方丢弃)。 */
 function parseNewFields(raw: Record<string, unknown>): string | null {
   const fields: Partial<Record<CharTagField, string>> = {};
   for (const field of CHAR_TAG_FIELDS) {
@@ -277,7 +258,6 @@ function parseNewFields(raw: Record<string, unknown>): string | null {
     const text = typeof value === 'string' ? value.trim().replace(/[\r\n]+/g, ' ') : '';
     if (text) fields[field] = text;
   }
-  if (fields.age) fields.age = normalizeCharAge(fields.age);
   if (!fields.hair || !fields.eyes) return null;
   return JSON.stringify(fields);
 }
@@ -314,15 +294,7 @@ function parseChanges(raw: unknown, positions: Map<string, number>): CharChange[
   return out;
 }
 
-/**
- * 保持原文及原换行符不变，把 tag 插进模型选中的位置。
- *
- * 落位口径(0.4.1 起):优先**行内句子末尾**(charOffset)，其次整行行尾。
- * 旧实现一律插在物理行之后，于是「一行好几句话」的正文里，一张配第三句的图
- * 会掉到整段末尾——事后描写之后，看起来就是图和剧情对不上。现在只要该位置
- * 知道自己在行内的结束偏移，tag 就钉在那句话后面，并把该行剩余内容接在 tag 之后
- * 换行继续，读起来就是图夹在两段叙事中间。
- */
+/** 保持原文及原换行符不变，只在模型选择的位置 ID 对应源码行之后插入 tag。 */
 export function injectImageTags(source: string, images: ImageInsertion[]): string {
   if (!images.length) return source;
   const lines = sourceLines(source);
@@ -341,41 +313,15 @@ export function injectImageTags(source: string, images: ImageInsertion[]): strin
   let output = '';
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
+    output += line.text;
     const inserted = byLine.get(index) ?? [];
     const insertedEol = line.eol || fallbackEol;
-    if (!inserted.length) {
-      output += line.text + line.eol;
-      continue;
+    // 序列化口径见 st/imageTagRegex.ts 的 serializeImageTag（与手动编辑弹窗共用同一份，
+    // 两处漂移会让「解析出的字段」与「落进正文的原文」对不上，而 promptHash 吃的是原文）。
+    for (const image of inserted) {
+      output += `${insertedEol}${serializeImageTag(image)}`;
     }
-
-    // 稳定排序:同一偏移的多张图保持模型给出的原相对顺序
-    const ordered = inserted
-      .map((image, order) => ({ image, order }))
-      .sort((a, b) => (a.image.charOffset || 0) - (b.image.charOffset || 0) || a.order - b.order)
-      .map(item => item.image);
-
-    const inline: ImageInsertion[] = [];
-    const tail: ImageInsertion[] = [];
-    for (const image of ordered) {
-      const at = Math.round(Number(image.charOffset) || 0);
-      if (at > 0 && at < line.text.length) inline.push({ ...image, charOffset: at });
-      else tail.push(image);
-    }
-
-    let piece = '';
-    let cursor = 0;
-    for (const image of inline) {
-      piece += line.text.slice(cursor, image.charOffset);
-      // 序列化口径见 st/imageTagRegex.ts 的 serializeImageTag（与手动编辑弹窗共用同一份，
-      // 两处漂移会让「解析出的字段」与「落进正文的原文」对不上，而 promptHash 吃的是原文）。
-      piece += `${insertedEol}${serializeImageTag(image)}${insertedEol}`;
-      cursor = image.charOffset;
-      // 吃掉句后原有的空白/缩进,免得 tag 后面拖出一串空格
-      while (cursor < line.text.length && /[ \t]/.test(line.text[cursor])) cursor += 1;
-    }
-    piece += line.text.slice(cursor);
-    for (const image of tail) piece += `${insertedEol}${serializeImageTag(image)}`;
-    output += piece + line.eol;
+    output += line.eol;
   }
   return output;
 }

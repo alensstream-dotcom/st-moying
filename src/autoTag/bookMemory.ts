@@ -187,7 +187,7 @@ export function readBookMemory(
         }
       }
       if (!snapshot) {
-        console.warn('[墨影] 柏宝书在读取期间持续变化，本次不附带角色参考');
+        console.warn('[柏宝绘] 柏宝书在读取期间持续变化，本次不附带角色参考');
         return null;
       }
     }
@@ -197,7 +197,7 @@ export function readBookMemory(
     if (!text) return null;
     return { timing, text: buildMemoryText(text), roles };
   } catch (error) {
-    console.warn('[墨影] 读取柏宝书角色状态失败，本次仅使用最近正文', error);
+    console.warn('[柏宝绘] 读取柏宝书角色状态失败，本次仅使用最近正文', error);
     return null;
   }
 }

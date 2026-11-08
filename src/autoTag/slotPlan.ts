@@ -59,12 +59,6 @@ export function buildSlotTaskNote(rawSource: string, seq: number, maxSummary = M
   }
   if (occupied.length) {
     lines.push('', '本楼其余画面（它们各自的提示词已经确定，不要把它们的画面抢过来，也不要改动它们）：', ...occupied);
-    lines.push(
-      '',
-      '服装锁定：这一楼的角色服装已经定下来了。重写时沿用上面这些画面里出现的那套，不要换款、不要改色、不要改长度；',
-      '只允许在服装串末尾追加衣物状态词（unzipped / slipped down / wet / clinging / pulled aside / torn）。',
-      '正文若没有在这一句前后写出换衣、脱下或衣物被毁，服装串就必须与相邻画面逐字一致——同一段剧情里同一角色换衣服是明显的错。',
-    );
   }
   return lines.join('\n');
 }

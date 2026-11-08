@@ -10,6 +10,4 @@ CLAUDE.md
 .pnpm-store/
 AGENTS.md
 .pi/
-/data/
-.tmp-build/
-.tmp/
+data/

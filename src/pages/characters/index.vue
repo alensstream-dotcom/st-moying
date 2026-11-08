@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import BbiTextarea from '@/components/BbiTextarea.vue';
+import VisualStudio from './VisualStudio.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Icon from '@/components/Icon.vue';
+import Collapsible from '@/components/Collapsible.vue';
+import { confirmIdentity, refreshSceneStore, sceneStore, undoIdentityConfirmation } from '@/state/sceneStore';
 import ModalMask from '@/components/ModalMask.vue';
 import { generateCharTags } from '@/autoTag/charAnchors';
 import { readBookMemory } from '@/autoTag/bookMemory';
@@ -28,7 +31,11 @@ import {
   upsertGlobalCharTag,
 } from '@/state/globalCharTags';
 import { getContext } from '@/st/context';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+
+const indexMode = ref<'heroine' | 'all'>('heroine');
+const indexedCharacters = computed(() => sceneStore.current.characters.filter(c => indexMode.value === 'all' || c.isHeroine));
+watch(() => charTagLib.entries, refreshSceneStore, { immediate: true });
 
 /**
  * 角色管理 —— 两层固定外貌库:
@@ -66,7 +73,6 @@ const pendingRollback = ref<{ name: string; record: CharTagChangeRecord } | null
 const FIELD_PLACEHOLDERS: Record<CharTagField, string> = {
   fandom: '同人角色填: character name (copyright name), 不带转义括号; 原创留空',
   sex: '如 1girl / 1boy',
-  age: '如 young adult / teenager / mature female / child',
   hair: '如 long black hair',
   eyes: '如 red eyes',
   skin: '如 pale skin(可不填)',
@@ -192,11 +198,11 @@ function confirmEntry() {
   if (!d) return;
   const name = d.name.trim();
   if (!name) {
-    toastr.warning('角色名不能为空', '墨影');
+    toastr.warning('角色名不能为空', '柏宝绘');
     return;
   }
   if (!previewTag.value) {
-    toastr.warning('至少填一个外貌字段(或整串 tag)', '墨影');
+    toastr.warning('至少填一个外貌字段(或整串 tag)', '柏宝绘');
     return;
   }
   const entryData: CharTagEntry = {
@@ -237,7 +243,7 @@ function confirmPromote() {
   confirmPromoteOpen.value = false;
   if (!editingName.value) return;
   if (promoteCharTagToGlobal(editingName.value)) {
-    toastr.success(`「${editingName.value}」已提升为全局角色,所有聊天生效`, '墨影');
+    toastr.success(`「${editingName.value}」已提升为全局角色,所有聊天生效`, '柏宝绘');
   }
   closeEntry();
 }
@@ -246,7 +252,7 @@ function copyToChat() {
   if (!editingName.value) return;
   const name = editingName.value;
   if (copyGlobalCharTagToChat(name)) {
-    toastr.success(`已把「${name}」复制到本聊天,之后本聊天以副本为准`, '墨影');
+    toastr.success(`已把「${name}」复制到本聊天,之后本聊天以副本为准`, '柏宝绘');
   }
   closeEntry();
 }
@@ -257,13 +263,13 @@ async function regenerateFromBook() {
   if (!d) return;
   const name = d.name.trim();
   if (!name) {
-    toastr.warning('先填写角色名', '墨影');
+    toastr.warning('先填写角色名', '柏宝绘');
     return;
   }
   const ctx = getContext();
   const floor = (ctx?.chat.length ?? 0) - 1;
   if (!ctx || floor < 0) {
-    toastr.info('当前没有打开的聊天', '墨影');
+    toastr.info('当前没有打开的聊天', '柏宝绘');
     return;
   }
   regenerating.value = true;
@@ -271,12 +277,12 @@ async function regenerateFromBook() {
     const memory = readBookMemory(floor, ctx.chat[floor]?.mes ?? '', ctx.name1);
     const role = memory?.roles.find(r => r.name === name);
     if (!role?.desc) {
-      toastr.info('柏宝书最新状态里没有该角色的外貌记录,可手动填写', '墨影');
+      toastr.info('柏宝书最新状态里没有该角色的外貌记录,可手动填写', '柏宝绘');
       return;
     }
     const [result] = await generateCharTags([{ name, desc: role.desc }]);
     if (!result) {
-      toastr.warning('模型没有返回该角色的 tag,请重试或手动填写', '墨影');
+      toastr.warning('模型没有返回该角色的 tag,请重试或手动填写', '柏宝绘');
       return;
     }
     const fields = { ...emptyCharFields(), ...result.fields };
@@ -284,9 +290,9 @@ async function regenerateFromBook() {
     d.raw = '';
     draftSource.value = 'book';
     draftDesc.value = role.desc;
-    toastr.success('已按柏宝书最新外貌生成,点「完成」保存', '墨影');
+    toastr.success('已按柏宝书最新外貌生成,点「完成」保存', '柏宝绘');
   } catch (error) {
-    toastr.error(error instanceof Error ? error.message : String(error), '墨影');
+    toastr.error(error instanceof Error ? error.message : String(error), '柏宝绘');
   } finally {
     regenerating.value = false;
   }
@@ -312,9 +318,9 @@ function confirmRollback() {
   pendingRollback.value = null;
   if (!p) return;
   if (rollbackCharTag(p.name, p.record)) {
-    toastr.success(`已回滚「${p.name}」的${fieldLabel(p.record.field)}变更`, '墨影');
+    toastr.success(`已回滚「${p.name}」的${fieldLabel(p.record.field)}变更`, '柏宝绘');
   } else {
-    toastr.warning('回滚失败:条目可能已删除', '墨影');
+    toastr.warning('回滚失败:条目可能已删除', '柏宝绘');
   }
 }
 
@@ -331,8 +337,25 @@ function sourceLabel(entry: CharTagEntry): string {
     <hr class="bbi-rule" />
 
     <p class="bbi-field-hint">
-      角色固定外貌库:生成 tag 时 AI 照抄库中字段,@角色名 占位符也会被替换为库中最新外貌,稳定不漂移。
+      已命名的出镜人物使用独立形象记录和段落穿搭状态。下面的原有外貌库仍可编辑；绘图性别词不作为身份依据。
     </p>
+    <VisualStudio />
+    <Collapsible title="人物身份与当前穿搭（女主筛选 / 全部人物索引）" :open="false">
+      <button class="bbi-btn" @click="indexMode = indexMode === 'heroine' ? 'all' : 'heroine'">{{ indexMode === 'heroine' ? '查看全部人物' : '只看女主' }}</button>
+      <button class="bbi-btn" @click="refreshSceneStore">刷新状态</button>
+      <button class="bbi-btn" @click="undoIdentityConfirmation">撤销上次身份确认</button>
+      <p class="bbi-field-hint">旧库只读迁移，不会删除记录。旧 AI 的 1girl 不视为女性证据；身份不明的人请在“全部人物”中核对。确认女性与加入女主库是两个独立操作。</p>
+      <p v-if="!indexedCharacters.length" class="bbi-field-hint">暂无符合条件的人物。</p>
+      <details v-for="character in indexedCharacters" :key="character.characterId">
+        <summary>{{ character.name }} · {{ character.identity.gender }} · {{ character.isHeroine ? '女主' : '非女主/待核对' }}</summary>
+        <button class="bbi-btn" @click="confirmIdentity(character, 'male', false)">确认男性</button>
+        <button class="bbi-btn" @click="confirmIdentity(character, 'female', false)">确认女性</button>
+        <button class="bbi-btn" @click="confirmIdentity(character, 'female', true)">确认为女性并加入女主</button>
+        <button class="bbi-btn" @click="confirmIdentity(character, 'unknown', false)">标为未知并移出女主</button>
+        <pre style="white-space: pre-wrap; overflow-wrap: anywhere">{{ JSON.stringify(character, null, 2) }}</pre>
+      </details>
+      <p v-for="warning in sceneStore.current.warnings" :key="warning" class="bbi-field-hint">{{ warning }}</p>
+    </Collapsible>
 
     <!-- ===== 全局角色库 ===== -->
     <div class="bbi-char-section">
