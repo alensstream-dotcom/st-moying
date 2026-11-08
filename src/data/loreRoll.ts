@@ -20,7 +20,7 @@ export type RollKind = 'wardrobe' | 'pose' | 'fandom';
  *   骨架(1 条) → 部件丰富(0–2 个 tag) → 氛围修饰(2 个) → 机位(1 个)
  * 当输入留空时，从全库中完全随机抽取，让用户能随时随地「探索新灵感」；
  * 当输入关键词在库里有收录时，精准按关键词召回骨架；
- * 当输入的词库里未收录时，自动基于关键词自由构图，绝不报错拦截。
+ * 服装/姿势保留自由构图；同人未命中时交给调用层通过 LLM 解析后再出图。
  */
 export interface RollResult {
   /** 建议存进库的名字：关键词 + 随机后缀，避免同名冲突。 */
@@ -38,6 +38,10 @@ export interface RollResult {
   /** 匹配到的原始条目 id（同人条目保存预览图时作为索引键） */
   id?: string;
   franchise?: string;
+  materialTags?: string;
+  hair?: string;
+  eyes?: string;
+  resolutionNote?: string;
 }
 
 type Rng = () => number;
@@ -130,57 +134,44 @@ function matchItems<T extends { name: string; tags: string; aliases: string[]; c
   return scored.filter(s => s.score >= topThreshold).map(s => s.item);
 }
 
+export function normalizeFandomQuery(value: string): string {
+  const from = '寧愛電將軍麗絲華葉風雲櫻兒學國師羅亞夢龍緋紅綠銀髮優蘭雙瀨繪裡曉時崎宮輝夜蓮澤';
+  const to   = '宁爱电将军丽丝华叶风云樱儿学国师罗亚梦龙绯红绿银发优兰双濑绘里晓时崎宫辉夜莲泽';
+  return [...value.normalize('NFKC').toLowerCase()].map(c => { const i = from.indexOf(c); return i < 0 ? c : to[i]; }).join('').replace(/[\s_·・:：()（）\\-]/g, '');
+}
+
 /** 匹配同人角色条目：名字、作品、别名、发色、瞳色、tag 串任一处包含即算。若 keyword 为空，返回全部条目。 */
-export function matchFandomItems(
-  items: readonly FandomPreset[],
-  keyword: string,
-): FandomPreset[] {
-  const kw = keyword.trim().toLowerCase();
+export function matchFandomItems(items: readonly FandomPreset[], keyword: string): FandomPreset[] {
+  const kw = normalizeFandomQuery(keyword);
   if (!kw) return [...items];
-  const scored: { item: FandomPreset; score: number }[] = [];
-
-  for (const item of items) {
-    let score = 0;
-    const nameLower = item.name.toLowerCase();
-    const frLower = item.franchise.toLowerCase();
-
-    if (nameLower === kw) {
-      score = Math.max(score, 100);
-    } else if (nameLower.includes(kw)) {
-      score = Math.max(score, 50);
-    }
-
-    for (const alias of item.aliases) {
-      const aLower = alias.toLowerCase();
-      if (aLower === kw) {
-        score = Math.max(score, 100);
-      } else if (aLower.includes(kw)) {
-        score = Math.max(score, 50);
-      } else if (kw.length > 2 && aLower.length >= 2 && kw.includes(aLower)) {
-        score = Math.max(score, 20 + aLower.length);
-      }
-    }
-
-    if (frLower === kw || frLower.includes(kw) || kw.includes(frLower)) {
-      score = Math.max(score, 30);
-    }
-
-    if (item.tags.toLowerCase().includes(kw)) {
-      score = Math.max(score, 15);
-    }
-    if (item.hair?.toLowerCase().includes(kw) || item.eyes?.toLowerCase().includes(kw)) {
-      score = Math.max(score, 10);
-    }
-
-    if (score > 0) {
-      scored.push({ item, score });
-    }
+  const aliasCounts = new Map<string, number>();
+  for (const item of items) for (const alias of new Set(item.aliases.map(normalizeFandomQuery))) {
+    if (alias) aliasCounts.set(alias, (aliasCounts.get(alias) ?? 0) + 1);
   }
-
+  const scored = items.map(item => {
+    const name = normalizeFandomQuery(item.name), work = normalizeFandomQuery(item.franchise);
+    let score = 0;
+    if (name === kw) score = 100;
+    else if (name && name.includes(kw)) score = 50;
+    else if (name.length >= 2 && kw.includes(name)) score = 80;
+    for (const alias of item.aliases) {
+      const a = normalizeFandomQuery(alias);
+      if (!a) continue;
+      if (a === kw) score = Math.max(score, 100);
+      else if (a.includes(kw)) score = Math.max(score, 50);
+      // A shared work alias inside a longer query must not hide an unknown character.
+      else if (a.length >= 2 && kw.includes(a) && (aliasCounts.get(a) ?? 0) <= 2 && a !== work) score = Math.max(score, 70);
+    }
+    if (work && (work === kw || work.includes(kw))) score = Math.max(score, 30);
+    if (normalizeFandomQuery(item.tags).includes(kw)) score = Math.max(score, 15);
+    if ([item.hair, item.eyes].some(t => t && normalizeFandomQuery(t).includes(kw))) score = Math.max(score, 10);
+    // When a work is supplied, favor the matching version of a shared character name.
+    if (score >= 50 && work && kw.includes(work) && kw !== work) score += 5;
+    return { item, score };
+  }).filter(s => s.score > 0);
   if (!scored.length) return [];
-  const maxScore = Math.max(...scored.map(s => s.score));
-  const topThreshold = maxScore >= 50 ? 50 : maxScore >= 30 ? 30 : 10;
-  return scored.filter(s => s.score >= topThreshold).map(s => s.item);
+  const best = Math.max(...scored.map(s => s.score));
+  return scored.filter(s => s.score === best).map(s => s.item);
 }
 
 function uniquePush(target: string[], tags: string[], limit: number): void {
@@ -331,26 +322,9 @@ export function rollFandom(keyword: string = '', rng: Rng = DEFAULT_RNG): RollRe
   const pool = kw ? matchFandomItems(all, kw) : all;
   const seed = Math.floor(rng() * 1e9);
 
-  let source: FandomPreset;
-  let isCustom = false;
-
-  if (pool.length) {
-    source = pick(pool, rng) as FandomPreset;
-  } else if (kw) {
-    isCustom = true;
-    source = {
-      id: `fx-custom-${seed}`,
-      name: kw,
-      franchise: '自由同人',
-      tags: kw,
-      hair: '',
-      eyes: '',
-      aliases: [kw],
-      nsfw: 1,
-    };
-  } else {
-    return null;
-  }
+  // Unknown names must be resolved by the saved LLM before image generation.
+  if (!pool.length) return null;
+  const source = pick(pool, rng) as FandomPreset;
 
   const tags = splitTags(source.tags);
   const shot = pick(
@@ -365,13 +339,14 @@ export function rollFandom(keyword: string = '', rng: Rng = DEFAULT_RNG): RollRe
 
   return {
     id: source.id,
+    materialTags: source.tags, hair: source.hair, eyes: source.eyes,
     name: `${source.name}${franchiseLabel}`,
     tags: tags.join(', '),
     aliases: source.aliases,
     category: source.franchise || 'fandom',
     slot: 'fandom',
     nsfw: source.nsfw,
-    source: isCustom ? '自由同人' : `${source.name}${franchiseLabel}`,
+    source: `${source.name}${franchiseLabel}`,
     seed,
     kind: 'fandom',
     franchise: source.franchise,

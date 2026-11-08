@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue';
+import { resolveFandomRoll } from '@/autoTag/fandomRoll';
 import ModalMask from '@/components/ModalMask.vue';
 import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
 import { BODY_EXTRA, FACE_EXTRA, FANDOM_EXTRA } from '@/data/faceExtra';
@@ -7,6 +8,9 @@ import { FANDOM_EXTRA_2 } from '@/data/fandomExtra2';
 import { POSE_CATEGORIES } from '@/data/poseBank';
 import { WARDROBE_CATEGORIES } from '@/data/wardrobe';
 import {
+  addCustomFandom,
+  updateCustomFandom,
+  customFandom,
   addCustomPose,
   addCustomWardrobe,
   clearCustomLore,
@@ -40,7 +44,6 @@ import {
   type ThumbTask,
 } from '@/data/loreThumbJob';
 import {
-  rollFandom,
   rollPose,
   rollPoolSize,
   rollWardrobe,
@@ -196,7 +199,7 @@ const faceCards: LoreCard[] = [
     extra: [item.franchise, item.hair, item.eyes, item.companion].filter(Boolean).join(' · '),
     field: 'fandom' as CharTagField,
     group: 'fandom',
-    groupLabel: '同人 tag',
+    groupLabel: '同人角色',
   })),
 ];
 
@@ -210,7 +213,7 @@ let flashTimer: number | undefined;
 
 /** 自定义条目的 id 前缀：u- 服装 / up- 姿势，内置表不会用这两个前缀。 */
 function isCustomId(id: string): boolean {
-  return id.startsWith('u-') || id.startsWith('up-');
+  return id.startsWith('u-') || id.startsWith('up-') || id.startsWith('uf-');
 }
 
 const SLOT_OPTIONS = Object.entries(WARDROBE_SLOT_LABELS).map(([id, label]) => ({ id, label }));
@@ -218,7 +221,10 @@ const SLOT_OPTIONS = Object.entries(WARDROBE_SLOT_LABELS).map(([id, label]) => (
 const allCards = computed<LoreCard[]>(() => {
   if (tab.value === 'wardrobe') return wardrobeCards.value;
   if (tab.value === 'pose') return poseCards.value;
-  return faceCards;
+  revision.value;
+  return [...faceCards, ...customFandom().map(item => ({ id: item.id, name: item.name, tags: item.tags, aliases: item.aliases,
+    nsfw: item.nsfw, quality: item.quality, note: item.note, extra: [item.franchise, item.hair, item.eyes].filter(Boolean).join(' · '),
+    field: 'fandom' as CharTagField, group: 'fandom', groupLabel: '同人角色', custom: true }))];
 });
 
 /** 关键字命中:名字 / tag 串 / 中文触发词,任一含子串即算。 */
@@ -602,7 +608,7 @@ function toast(text: string) {
 
 /* —— 自定义素材：新增 / 导入 / 导出 / 删除 —— */
 const addingOpen = ref(false);
-const addingKind = ref<'wardrobe' | 'pose'>('wardrobe');
+const addingKind = ref<'wardrobe' | 'pose' | 'fandom'>('wardrobe');
 const draftName = ref('');
 const draftTags = ref('');
 const draftAliases = ref('');
@@ -646,9 +652,15 @@ const rollResult = ref<RollResult | null>(null);
 const rollBusy = ref(false);
 const rollUrl = ref('');
 let rollBlob: Blob | null = null;
+let rollController: AbortController | null = null;
+const rollChoices = ref<RollResult[]>([]);
+const rollFeedback = ref('');
+watch(rollKeyword, () => { if (!rollBusy.value) clearRollResult(); });
+watch(rollOpen, open => { if (!open) { rollController?.abort(); rollController = null; rollBusy.value = false; } });
+onUnmounted(() => { rollController?.abort(); clearRollResult(); });
 
 const rollPool = computed(() => {
-  return rollPoolSize(rollKeyword.value, rollKind.value);
+  revision.value; return rollPoolSize(rollKeyword.value, rollKind.value);
 });
 
 const rollPlaceholder = computed(() => {
@@ -666,6 +678,8 @@ function clearRollResult() {
   rollUrl.value = '';
   rollBlob = null;
   rollResult.value = null;
+  rollChoices.value = [];
+  rollFeedback.value = '';
 }
 
 function openRoll() {
@@ -676,7 +690,7 @@ function openRoll() {
 }
 
 function switchRollKind(next: RollKind) {
-  if (rollKind.value === next) return;
+  if (rollBusy.value || rollKind.value === next) return;
   rollKind.value = next;
   clearRollResult();
 }
@@ -701,7 +715,7 @@ function rollPrompt(result: RollResult, kind: RollKind): string {
       .filter(Boolean)
       .join(', ');
   }
-  return [quality, '1girl, solo, looking at viewer', stripFraming(result.tags)]
+  return [quality, '1girl, solo, looking at viewer', stripFraming(result.materialTags ?? result.tags)]
     .filter(Boolean)
     .join(', ');
 }
@@ -723,50 +737,54 @@ function zoomRoll() {
   });
 }
 
-async function doRoll() {
-  const status = backendStatus(loreBackend());
-  if (!status.configured) {
-    toast(`素材预览固定走 NAI：${status.reason || '先去「渠道」页配好 NAI 接入点'}`);
-    return;
-  }
-  const keyword = rollKeyword.value.trim();
-  const kind = rollKind.value;
-  const result =
-    kind === 'fandom'
-      ? rollFandom(keyword)
-      : kind === 'pose'
-        ? rollPose(keyword)
-        : rollWardrobe(keyword);
-
-  if (!result) {
-    toast('未能生成搭配，请尝试换一个词');
-    return;
-  }
-  clearRollResult();
-  rollResult.value = result;
-  rollBusy.value = true;
+async function renderRollPreview(result: RollResult, kind: RollKind, signal: AbortSignal) {
+  const model = settings.autoTag.lore.thumbModel.trim();
+  const output = await generateImage({ prompt: rollPrompt(result, kind), backend: loreBackend(), genPresetId: lorePresetId(),
+    seed: decideSeed(loreBackend()), size: 'portrait', ...(model ? { naiModel: model } : {}) }, signal);
   try {
-    const model = settings.autoTag.lore.thumbModel.trim();
-    const output = await generateImage({
-      prompt: rollPrompt(result, kind),
-      backend: loreBackend(),
-      genPresetId: lorePresetId(),
-      seed: decideSeed(loreBackend()),
-      size: 'portrait',
-      ...(model ? { naiModel: model } : {}),
-    });
-    const blob = await fetch(output.result.url).then(response => response.blob());
-    output.result.revoke();
-    rollBlob = blob;
-    rollUrl.value = URL.createObjectURL(blob);
+    const response = await fetch(output.result.url, { signal });
+    if (!response.ok) throw new Error(`预览读取失败 (${response.status})`);
+    const blob = await response.blob();
+    if (signal.aborted) return;
+    rollBlob = blob; rollUrl.value = URL.createObjectURL(blob);
+  } finally { output.result.revoke(); }
+}
+async function doRoll(selected?: RollResult) {
+  if (rollBusy.value) return;
+  const status = backendStatus(loreBackend());
+  if (!status.configured) { toast(`素材预览固定走 NAI：${status.reason || '先配置 NAI 接入点'}`); return; }
+  const keyword = rollKeyword.value.trim(), kind = rollKind.value;
+  const controller = new AbortController(); rollController = controller;
+  clearRollResult(); rollBusy.value = true;
+  try {
+    let result = selected;
+    if (!result && kind === 'fandom') {
+      rollFeedback.value = '正在匹配中文名与作品；本地未命中时使用已保存的自动 tag LLM…';
+      const candidates = await resolveFandomRoll(keyword, controller.signal);
+      if (controller.signal.aborted) return;
+      if (candidates.length > 1) { rollChoices.value = candidates; rollFeedback.value = '找到多个角色/作品，请选择一个后生成预览（尚未提交生图）'; return; }
+      result = candidates[0];
+    } else if (!result) result = (kind === 'pose' ? rollPose(keyword) : rollWardrobe(keyword)) ?? undefined;
+    if (!result) throw new Error('没有可用候选，请补充角色名和作品');
+    if (controller.signal.aborted) return;
+    rollResult.value = result;
+    rollFeedback.value = result.resolutionNote || '正在生成预览…';
+    await renderRollPreview(result, kind, controller.signal);
   } catch (error) {
-    toast(error instanceof Error ? error.message : '生成失败');
-  } finally {
-    rollBusy.value = false;
-  }
+    if (!controller.signal.aborted) { rollFeedback.value = error instanceof Error ? error.message : '解析或生成失败'; toast(rollFeedback.value); }
+  } finally { if (rollController === controller) { rollBusy.value = false; rollController = null; } }
+}
+async function redrawRoll() {
+  const selected = rollResult.value; if (selected) await doRoll(selected);
 }
 
 async function adoptRoll() {
+  if (rollBusy.value) return;
+  rollBusy.value = true;
+  try { await saveRoll(); } catch (error) { toast(error instanceof Error ? error.message : '保存失败'); }
+  finally { rollBusy.value = false; }
+}
+async function saveRoll() {
   const result = rollResult.value;
   if (!result || !rollBlob) {
     toast('先 roll 出一张图再存');
@@ -784,24 +802,14 @@ async function adoptRoll() {
       clearRollResult();
       return;
     }
-    const saved = addCustomWardrobe({
-      name: result.name,
-      tags: result.tags,
-      aliases: result.aliases.join(', '),
-      nsfw: result.nsfw,
-      note: `roll 自「${result.source}」`,
-      category: 'cosplay',
-      slot: 'full',
-    });
-    if (!saved.ok || !saved.item) {
-      toast(saved.error ?? '保存失败');
-      return;
-    }
-    await putThumb(thumbKey('wardrobe', saved.item.id), rollBlob, rollPrompt(result, 'fandom'));
-    rollBlob = null;
-    bumpLore();
-    thumbChecked.clear();
-    toast('已存进素材库（自定义同人），连带预览图一起');
+    const saved = addCustomFandom({ name: result.name, tags: result.materialTags ?? result.tags,
+      aliases: [...new Set([...result.aliases, rollKeyword.value.trim()])].filter(Boolean).join(', '), franchise: result.franchise ?? '',
+      hair: result.hair, eyes: result.eyes, nsfw: result.nsfw, note: `${result.source}；${result.resolutionNote ?? ''}` });
+    if (!saved.ok || !saved.item) { toast(saved.error ?? '保存失败'); return; }
+    const key = thumbKey('face', saved.item.id);
+    await putThumb(key, rollBlob, rollPrompt(result, 'fandom')); mountThumb(key, rollBlob); rollBlob = null;
+    bumpLore(); thumbChecked.clear(); tab.value = 'face'; activeCategory.value = 'all';
+    toast('已存进同人素材库，中文别名和预览图一并保存');
     rollOpen.value = false;
     clearRollResult();
     return;
@@ -851,7 +859,7 @@ function applyRollToChar() {
   startApply({
     id: result.id ?? `roll-${result.seed}`,
     name: result.name,
-    tags: result.tags,
+    tags: result.kind === 'fandom' ? result.materialTags ?? result.tags : result.tags,
     aliases: result.aliases,
     nsfw: result.nsfw,
     extra: result.source,
@@ -891,12 +899,13 @@ const editingId = ref<string | null>(null);
  */
 function openEdit(card: LoreCard) {
   const pose = tab.value === 'pose';
+  const fandom = customFandom().find(m => m.id === card.id);
   editingId.value = card.id;
-  addingKind.value = pose ? 'pose' : 'wardrobe';
+  addingKind.value = fandom ? 'fandom' : pose ? 'pose' : 'wardrobe';
   draftName.value = card.name;
   draftTags.value = card.tags;
   draftAliases.value = card.aliases.join(', ');
-  draftCategory.value = card.group;
+  draftCategory.value = fandom?.franchise ?? card.group;
   draftSlot.value = card.slot ?? 'full';
   draftNsfw.value = card.nsfw;
   draftCamera.value = card.camera ?? '';
@@ -908,7 +917,12 @@ function openEdit(card: LoreCard) {
 function submitAdd() {
   const nsfw = Math.min(3, Math.max(0, Math.round(Number(draftNsfw.value) || 0))) as NsfwLevel;
   const editing = editingId.value;
-  if (addingKind.value === 'pose') {
+  if (addingKind.value === 'fandom' && editing) {
+    const before = customFandom().find(m => m.id === editing);
+    const result = updateCustomFandom(editing, { name: draftName.value, tags: draftTags.value, aliases: draftAliases.value, franchise: draftCategory.value, nsfw, note: draftNote.value, hair: before?.hair, eyes: before?.eyes });
+    if (!result.ok) { toast(result.error ?? '保存失败'); return; }
+    tab.value = 'face';
+  } else if (addingKind.value === 'pose') {
     const payload = {
       name: draftName.value,
       tags: draftTags.value,
@@ -965,7 +979,7 @@ function submitImport() {
   bumpLore();
   importOpen.value = false;
   toast(
-    `导入完成：服装 +${report.wardrobe}，姿势 +${report.poses}${report.skipped ? `，跳过 ${report.skipped}` : ''}`,
+    `导入完成：服装 +${report.wardrobe}，姿势 +${report.poses}，同人 +${report.fandom ?? 0}${report.skipped ? `，跳过 ${report.skipped}` : ''}`,
   );
 }
 
@@ -980,7 +994,7 @@ async function copyAllCustom() {
 }
 
 function removeCard(card: LoreCard) {
-  const kind = tab.value === 'pose' ? 'pose' : 'wardrobe';
+  const kind = tab.value === 'pose' ? 'pose' : tab.value === 'face' ? 'fandom' : 'wardrobe';
   if (!removeCustomLore(kind, card.id)) return;
   bumpLore();
   toast(`已删除「${card.name}」`);
@@ -988,7 +1002,7 @@ function removeCard(card: LoreCard) {
 
 /** 批量删：只删当前筛出来的自定义条目，内置条目永远不动。 */
 function removeVisibleCustom() {
-  const kind = tab.value === 'pose' ? 'pose' : 'wardrobe';
+  const kind = tab.value === 'pose' ? 'pose' : tab.value === 'face' ? 'fandom' : 'wardrobe';
   const targets = shown.value.filter(card => card.custom);
   if (!targets.length) {
     toast('当前列表里没有自定义条目');
@@ -1255,7 +1269,7 @@ function clearCustom() {
           </button>
         </header>
 
-        <div class="bbi-lore-kind">
+        <div v-if="addingKind !== 'fandom'" class="bbi-lore-kind">
           <button
             class="bbi-btn bbi-btn-sm"
             :class="{ 'bbi-btn-primary': addingKind === 'wardrobe' }"
@@ -1318,8 +1332,9 @@ function clearCustom() {
         </label>
 
         <label class="bbi-modal-field">
-          <span class="bbi-modal-label">分类</span>
-          <select v-model="draftCategory" class="bbi-input">
+          <span class="bbi-modal-label">{{ addingKind === 'fandom' ? '作品' : '分类' }}</span>
+          <input v-if="addingKind === 'fandom'" v-model="draftCategory" class="bbi-input" type="text" />
+          <select v-else v-model="draftCategory" class="bbi-input">
             <option
               v-for="c in addingKind === 'pose' ? POSE_CATEGORIES : WARDROBE_CATEGORIES"
               :key="c.id"
@@ -1496,42 +1511,49 @@ function clearCustom() {
         <div class="bbi-lore-roll-row">
           <input
             v-model="rollKeyword"
+            :disabled="rollBusy"
             class="bbi-input"
             type="text"
             :placeholder="rollPlaceholder"
-            @keydown.enter.prevent="doRoll"
+            @keydown.enter.prevent="doRoll()"
           />
-          <button class="bbi-btn bbi-btn-primary" type="button" :disabled="rollBusy" @click="doRoll">
+          <button class="bbi-btn bbi-btn-primary" type="button" :disabled="rollBusy" @click="doRoll()">
             {{ rollBusy ? '出图中…' : rollResult ? '换一个' : 'Roll' }}
           </button>
         </div>
         <p class="bbi-field-hint">
           <template v-if="rollKeyword.trim()">
             <span v-if="rollPool > 0">库里精准匹配到 {{ rollPool }} 条候选。</span>
-            <span v-else>库里暂无完全匹配的条目，将基于「{{ rollKeyword.trim() }}」自由构图生成。</span>
+            <span v-else>{{ rollKind === 'fandom' ? '本地未命中，将用已保存 LLM 解析中文名和作品；无法确认时不提交生图。' : '库内未命中，将按关键词生成搭配。' }}</span>
           </template>
           <template v-else>
             全库共有 {{ rollPool }} 条可选条目，直接点击即可完全随机抽取。
           </template>
         </p>
 
+        <p v-if="rollFeedback" class="bbi-field-hint" role="status">{{ rollFeedback }}</p>
+        <div v-if="rollChoices.length" class="bbi-lore-roll-row">
+          <button v-for="choice in rollChoices" :key="`${choice.name}-${choice.franchise}`" class="bbi-btn" :disabled="rollBusy" @click="doRoll(choice)">{{ choice.name }} · {{ choice.franchise }}</button>
+        </div>
         <figure v-if="rollUrl" class="bbi-lore-roll-figure">
           <img :src="rollUrl" alt="roll 预览" title="点一下看大图" @click="zoomRoll" />
         </figure>
-        <p v-else-if="rollBusy" class="bbi-field-hint">正在出图……</p>
+        <p v-else-if="rollBusy && rollResult" class="bbi-field-hint">正在出图……</p>
 
         <template v-if="rollResult">
-          <p class="bbi-lore-tags">{{ rollResult.tags }}</p>
+          <p class="bbi-field-hint"><strong>{{ rollResult.name }}</strong></p>
+          <p class="bbi-lore-tags">{{ rollResult.materialTags ?? rollResult.tags }}</p>
           <p class="bbi-field-hint">
             来源「{{ rollResult.source }}」· {{ rollResult.franchise ? `作品 ${rollResult.franchise} · ` : '' }}分类 {{ rollResult.category }} · 尺度 {{ rollResult.nsfw }}
           </p>
         </template>
 
         <div class="bbi-channel-bar">
+          <button v-if="rollResult" class="bbi-btn" :disabled="rollBusy" @click="redrawRoll">重画这个角色</button>
           <button
             class="bbi-btn bbi-btn-primary"
             type="button"
-            :disabled="!rollResult || !rollUrl"
+            :disabled="rollBusy || !rollResult || !rollUrl"
             @click="adoptRoll"
           >
             存进库（含预览图）
@@ -1540,7 +1562,7 @@ function clearCustom() {
             v-if="rollResult"
             class="bbi-btn"
             type="button"
-            @click="applyRollToChar"
+            @click="applyRollToChar" :disabled="rollBusy"
           >
             <Icon name="characters" /> 套用到角色
           </button>
