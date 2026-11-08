@@ -6,7 +6,7 @@ const tokens = (value: string) => value.split(',').map(t => t.trim()).filter(Boo
 const dedupe = (values: string[]) => [...new Set(values)].join(', ');
 const appearanceToken = /\b(?:hair|eyes|skin|breasts|fandom|bangs|ponytail|braid|bob cut|ahoge|face|eyebrows)\b/i;
 const clothesToken = /\b(?:hanfu|kimono|robe|dress|shirt|skirt|coat|jacket|uniform|sleeve|sleeves|clothes|clothing|outfit|ribbon|belt|boots|shoes|sneakers|jeans|stockings|panties|bra|pants|trousers|necktie|collar|trim|corset|gloves|hat)\b/i;
-const genderToken = /^\d+(?:girl|boy)s?$|^(?:male|female|man|woman)$/i;
+const genderToken = /^\d+(?:girl|boy)s?$|^(?:male|female|man|woman|girl|boy|mature female|young woman)$/i;
 const clothingDesign = (value: string) => tokens(value).filter(t => !appearanceToken.test(t) && !genderToken.test(t)
   && !/^(?:open clothes|closed clothes|off shoulder|sleeves rolled up|fully clothed)$/i.test(t))
   .map(t => t.replace(/^(?:open|closed|buttoned|unbuttoned)\s+(?=robe|shirt|coat|jacket)/i, '')).join(', ');
@@ -33,6 +33,8 @@ export function wornOutfit(character: SceneCharacter): { tags: string; nl: strin
     if (state.fastening === 'loose') tags.push('loose clothes');
     if (state.leftSleeve === 'off_arm' || state.rightSleeve === 'off_arm') tags.push('off shoulder');
     if (state.leftSleeve === 'rolled_up' || state.rightSleeve === 'rolled_up') tags.push('sleeves rolled up');
+    const arrangements: Record<string, string> = { lifted: /skirt|dress/i.test(design) ? 'skirt lifted' : 'clothes lifted', pulled_aside: 'clothes pulled aside', lowered: 'clothes down', around_waist: 'clothes around waist', around_ankles: 'clothes around ankles' };
+    if (state.arrangement && arrangements[state.arrangement]) tags.push(arrangements[state.arrangement]);
     const labels: Record<string, string> = { fastening: 'fastening', leftSleeve: 'left sleeve', rightSleeve: 'right sleeve' };
     sentences.push(`${label} is ${location.replaceAll('_', ' ')}; ${Object.entries(state).filter(([k]) => k !== 'location').map(([k, v]) => `${labels[k] ?? k}: ${v.replaceAll('_', ' ')}`).join(', ')}.`);
   }
@@ -60,9 +62,10 @@ export function compileSceneImage(image: ImageInsertion, state: SceneState, inde
       || g.state.leftSleeve && g.state.rightSleeve && g.state.leftSleeve !== g.state.rightSleeve)) {
       warnings.push(`${character.name}: 自然语言未开启，离身衣物位置/左右袖差异仅保存在状态中，tag 无法完整表达`);
     }
-    const appearance = { ...character.baseAppearance, ...character.currentAppearance };
+    const appearance = character.identity.gender === 'male' && character.provenance.startsWith('legacy_visual_completion')
+      ? {} : { ...character.baseAppearance, ...character.currentAppearance };
     const outfit = wornOutfit(character);
-    const canonical = [...Object.values(appearance).flatMap(tokens), ...tokens(outfit.tags)];
+    const canonical = [...Object.values(appearance).flatMap(tokens).filter(t => !genderToken.test(t)), ...tokens(outfit.tags)];
     for (const binding of character.visualBindings ?? []) if (binding.scope === 'style' || binding.scope === 'all') canonical.push(...tokens(binding.resolved.style).filter(t => !appearanceToken.test(t) && !clothesToken.test(t) && !genderToken.test(t)));
     const known = new Set(canonical.map(t => t.toLowerCase()));
     const dynamic = tokens(prompt.tag).filter(t =>

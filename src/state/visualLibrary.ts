@@ -1,6 +1,6 @@
 import { reactive } from 'vue';
 import { getContext } from '@/st/context';
-import { stateHash } from './sceneState';
+import { stateHash, transcriptRevisions } from './sceneState';
 import { BUILTIN_VISUAL_MATERIALS, cloneVisual, defaultWorld, inferWorld } from './visualDesign';
 import type { VisualMaterial, WorldVisualProfile } from './visualTypes';
 import { loreVisualMaterials } from './loreVisualBridge';
@@ -97,9 +97,18 @@ export function importMaterials(json: string): number {
   } catch (error) { visualLibrary.records = original; ctx.extensionSettings[KEY] = originalRaw; throw error; }
 }
 export function exportMaterials(): string { return JSON.stringify({ v: 1, records: visualLibrary.records }, null, 2); }
-export function worldProfile(): WorldVisualProfile {
+export function worldProfile(floor = Infinity): WorldVisualProfile {
   const ctx = getContext(), raw = ctx?.chatMetadata?.[WORLD_KEY] as Partial<WorldVisualProfile> | undefined;
-  const world = { ...defaultWorld(), ...raw };
+  let learned: Partial<WorldVisualProfile> | undefined;
+  if (!raw || raw.setting === 'auto') {
+    const chat = ctx?.chat ?? [], end = Math.min(floor, chat.length - 1);
+    const revisions = transcriptRevisions(chat, end);
+    for (let i = end; i >= 0; i--) {
+      const delta = chat[i]?.extra?.bbiCharChanges as { swipe?: number; scene?: { revision?: string; world?: WorldVisualProfile } } | undefined;
+      if (delta?.swipe === (chat[i]?.swipe_id ?? 0) && delta.scene?.revision === revisions[i] && delta.scene.world?.setting !== 'auto' && delta.scene?.world) { learned = delta.scene.world; break; }
+    }
+  }
+  const world = { ...defaultWorld(), ...raw, ...learned };
   if (!SETTINGS.includes(world.setting)) world.setting = 'auto';
   if (!Array.isArray(world.forbiddenByDefault)) world.forbiddenByDefault = [];
   if (world.setting === 'auto') {
@@ -107,12 +116,13 @@ export function worldProfile(): WorldVisualProfile {
     world.setting = inferWorld(JSON.stringify(card ?? {}));
     if (world.setting === 'auto') {
       const chat = ctx?.chat ?? [];
-      const recent = chat.slice(-3).map(m => m.mes).join('\n');
+      const recent = chat.slice(0, Number.isFinite(floor) ? floor + 1 : chat.length).slice(-3).map(m => m.mes).join('\n');
       world.setting = inferWorld(recent);
     }
     world.provenance = `自动识别：${world.setting}`;
   }
   if ((world.setting === 'xianxia' || world.setting === 'historical') && !world.characterStylingDefaults.trim()) world.characterStylingDefaults = 'traditional hair ornament';
+  if ((world.setting === 'xianxia' || world.setting === 'historical') && !world.visualStyle.trim()) world.visualStyle = 'traditional chinese aesthetic';
   // 现代与复古配置
   if (world.setting === 'modern_retro' && !world.characterStylingDefaults.trim()) world.characterStylingDefaults = '1980s retro hairstyle';
   if (world.setting.startsWith('modern') && !world.forbiddenByDefault.length) world.forbiddenByDefault = ['oriental fantasy', 'classical chinese aesthetic', 'hanfu', 'robe', 'gufeng', 'sword'];

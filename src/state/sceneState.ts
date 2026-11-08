@@ -8,7 +8,7 @@ export type Gender = 'unknown' | 'female' | 'male';
 export interface Garment {
   id: string;
   design: string;
-  state: Partial<Record<'location' | 'fastening' | 'leftSleeve' | 'rightSleeve', string>>;
+  state: Partial<Record<'location' | 'fastening' | 'leftSleeve' | 'rightSleeve' | 'arrangement', string>>;
 }
 export interface SceneCharacter {
   characterId: string;
@@ -136,6 +136,7 @@ export function seedVisualDesign(state: SceneState, entry: CharTagEntry, scope: 
 
 const text = (value: unknown) => typeof value === 'string' ? value.trim().slice(0, 4000) : '';
 const stateValues: Record<string, string[]> = {
+  arrangement: ['unknown', 'normal', 'lifted', 'pulled_aside', 'lowered', 'around_waist', 'around_ankles'],
   location: ['unknown', 'on_body', 'held', 'on_chair', 'on_table', 'removed', 'absent'],
   fastening: ['unknown', 'open', 'closed', 'loose'],
   leftSleeve: ['unknown', 'on_arm', 'off_arm', 'rolled_up', 'damaged'],
@@ -190,7 +191,7 @@ export function validateSceneEvents(events: SceneEvent[], source: string, source
       }
     }
     if (event.kind === 'outfit' && !(event.operation === 'patch'
-      ? /解|脱|放|拿|穿|系|扣|敞|卷|撕|破|损|整理|open|unfasten|remove|put|take|wear|roll|damage|close|fasten/i
+      ? /解|脱|放|拿|穿|系|扣|敞|卷|撕|破|损|掀|撩|拉|拨|整理|open|unfasten|remove|put|take|wear|roll|damage|close|fasten|lift|pull|lower/i
       : /换|穿|披|衣|袍|裙|衫|外套|wear|dress|robe|shirt|coat|outfit/i).test(event.evidence)) {
       rejected.push(`${event.name}: no explicit clothing action/design in evidence`); continue;
     }
@@ -262,7 +263,7 @@ export function applySceneEvents(input: SceneState, events: SceneEvent[], scope:
       if (!event.garments?.length || event.garments.some(g => !g.design) || new Set(event.garments.map(g => g.id)).size !== event.garments.length) {
         state.warnings.push(`${event.name}: invalid outfit change`); continue;
       }
-      if (character.outfit && !/换上|换了|换成|换衣|更衣|穿上|穿好|穿回|重新穿|披上|套上|换装|change[ds]? (?:into|clothes|outfit)|put(?:s)? on|dress(?:es|ed)? in|redress/i.test(event.evidence)) {
+      if (character.outfit && !/用户人工|换上|换了|换成|换衣|更衣|穿上|穿好|穿回|重新穿|披上|套上|换装|change[ds]? (?:into|clothes|outfit)|put(?:s)? on|dress(?:es|ed)? in|redress/i.test(event.evidence)) {
         state.warnings.push(`${event.name}: 没有明确换装/重新穿戴事件，已保留原款式和穿脱状态；局部变化应使用 patch`);
         continue;
       }
@@ -331,12 +332,19 @@ export function restoreVisualSeeds(state: SceneState, designs: SceneCharacter[])
     const character = state.characters.find(c => c.characterId === design.characterId) ?? resolveSceneCharacter(state, design.name, design.work || undefined);
     if (!character) { state.characters.push(cloneVisual(design)); continue; }
     for (const [field, value] of Object.entries(design.baseAppearance)) if (!character.baseAppearance[field]) character.baseAppearance[field] = value;
+    if (design.provenance.includes('visual_director') && !character.provenance.includes('visual_director')) {
+      if (character.provenance !== 'manual' && character.provenance !== 'manual_visual_design' && design.baseAppearance.extra) character.baseAppearance.extra = design.baseAppearance.extra;
+      character.provenance += '|visual_director';
+    }
     for (const binding of design.visualBindings ?? []) {
       if (binding.scope !== 'appearance' && binding.scope !== 'style') continue;
       if (!character.visualBindings?.some(b => b.scope === binding.scope || b.scope === 'all')) (character.visualBindings ??= []).push(cloneVisual(binding));
     }
     if (!character.outfit && design.outfit) {
       character.outfit = cloneVisual(design.outfit); character.visualBindings = cloneVisual(design.visualBindings ?? []);
+    } else if (character.outfit && design.outfit?.outfitInstanceId === character.outfit.outfitInstanceId
+      && !character.outfit.garments.length && design.outfit.garments.length) {
+      character.outfit.garments = cloneVisual(design.outfit.garments);
     }
   }
 }
@@ -351,6 +359,7 @@ JSON 必须包含 sceneEvents 数组；首次出场的人物身份、首次明�
 临时形象：kind="appearance", appearance={hair,eyes,skin,body,extra}（只列确实改变的字段，值为英文 tags）；基础外貌首次建档后固定。
 换装：kind="outfit", operation="change", garments=[{id:"outer",design:"blue hanfu, white trim",state:{location:"on_body",fastening:"closed",leftSleeve:"on_arm",rightSleeve:"on_arm"}}]。仅真正换装或首次明确衣服才创建，列出这一套所有部件。仅款式设计，无人物身份/脸/发色。
 局部状态：kind="outfit",operation="patch",garments=[{id:"已有部件ID",state:{fastening:"open"}}]。只列发生变化的状态，不能重建整套。
+裙子掀起、衣物拨开/拉低等半脱也必须记录：state.arrangement="lifted|pulled_aside|lowered|around_waist|around_ankles|normal"，未写整理恢复就持续继承。location 仅用于衣物实际离身位置；不要把裙子掀起写成整件 removed。
 location: unknown/on_body/held/on_chair/on_table/removed/absent；fastening: unknown/open/closed/loose；左右袖: unknown/on_arm/off_arm/rolled_up/damaged。明确脱下与未提及不同，空值不要用来重置。
 每张 images 都应提供 characters:[{name,tag,nl}] 标识出镜者（单人也要）。程序会把已绑定外貌和实际穿衣状态编译进对应人物；动作表情放人物 tag，场景画风构图放基础 tag。不要把外貌放全局强加所有人。
 传统 changes 只用于首次视觉设计补全，不要用 set 重写已有身份/外貌/衣服；变化改用有证据的 sceneEvents。

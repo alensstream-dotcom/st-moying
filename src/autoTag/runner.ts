@@ -1,6 +1,7 @@
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
 import { permanentCompletionFailure } from '@/api/providerErrors';
 import { withIntroductionDefaults } from '@/autoTag/sceneDefaults';
+import { directVisuals, fillDirectedVisuals, type VisualDirection } from '@/autoTag/visualDirector';
 import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { readBookMemory } from '@/autoTag/bookMemory';
 import {
@@ -23,18 +24,7 @@ import {
   normalizePlanCharacters,
   resolveCanonicalCharName,
 } from '@/autoTag/charReuse';
-import {
-  BBI_OUTFIT_EXTRA_KEY,
-  buildOutfitStateBlock,
-  buildOutfitStatePayload,
-  diagnoseGarment,
-  diagnoseOutfit,
-  latestOutfitStates,
-  nextOutfitState,
-  outfitRetryNote,
-  seedOutfitStates,
-  type OutfitGap,
-} from '@/autoTag/outfitState';
+
 import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
 import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
 import { compileSceneImage } from '@/autoTag/sceneCompiler';
@@ -49,7 +39,7 @@ import {
   validateSceneEvents,
   type SceneDelta,
 } from '@/state/sceneState';
-import { applyConfirmations, confirmationRevision, manualEvents, sceneAt } from '@/state/sceneStore';
+import { applyConfirmations, confirmationRevision, manualEvents, sceneAt, refreshSceneStore } from '@/state/sceneStore';
 import { cloneVisual, fillWorldDefaults } from '@/state/visualDesign';
 import { latestMaterials, visualConfigurationRevision, worldProfile } from '@/state/visualLibrary';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
@@ -405,9 +395,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 锁定名(全局库 ⊖ 本聊天基线):AI 的 changes 对这些名字一律无效,库文本里带 [locked] 标记
     const lockedNames = lockedCharTagNames();
     // 纯本地渲染:建档由主请求在同一次输出里完成(changes 的 field="new")
-    const anchors = resolveCharAnchors(entriesBefore, lockedNames);
+
     const sceneBefore = sceneAt(floor - 1);
-    const world = worldProfile();
+    let world = worldProfile(floor);
     // 单槽重写:协议强制「恰好 1 张」,并把该槽位当前提示词与其余槽位摘要带给模型
     // (锚住同一个画面、别抢别人的画面)。min/max 要同时覆盖 build 的规则文案与下面的
     // parse 校验,只改一处会自相矛盾。
@@ -423,24 +413,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 正文外形与库中已建档角色逐项对上的,或正文中用尊称/简称(如「风阿姨」「千华」)指代已建档角色(「风千华」)的:
     // 直接点名「这段就是她」,别让模型再编一张脸或用别称另写角色块。
     // 只在上送给主请求前的快照上判,单槽重写同样适用(它也要照抄档案)。
-    const charReuse = buildCharReuseBlock(
-      findCharReuse(entriesBefore, preparedTarget.promptText),
-      findCharAliases(entriesBefore, preparedTarget.promptText),
-    );
-    // 服装现状:从前面楼层把每个人身上的衣服与穿脱程度读回来。
-    // 当前楼常常一句衣着都没写,模型每层都在从零决定穿什么,衣服自然乱飘;
-    // 有了这份账本它才有一个「已经发生的事实」可以继承。单槽重写也要用同一份。
-    // 账本只记变化,所以还要拿档案里的固定着装垫底——角色第一次出图时账本是空的,
-    // 那正是衣服最容易开始乱飘的时候。
-    const outfitStates = seedOutfitStates(latestOutfitStates(context.chat, floor), entriesBefore);
-    const outfitBlock = buildOutfitStateBlock(outfitStates);
+    const charReuse = '';
+    const outfitBlock = '唯一权威人物/服装状态：\n' + JSON.stringify(sceneBefore);
     const messages = await buildAutoTagMessages(
       context,
       floor,
       promptOptions,
       memory,
       preparedTarget,
-      anchors.text,
+      '',
       slot ? buildSlotTaskNote(rawSource, slot.seq) : '',
       profile,
       loreSeed,
@@ -524,32 +505,26 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 称呼归并与外貌兜底:模型若在 characters[].name 或 changes[].name 里写了已建档角色的
           // 别称/尊称/简称(如把「风千华」写成「风阿姨」「千华」),先唯一归并回档案主名,
           // 并在因换称呼漏抄固定外貌时把档案核心外貌字段补进 character.tag。
-          normalizePlanCharacters(candidate.images, entriesBefore);
-          if (entriesBefore.length) {
-            const existingNames = new Set(entriesBefore.map(e => e.name.trim()));
-            candidate.changes = candidate.changes.filter(change => {
-              const canonical = resolveCanonicalCharName(change.name, entriesBefore);
-              if (canonical !== change.name) {
-                if (change.field === 'new' && existingNames.has(canonical)) return false;
-                change.name = canonical;
-              }
-              return true;
-            });
+          candidate.changes = [];
+          for (const image of candidate.images) for (const prompt of image.characters) {
+            const known = resolveSceneCharacter(sceneBefore, prompt.name, prompt.work, prompt.characterId);
+            if (known) { prompt.name = known.name; prompt.characterId = known.characterId; }
+          }
+          if (!slot && attempt < retries) {
+            const unindexed = candidate.images.flatMap(i => i.characters).filter(p =>
+              !resolveSceneCharacter(sceneBefore, p.name, p.work, p.characterId)
+              && !candidate.sceneEvents?.some(e => e.kind === 'identity' && e.name === p.name && (e.work ?? '') === (p.work ?? '')));
+            if (unindexed.length) {
+              retryNote = `缺少人物 identity 事件：${[...new Set(unindexed.map(p => p.name))].join('、')}。必须返回有原文证据的 sceneEvents，不确定性别填 unknown；changes=[]。`;
+              throw new Error('出镜人物没有身份索引事件');
+            }
           }
           // 单槽重写忽略本次 changes,不校验建档 nl —— 校验它会为一份会被丢弃的
           // changes 白白消耗重试次数。NAI 关了自然语言时协议不要 nl,也就不验。
-          if (
-            !slot &&
-            profile.naiCharPrompts &&
-            profile.nl &&
-            candidate.changes.some(change => change.field === 'new' && !change.nl?.trim())
-          ) {
-            throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
-          }
           // 空 images:协议上算正常返回,旧版直接放行,于是模型一句「没有值得插图的画面」
           // 就能让整楼不生、阅读器干等超时。这里在还有重试次数时把它当可纠错误,
           // 换一套口径逼它落到具体画面上;changes 非空(有建档要落)时不算空。
-          if (!slot && attempt < retries && !candidate.images.length && !candidate.changes.length) {
+          if (!slot && attempt < retries && !candidate.images.length && !candidate.sceneEvents?.length) {
             retryNote = EMPTY_PLAN_RETRY_NOTE;
             throw new Error('返回了空 images');
           }
@@ -653,32 +628,6 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 服装账本:衣服明明没变,穿脱程度却跳了(半脱→全裸、已脱→又穿回),
           // 或者正文没写换装,整套衣服被换成另一套。
           // 这条最伤连续性,而且模型自己看不出来——它没有上一层的画面。
-          if (!slot && attempt < retries && outfitStates.size) {
-            const outfitGaps: OutfitGap[] = [];
-            const outfitText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
-            const prevOutfitText = (pos: string): string => {
-              const m = /^P(\d+)$/i.exec(pos.trim());
-              if (!m) return '';
-              const n = Number.parseInt(m[1], 10);
-              return n > 1 ? (outfitText.get(`P${n - 1}`) ?? '') : '';
-            };
-            for (const image of candidate.images) {
-              outfitGaps.push(...diagnoseOutfit(image, outfitStates));
-              const windowText = [
-                prevOutfitText(image.position),
-                outfitText.get(image.position) ?? '',
-              ]
-                .filter(Boolean)
-                .join(' ');
-              outfitGaps.push(
-                ...diagnoseGarment(image, outfitStates, windowText),
-              );
-            }
-            if (outfitGaps.length) {
-              retryNote = outfitRetryNote(outfitGaps);
-              throw new Error(`服装状态跳变(${outfitGaps.map(gap => gap.name).join('、')})`);
-            }
-          }
           // 构图缺项:只在还有重试次数时纠一次。没次数了就放行——
           // 交一张景别平庸的图,好过因为「没写机位」整楼不生。
           if (attempt < retries) {
@@ -765,20 +714,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
 
     // 单槽重写不落 changes:首次全量分析已为整楼建过档,这里再应用一次只会产生
     // 重复的建档/变更记录;库文本已含本楼增量(见上面 entriesBefore),AI 照抄即可。
-    const planOps = slot ? [] : planChangeOps(plan);
-    // 锁定角色(全局库)不接受 AI changes:丢弃,不写入楼层、不参与 @替换。
-    // 重放侧 applyCharTagOps 也会按锁定名再拦一次(旧消息里可能已存这类 ops)。
-    const unlockedOps = lockedNames.size
-      ? planOps.filter(item => !lockedNames.has(item.op.name))
-      : planOps;
-    // Stable records are no longer rewritten by free-form set operations. Changes require evidence-backed events.
+    // The scene timeline is the only new writer. Old changes are read-only compatibility data.
     const previousDelta = readCharTagFloorDelta(message);
-    const retainedDesigns = !slot && previousDelta?.swipe === (swipeId ?? 0)
-      ? previousDelta.ops.filter(op => op.kind === 'new' && !lockedNames.has(op.name) && !entriesBefore.some(e => e.name === op.name))
-      : [];
-    const effectiveOps = unlockedOps.filter(item => item.op.kind === 'new' && !entriesBefore.some(e => e.name === item.op.name)
-      && !retainedDesigns.some(op => op.name === item.op.name));
-    const floorOps = [...retainedDesigns, ...effectiveOps.map(item => item.op)];
+    const effectiveOps: PositionedCharOp[] = [];
+    const floorOps: CharTagAutoOp[] = previousDelta?.ops ?? [];
     plan.images.sort((a, b) => a.sourceLine - b.sourceLine);
     const checkedEvents = validateSceneEvents(plan.sceneEvents ?? [], source, {
       characters: sceneBefore.characters,
@@ -787,21 +726,28 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     });
     const sceneDelta: SceneDelta = { v: 1, revision: sceneRevision, ...checkedEvents, frames: [] };
     sceneDelta.world = cloneVisual(world);
-    const priorDesigns = new Map(sceneBefore.characters.map(c => [c.characterId, JSON.stringify([c.baseAppearance, c.outfit, c.visualBindings])]));
-    if (unlockedOps.length !== effectiveOps.length) sceneDelta.rejected.push('传统 changes.set/重复建档已拦截；请使用有证据的 sceneEvents');
-    // First-time design completion is kept separate from story identity facts.
-    for (const op of floorOps) {
-      if (op.kind === 'new') {
-        // Unproven first-time clothing is a visual completion, so respect the card's era.
-        if (world.setting !== 'auto' && !retainedDesigns.includes(op)) op.fields.outfit = '';
-        seedVisualDesign(sceneBefore, { ...op, history: [] }, chatId);
+    const priorDesigns = new Map(sceneBefore.characters.map(c => [c.characterId, JSON.stringify([c.baseAppearance, c.outfit, c.visualBindings, c.provenance])]));
+
+    if (previousDelta?.scene?.revision === sceneRevision && previousDelta.swipe === (swipeId ?? 0)) restoreVisualSeeds(sceneBefore, previousDelta.scene?.designSeeds ?? []);
+    const materials = latestMaterials();
+    let direction: VisualDirection = { world, decisions: [] };
+    if (!slot) {
+      const introduced = applyConfirmations(applySceneEvents(sceneBefore, sceneDelta.events, chatId, sceneRevision, floor));
+      try {
+        direction = await directVisuals(introduced, world, materials, source,
+          messages.filter(m => m.role === 'system' && /^【(?:角色设定|世界设定)/.test(m.content)).map(m => m.content).join('\n'), controller.signal);
+        world = direction.world;
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        sceneDelta.rejected.push(`自动定妆未完成，沿用已有档案和世界缺省：${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    if (previousDelta?.swipe === (swipeId ?? 0)) restoreVisualSeeds(sceneBefore, previousDelta.scene?.designSeeds ?? []);
-    fillWorldDefaults(sceneBefore, world, latestMaterials(), floor);
-    sceneDelta.designSeeds = cloneVisual(sceneBefore.characters.filter(c => priorDesigns.get(c.characterId) !== JSON.stringify([c.baseAppearance, c.outfit, c.visualBindings])));
-    sceneDelta.events = withIntroductionDefaults(sceneBefore, sceneDelta.events, world, latestMaterials(), chatId, sceneRevision, floor,
-      previousDelta?.scene?.revision === sceneRevision ? previousDelta.scene.events : []);
+    sceneDelta.world = cloneVisual(world);
+    fillDirectedVisuals(sceneBefore, direction, materials, floor, 0);
+    fillWorldDefaults(sceneBefore, world, materials, floor);
+    sceneDelta.designSeeds = cloneVisual(sceneBefore.characters.filter(c => priorDesigns.get(c.characterId) !== JSON.stringify([c.baseAppearance, c.outfit, c.visualBindings, c.provenance])));
+    sceneDelta.events = withIntroductionDefaults(sceneBefore, sceneDelta.events, world, materials, chatId, sceneRevision, floor,
+      previousDelta?.scene?.revision === sceneRevision ? previousDelta.scene.events : [], direction);
     const eventsForFrame = [...sceneDelta.events, ...(manualEvents()[floor] ?? [])];
     const sceneAfter = applyConfirmations(applySceneEvents(sceneBefore, eventsForFrame, chatId, sceneRevision, floor));
     for (const op of floorOps) if (op.kind === 'new') {
@@ -820,52 +766,6 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         for (const character of image.characters) character.nl = '';
       }
       if (profile.lockedSize) image.size = profile.lockedSize;
-      const tagRes = applyPositionedCharRefs(
-        image.tag,
-        anchors.entries,
-        effectiveOps,
-        image.sourceLine,
-        'tag',
-        lockedNames,
-      );
-      if (tagRes.text) image.tag = tagRes.text;
-      if (image.nl) {
-        const nlRes = applyPositionedCharRefs(
-          image.nl,
-          anchors.entries,
-          effectiveOps,
-          image.sourceLine,
-          'nl',
-          lockedNames,
-        );
-        image.nl = nlRes.text;
-        for (const n of nlRes.unknown) unknownNames.add(n);
-      }
-      for (const character of image.characters) {
-        const charTag = applyPositionedCharRefs(
-          character.tag,
-          anchors.entries,
-          effectiveOps,
-          image.sourceLine,
-          'tag',
-          lockedNames,
-        );
-        character.tag = charTag.text;
-        for (const n of charTag.unknown) unknownNames.add(n);
-        if (character.nl) {
-          const charNl = applyPositionedCharRefs(
-            character.nl,
-            anchors.entries,
-            effectiveOps,
-            image.sourceLine,
-            'nl',
-            lockedNames,
-          );
-          character.nl = charNl.text;
-          for (const n of charNl.unknown) unknownNames.add(n);
-        }
-      }
-      for (const n of tagRes.unknown) unknownNames.add(n);
       // Each paragraph uses its own time slice; rewriting a slot never replays later changes into it.
       const oldFrame = previousDelta?.scene?.frames?.[slot?.seq ?? -1];
       const scene = slot
@@ -935,7 +835,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 全量写入同时落两笔:角色增量与本楼的服装账本。账本按「本楼实际写出的画面」冻结,
     // 下一楼读它当既成事实——没有这一笔,下一楼就又得从零猜她穿了什么、脱到哪一步。
     // 注意:applyMessageText 的实参在进入 buildNext 之前就会求值,因此账本必须用 plan.images 计算!
-    const nextOutfits = nextOutfitState(outfitStates, plan.images);
+
     const result = await applyMessageText(
       floor,
       currentText => {
@@ -989,10 +889,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 previousDelta?.legacyBackup ?? (previousDelta && !previousDelta.scene ? message.extra?.[BBI_CHAR_EXTRA_KEY] : undefined),
               ),
             },
-            {
-              key: BBI_OUTFIT_EXTRA_KEY,
-              value: buildOutfitStatePayload(nextOutfits, swipeId ?? 0),
-            },
+
           ],
       { render: !opts.headless },
     );
@@ -1049,6 +946,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         return;
       }
       recomputeCharTags();
+      refreshSceneStore();
       if (rebaseNote) console.info(`[墨影] 第 ${floor} 楼 tag 位置重定位:${rebaseNote}`);
       if (plan.images.length) {
         toastr.success(`已在第 ${floor} 楼插入 ${plan.images.length} 个生图 tag`, '墨影');

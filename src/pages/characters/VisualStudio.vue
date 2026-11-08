@@ -17,6 +17,7 @@ import { activeNaiEndpoint, settings } from '@/state/settings';
 import { capabilityOverride, resolveNaiCapabilities, saveCapabilityOverride } from '@/backends/capabilities';
 
 const world = ref(worldProfile());
+const liveWorld = computed(() => { void sceneStore.current; return worldProfile(); });
 const eraOptions = [{ value: 'auto', label: '自动/未知' }, { value: 'xianxia', label: '仙侠' }, { value: 'historical', label: '古风' }, { value: 'modern', label: '现代' }, { value: 'modern_retro', label: '复古现代' }, { value: 'western_fantasy', label: '西幻' }, { value: 'scifi', label: '科幻' }];
 const followWorld = ref(false);
 const query = ref(''), kind = ref<VisualMaterial['kind']>('outfit'), work = ref('*');
@@ -67,10 +68,17 @@ async function run(action: () => unknown | Promise<unknown>) {
   try { await action(); } catch (error) { feedback.value = error instanceof Error ? error.message : String(error); }
   finally { busy.value = false; }
 }
-function roll(next = false) {
+async function roll(next = false) {
   if (next) materialSeed.value++;
   candidate.value = rollMaterial(materials.value, { query: query.value, kind: kind.value, setting: followWorld.value && kind.value !== 'character' ? world.value.setting : 'auto', work: work.value === '*' ? undefined : work.value }, materialSeed.value) ?? null;
-  feedback.value = candidate.value ? '已选择库内素材；尚未应用到剧情人物' : '没有符合条件的素材，或同名角色需要先选择作品；未编造标签/图片';
+  if (!candidate.value && kind.value === 'character' && results.value.length) throw new Error('同名角色存在多个作品，请先选择作品');
+  if (!candidate.value) {
+    if (!query.value.trim()) throw new Error('请输入角色名或服装类型');
+    candidate.value = await createVisualDesign(query.value, kind.value, liveWorld.value.setting);
+    feedback.value = '本地库未命中，LLM 已创作候选（非已验证同人数据库）；正在生成预览';
+  }
+  if (!candidate.value.previewPath && !candidate.value.previewKey) await draw();
+  feedback.value = '候选已准备，可收藏或应用；剧情人物尚未改变';
 }
 async function draw() {
   if (!candidate.value) return;
@@ -114,7 +122,7 @@ function saveGarments() {
   const c = chosenCharacter.value; if (!c) throw new Error('请选择人物');
   const raw = JSON.parse(garmentDraft.value);
   if (!Array.isArray(raw) || !raw.length) throw new Error('请填写衣物部件数组');
-  const allowed: Record<string, string[]> = { location: ['unknown','on_body','held','on_chair','on_table','removed','absent'], fastening: ['unknown','open','closed','loose'], leftSleeve: ['unknown','on_arm','off_arm','rolled_up','damaged'], rightSleeve: ['unknown','on_arm','off_arm','rolled_up','damaged'] };
+  const allowed: Record<string, string[]> = { arrangement: ['unknown','normal','lifted','pulled_aside','lowered','around_waist','around_ankles'], location: ['unknown','on_body','held','on_chair','on_table','removed','absent'], fastening: ['unknown','open','closed','loose'], leftSleeve: ['unknown','on_arm','off_arm','rolled_up','damaged'], rightSleeve: ['unknown','on_arm','off_arm','rolled_up','damaged'] };
   if (raw.some(g => !g.id || typeof g.design !== 'string' || Object.entries(g.state ?? {}).some(([k, v]) => !allowed[k]?.includes(String(v))))) throw new Error('衣物 ID、设计或状态枚举无效');
   if (new Set(raw.map(g => g.id)).size !== raw.length) throw new Error('衣物部件 ID 不可重复');
   const onlyState = raw.length === c.outfit?.garments.length && raw.every(g => c.outfit?.garments.some(old => old.id === g.id && old.design === g.design));
@@ -133,10 +141,12 @@ function download() {
 </script>
 
 <template>
-  <Collapsible title="世界观、视觉素材与定妆" :open="false">
-    <p class="bbi-field-hint">本地素材索引；没有接入在线同人图库。素材收藏、重画预览和应用到人物是独立操作。人物库和原有 Vibe / 画师串不受影响。</p>
+  <Collapsible title="自动视觉管理 · 素材抽样" :open="true">
+    <p class="bbi-field-hint">生图时自动调用已保存的自动 tag LLM：识别世界、补全首次定妆、挑选素材并保存到剧情状态。已有定妆与穿搭直接继承，不用填写下面的高级字段。</p>
+    <p class="bbi-field-hint">当前世界：{{ eraOptions.find(o => o.value === liveWorld.setting)?.label }} · {{ liveWorld.provenance }} · 可用素材 {{ materials.length }} 条</p>
+    <p class="bbi-field-hint">自动档案 {{ sceneStore.current.characters.length }} 人；定妆、已绑定素材与实际衣物状态请在「角色管理」查看。首次定妆会额外调用一次 LLM，重画不调用。</p>
     <fieldset :disabled="busy" class="bbi-visual-controls">
-      <Collapsible title="当前聊天的世界视觉档案" :open="false">
+      <Collapsible title="高级：覆盖自动识别（可留空）" :open="false">
         <label>世界背景 <select v-model="world.setting"><option v-for="option in eraOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
         <label>默认服装 <select v-model="world.wardrobeDefaults"><option value="">按世界过滤后补全</option><option v-for="material in materials.filter(m => m.kind === 'outfit')" :key="material.id" :value="material.id">{{ material.name }}</option></select></label>
         <label>通用画风（不填具体脸型）<input v-model="world.visualStyle" class="bbi-input" /></label>
@@ -150,7 +160,7 @@ function download() {
         <select v-if="kind === 'character'" v-model="work"><option value="*">全部作品（同名需消歧）</option><option v-for="title in works" :key="title" :value="title">{{ title || '未标作品' }}</option></select>
       </div>
       <div class="bbi-visual-row">
-        <button class="bbi-btn" @click="roll()">库内抽样</button><button class="bbi-btn" @click="roll(true)">换个款式</button>
+        <button class="bbi-btn" @click="run(() => roll())">库内抽样</button><button class="bbi-btn" @click="run(() => roll(true))">换个款式</button>
         <button class="bbi-btn" @click="run(async () => { candidate = await createVisualDesign(query, kind, world.setting); feedback = '新款结构已生成，标签未验证；可真实生图预览'; })">创作新款</button>
         <span class="bbi-field-hint">款式种子 {{ materialSeed }} · 图片种子 {{ imageSeed ?? '未生图' }}</span>
       </div>
