@@ -1,3 +1,6 @@
+import { lookSettings, fingerprint } from '@/state/characterStudio';
+import { getThumb } from '@/data/loreThumbs';
+import { prepareCharacterReference } from '@/backends/characterReference';
 import { costumeConflicts, removeUnbackedCostume, type CostumeContext } from '@/autoTag/costumeContext';
 import { readClothingFloor, clothingRevision, enforceClothing } from '@/autoTag/outfitTimeline';
 import { getContext } from '@/st/context';
@@ -27,19 +30,40 @@ import { currentIdentityFacts, enforceKnownMaleIdentity, isMaleIdentity } from '
  */
 
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
-import { comfySimpleParams, composeNegative, composePositive, validateSimpleConfig, type SimpleGenValues } from '@/backends/comfyTemplates';
+import {
+  comfySimpleParams,
+  composeNegative,
+  composePositive,
+  validateSimpleConfig,
+  type SimpleGenValues,
+} from '@/backends/comfyTemplates';
 import { generateComfyImage, randomSeed, type ComfyImageResult } from '@/backends/comfyui';
-import { generateNaiImage, naiRandomSeed, naiSupportsCharacterPrompts, naiArtistPrompt, naiQualityTags } from '@/backends/nai';
+import {
+  generateNaiImage,
+  naiRandomSeed,
+  naiSupportsCharacterPrompts,
+  naiArtistPrompt,
+  naiQualityTags,
+} from '@/backends/nai';
 import { effectiveOrientation, parseSize, pickSize, type Orientation } from '@/backends/size';
 import { acquireNaiSlot } from '@/floor/genQueue';
 import type { GenerationMeta } from '@/generationMeta';
-import { activeComfyPreset, activeNaiEndpoint, activeOrientationLock, effectiveComfyConn, effectiveNai, settings, type BackendId } from '@/state/settings';
+import {
+  activeComfyPreset,
+  activeNaiEndpoint,
+  activeOrientationLock,
+  effectiveComfyConn,
+  effectiveNai,
+  settings,
+  type BackendId,
+} from '@/state/settings';
 import { applyPresetToNaiConn, genPresetById } from '@/state/genPresets';
 import { allCharacterRecords, charTagLib, isManualFandom } from '@/state/charTags';
 import { enforceAppearance } from '@/autoTag/appearanceLock';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
+  suppressCharacterReference?: boolean;
   /** Exact saved story frame; omitted for free-form APIs and material previews. */
   storyFrame?: { floor: number; tag: string };
   /** 正向 danbooru 短 tag。 */
@@ -140,10 +164,18 @@ export function backendStatus(backend: BackendId = settings.defaultBackend): Bac
     // 少了名字也不难定位:面板下拉里选中的就是这条。
     const conn = activeNaiEndpoint();
     if (!conn.url.trim()) {
-      return { ...base, configured: false, reason: '当前 NAI 接入点未填写服务地址' };
+      return {
+        ...base,
+        configured: false,
+        reason: '当前 NAI 接入点未填写服务地址',
+      };
     }
     if (!conn.key.trim()) {
-      return { ...base, configured: false, reason: '当前 NAI 接入点未填写 API Key' };
+      return {
+        ...base,
+        configured: false,
+        reason: '当前 NAI 接入点未填写 API Key',
+      };
     }
     return { ...base, configured: true, reason: '' };
   }
@@ -160,7 +192,11 @@ export function backendStatus(backend: BackendId = settings.defaultBackend): Bac
       return { ...base, configured: true, reason: '' };
     }
     if (!preset.workflow.trim()) {
-      return { ...base, configured: false, reason: '当前工作流预设未填写工作流 JSON' };
+      return {
+        ...base,
+        configured: false,
+        reason: '当前工作流预设未填写工作流 JSON',
+      };
     }
     return { ...base, configured: true, reason: '' };
   }
@@ -189,7 +225,8 @@ export function backendStatus(backend: BackendId = settings.defaultBackend): Bac
  * 都拿同一个 seed 求同一张图,用户会以为按钮坏了。
  */
 export function decideSeed(backend: BackendId, override?: number, fresh = false): number {
-  if (!fresh && override !== undefined && Number.isFinite(override) && override > 0) return Math.floor(override);
+  if (!fresh && override !== undefined && Number.isFinite(override) && override > 0)
+    return Math.floor(override);
   if (backend === 'nai') return !fresh && settings.nai.seed > 0 ? settings.nai.seed : naiRandomSeed();
   return randomSeed();
 }
@@ -215,34 +252,89 @@ export async function generateImage(
   if (!status.configured) throw new Error(status.reason || '出图后端未配置');
 
   const isNai = status.backend === 'nai';
-  const manualFandoms = charTagLib.entries.filter(e => isManualFandom(e) && input.characters?.some(c => c.name === e.name));
+  const manualFandoms = charTagLib.entries.filter(
+    (e) => isManualFandom(e) && input.characters?.some((c) => c.name === e.name),
+  );
   let appearanceNotes: string[] = [];
   if (manualFandoms.length && input.characters?.length) {
-    const image = { position: '', sourceLine: 0, charOffset: 0, tag: input.prompt, nl: input.nl ?? '', negative: input.negative ?? '',
-      size: input.size ?? 'portrait' as const, characters: input.characters.map(c => ({ ...c })) };
-    appearanceNotes = enforceAppearance(image, manualFandoms, !!input.nl || image.characters.some(c => !!c.nl), status.supportsCharacters);
-    appearanceNotes.push(...manualFandoms.map(e => `锁定同人：${e.name} → ${e.fields.fandom}`));
-    input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
+    const image = {
+      position: '',
+      sourceLine: 0,
+      charOffset: 0,
+      tag: input.prompt,
+      nl: input.nl ?? '',
+      negative: input.negative ?? '',
+      size: input.size ?? ('portrait' as const),
+      characters: input.characters.map((c) => ({ ...c })),
+    };
+    appearanceNotes = enforceAppearance(
+      image,
+      manualFandoms,
+      !!input.nl || image.characters.some((c) => !!c.nl),
+      status.supportsCharacters,
+    );
+    appearanceNotes.push(...manualFandoms.map((e) => `锁定同人：${e.name} → ${e.fields.fandom}`));
+    input = {
+      ...input,
+      prompt: image.tag,
+      nl: image.nl,
+      characters: image.characters,
+    };
   }
   const identityFacts = currentIdentityFacts();
-  if (input.characters?.some(c => isMaleIdentity(c.name, identityFacts))) {
-    const image = { position: '', sourceLine: 0, charOffset: 0, tag: input.prompt, nl: input.nl ?? '', negative: input.negative ?? '',
-      size: input.size ?? 'portrait' as const, characters: input.characters.map(c => ({ ...c })) };
-    appearanceNotes.push(...enforceKnownMaleIdentity(image, allCharacterRecords(), identityFacts, status.supportsCharacters));
-    input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
+  if (input.characters?.some((c) => isMaleIdentity(c.name, identityFacts))) {
+    const image = {
+      position: '',
+      sourceLine: 0,
+      charOffset: 0,
+      tag: input.prompt,
+      nl: input.nl ?? '',
+      negative: input.negative ?? '',
+      size: input.size ?? ('portrait' as const),
+      characters: input.characters.map((c) => ({ ...c })),
+    };
+    appearanceNotes.push(
+      ...enforceKnownMaleIdentity(image, allCharacterRecords(), identityFacts, status.supportsCharacters),
+    );
+    input = {
+      ...input,
+      prompt: image.tag,
+      nl: image.nl,
+      characters: image.characters,
+    };
   }
   let costumeContext: CostumeContext | undefined;
   if (input.storyFrame) {
-    const chat = getContext()?.chat ?? [], floor = input.storyFrame.floor;
+    const chat = getContext()?.chat ?? [],
+      floor = input.storyFrame.floor;
     const saved = readClothingFloor(chat[floor], clothingRevision(chat, floor));
-    const frame = saved?.frames.find(f => f.tag === input.storyFrame!.tag);
+    const frame = saved?.frames.find((f) => f.tag === input.storyFrame!.tag);
     if (frame?.costume) {
       costumeContext = frame.costume;
-      const state = new Map(frame.entries.map(e => [e.name, e]));
-      const image = { position: '', sourceLine: frame.sourceLine, charOffset: frame.charOffset, tag: input.prompt, nl: input.nl ?? '', negative: input.negative ?? '', size: input.size ?? 'portrait' as const, characters: (input.characters ?? []).map(c => ({ ...c })) };
+      const state = new Map(frame.entries.map((e) => [e.name, e]));
+      const image = {
+        position: '',
+        sourceLine: frame.sourceLine,
+        charOffset: frame.charOffset,
+        tag: input.prompt,
+        nl: input.nl ?? '',
+        negative: input.negative ?? '',
+        size: input.size ?? ('portrait' as const),
+        characters: (input.characters ?? []).map((c) => ({ ...c })),
+      };
       appearanceNotes.push(...removeUnbackedCostume(image, state, frame.costume));
-      enforceClothing(image, state, !!input.nl || image.characters.some(c => !!c.nl), status.supportsCharacters);
-      input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
+      enforceClothing(
+        image,
+        state,
+        !!input.nl || image.characters.some((c) => !!c.nl),
+        status.supportsCharacters,
+      );
+      input = {
+        ...input,
+        prompt: image.tag,
+        nl: image.nl,
+        characters: image.characters,
+      };
     }
   }
   const characters = input.characters ?? [];
@@ -268,15 +360,70 @@ export async function generateImage(
       const preset = input.genPresetId ? genPresetById(input.genPresetId) : null;
       if (preset) applyPresetToNaiConn(naiConn, preset);
       if (input.naiModel) naiConn.model = input.naiModel as typeof naiConn.model;
-      const configConflicts = costumeConflicts([naiArtistPrompt(naiConn), naiQualityTags(naiConn)].join(', '), costumeContext);
-      if (configConflicts.length) appearanceNotes.push('当前 NAI 配方/质量词含与剧情服饰背景冲突的服装词（' + configConflicts.join(', ') + '），已保留用户配置；若仍出现现代服装，请检查该配方');
+      const configConflicts = costumeConflicts(
+        [naiArtistPrompt(naiConn), naiQualityTags(naiConn)].join(', '),
+        costumeContext,
+      );
+      if (configConflicts.length)
+        appearanceNotes.push(
+          '当前 NAI 配方/质量词含与剧情服饰背景冲突的服装词（' +
+            configConflicts.join(', ') +
+            '），已保留用户配置；若仍出现现代服装，请检查该配方',
+        );
+      let characterReference: { image: string; strength: number; fidelity: number } | undefined;
+      const subjectCount = [...input.prompt.matchAll(/\b(\d+)(?:girls?|boys?|others?)\b/gi)].reduce(
+        (sum, m) => sum + Number(m[1]),
+        0,
+      );
+      if (
+        !input.suppressCharacterReference &&
+        characters.length === 1 &&
+        (subjectCount === 1 || (subjectCount === 0 && /\bsolo\b/i.test(input.prompt)))
+      ) {
+        const c = characters[0],
+          look = lookSettings(c.name),
+          entry = charTagLib.entries.find((e) => e.name === c.name);
+        if (look.reference) {
+          if (!naiConn.model.includes('4-5') || naiConn.vibes.some((v) => v.enabled))
+            appearanceNotes.push('图片参考未启用：仅 V4.5 且不能与 Vibe 同用，使用文字定妆');
+          else if (
+            !entry ||
+            !look.active?.image ||
+            fingerprint(entry.fields) !== fingerprint(look.active.fields) ||
+            entry.raw !== (look.active.raw ?? '') ||
+            entry.nl !== look.active.nl
+          )
+            appearanceNotes.push('图片参考未启用：缺少定妆图或档案已变更');
+          else {
+            const record = await getThumb(look.active.image);
+            if (record) {
+              characterReference = {
+                image: await prepareCharacterReference(record.blob),
+                strength: look.strength,
+                fidelity: look.fidelity,
+              };
+              appearanceNotes.push('已发送单角色定妆参考（约 +5 Anlas；中转接口需验证）');
+            } else appearanceNotes.push('本机定妆图缺失，使用文字定妆');
+          }
+        }
+      } else if (!input.suppressCharacterReference && characters.some((c) => lookSettings(c.name).reference))
+        appearanceNotes.push('多人画面使用独立文字定妆，不发送图片参考');
       const output = await generateNaiImage(
         naiConn,
         // characters 原样透传:不支持的模型由 buildNaiParameters 自己滤掉(同一口径
         // naiSupportsCharacterPrompts),在这儿再滤一遍只会多一处会漂的判据
-        { prompt: input.prompt, nl: input.nl ?? '', characters, seed: input.seed, size },
+        {
+          prompt: input.prompt,
+          nl: input.nl ?? '',
+          characters,
+          seed: input.seed,
+          size,
+          characterReference,
+        },
         signal,
-        { onRetry: info => progress.onRetry?.({ attempt: info.attempt, max: info.max }) },
+        {
+          onRetry: (info) => progress.onRetry?.({ attempt: info.attempt, max: info.max }),
+        },
       );
       result = output.result;
       meta = { backend: 'nai', model: status.model, ...output.usage };
@@ -292,7 +439,7 @@ export async function generateImage(
           size,
         },
         signal,
-        { onQueue: ahead => progress.onQueue?.(ahead) },
+        { onQueue: (ahead) => progress.onQueue?.(ahead) },
       );
       // ComfyUI 没有运行期跳过的概念，配方全在预设里，可在此直接快照。
       // 尺寸解析口径与 generateComfyImage 一致（未解析出时 0 = 用工作流自带尺寸）。
@@ -324,7 +471,14 @@ export async function generateImage(
     // 退避文案到此为止:图已拿到,落盘还要一会儿,不该继续显示「稍后重试」
     progress.onRetry?.(null);
     if (appearanceNotes.length) meta.continuity = [...(meta.continuity ?? []), ...appearanceNotes];
-    return { result, seed: input.seed, size, backend: status.backend, charactersApplied, meta };
+    return {
+      result,
+      seed: input.seed,
+      size,
+      backend: status.backend,
+      charactersApplied,
+      meta,
+    };
   } finally {
     release?.();
   }

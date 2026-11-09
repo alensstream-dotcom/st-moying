@@ -4,11 +4,7 @@ import { templateSupportsNegative } from '@/backends/comfyTemplates';
 import { getWorkflowPlaceholders } from '@/backends/comfyui';
 import { naiSupportsCharacterPrompts } from '@/backends/nai';
 import type { Orientation } from '@/backends/size';
-import {
-  cleanHistoryText,
-  prepareTargetText,
-  type PreparedTargetText,
-} from '@/autoTag/clean';
+import { cleanHistoryText, prepareTargetText, type PreparedTargetText } from '@/autoTag/clean';
 import {
   buildCharCardSystem,
   buildPersonaSystem,
@@ -163,12 +159,10 @@ function recentShotTags(text: string, limit: number): string[] {
   for (const match of text.matchAll(SHOT_TAG_RE)) {
     const parsed = parseImageTagContent(match[0]);
     const charSummary = parsed.characters
-      .map(c => `${c.name}: ${c.tag}`)
+      .map((c) => `${c.name}: ${c.tag}`)
       .filter(Boolean)
       .join(' | ');
-    const summary = [parsed.tag, charSummary ? `[角色: ${charSummary}]` : '']
-      .filter(Boolean)
-      .join(' ; ');
+    const summary = [parsed.tag, charSummary ? `[角色: ${charSummary}]` : ''].filter(Boolean).join(' ; ');
     if (summary) heads.push(summary);
   }
   return heads.slice(-limit);
@@ -232,12 +226,11 @@ export async function buildAutoTagMessages(
 ): Promise<ChatMsg[]> {
   const target = context.chat[targetFloor];
   const preparedTarget =
-    preparedTargetOverride ??
-    prepareTargetText(target.mes, settings.excludes.customStripTags);
+    preparedTargetOverride ?? prepareTargetText(target.mes, settings.excludes.customStripTags);
   const previous = recentFloors(context, targetFloor, options.contextMessages)
-    .filter(floor => floor !== targetFloor)
+    .filter((floor) => floor !== targetFloor)
     .map(
-      floor =>
+      (floor) =>
         `--- 上下文｜${roleLabel(context, floor)} ---\n${cleanHistoryText(
           context.chat[floor].mes,
           settings.excludes.customStripTags,
@@ -255,7 +248,12 @@ export async function buildAutoTagMessages(
     Promise.resolve(fetchUserPersona(context)),
   ]);
 
-  prepareCostumeRequest(costumeRequest, [charCard, persona, worldInfo].filter(Boolean).join('\n'), preparedTarget.segments.map(segment => segment.text).join('\n'), [charCard, persona].filter(Boolean).join('\n'));
+  prepareCostumeRequest(
+    costumeRequest,
+    [charCard, persona, worldInfo].filter(Boolean).join('\n'),
+    preparedTarget.segments.map((segment) => segment.text).join('\n'),
+    [charCard, persona].filter(Boolean).join('\n'),
+  );
 
   // 自然语言模式(profile.nl):ComfyUI 当前工作流或 NAI 渠道开启了「生成自然语言」。
   // 开启后协议变为 tag/nl 两键——自然语言是配合短 tag 用的,不是替代。
@@ -302,11 +300,21 @@ export async function buildAutoTagMessages(
           },
         ],
       }
-    : { position: 'P2', tag: sampleTag, characters: [{ name: '小雪', tag: sampleTag }] };
+    : {
+        position: 'P2',
+        tag: sampleTag,
+        characters: [{ name: '小雪', tag: sampleTag }],
+      };
   if (nlOn && !naiCharPromptsOn) sampleImage.nl = sampleNl;
   if (negativeOn) sampleImage.negative = 'extra people, duplicate character';
   sampleImage.size = profile.lockedSize ?? 'portrait';
-  const outputShape = JSON.stringify({ images: [sampleImage], changes: [], outfitChanges: [], costumeContexts: [], identities: [] });
+  const outputShape = JSON.stringify({
+    images: [sampleImage],
+    changes: [],
+    outfitChanges: [],
+    costumeContexts: [],
+    identities: [],
+  });
   // NAI 两种写法共用的尾段:角色块的取舍与 Base / 角色的分工不随自然语言开关变
   const naiCharacterRuleTail =
     'This includes visible characters who have no library profile: a one-off unnamed individual gets a Character Prompt too, keyed by the term the story uses for them. Anonymous crowds visible in the frame remain in Base. Character tag uses girl/boy without a numeric count and contains that character appearance, outfit, and action. Do not include quality tags, negative tags, or XML.';
@@ -315,8 +323,8 @@ export async function buildAutoTagMessages(
       ? `4. Every image must include Base tag, English Base nl, and characters. Write every nl in English even when the story text is in another language, but keep every character name exactly as in the story: Chinese names stay Chinese (小雪, never Xiaoxue or Snow) in characters[].name, changes[].name, and inside any tag/nl text. Base contains only global counts, scene, composition, lighting, and shared relations — this applies to the Base nl as much as to the Base tag. Give each individual character visible inside the selected frame one Character Prompt ordered left-to-right then top-to-bottom; name/tag/nl are all required. ${naiCharacterRuleTail}`
       : `4. Every image must include Base tag and characters. This output is tag-only: write no nl key anywhere, neither in Base nor in characters[]. Keep every character name exactly as in the story: Chinese names stay Chinese (小雪, never Xiaoxue or Snow) in characters[].name, changes[].name, and inside any tag text. Base contains only global counts, scene, composition, lighting, and shared relations. Give each individual character visible inside the selected frame one Character Prompt ordered left-to-right then top-to-bottom; name and tag are both required. ${naiCharacterRuleTail}`
     : nlOn
-    ? '4. tag 与 nl 是同一画面的两种写法：tag 是 danbooru 短 tag，nl 是连贯的自然语言；二者都只含正面内容，不得包含质量词、负面词、JSON 以外的说明或 <bbi_image>/<tag>/<nl>/<size> 标签。'
-    : '4. tag 只能是该画面的正面内容提示词；不得包含质量词、负面词、JSON 以外的说明或 <bbi_image> 标签。';
+      ? '4. tag 与 nl 是同一画面的两种写法：tag 是 danbooru 短 tag，nl 是连贯的自然语言；二者都只含正面内容，不得包含质量词、负面词、JSON 以外的说明或 <bbi_image>/<tag>/<nl>/<size> 标签。'
+      : '4. tag 只能是该画面的正面内容提示词；不得包含质量词、负面词、JSON 以外的说明或 <bbi_image> 标签。';
   const negativeRule = negativeOn
     ? '\n   negative 是本画面专用的 danbooru 负面短 tag：只排除与正文冲突或本构图特别容易误生成的内容，可为空；禁止输出通用质量、画质、审美或技术性负面词，包括但不限于 worst quality、low quality、blurry、lowres、bad anatomy、bad hands、jpeg artifacts；不要写希望出现的内容，不得使用 @角色占位符。\n   negative 里绝不能出现正文已明确成立的事实，也不能否定你自己刚写进本图 tag/nl 的任何东西：正文写了在下雨、或你自己的 nl 写了 drizzle，就绝不许在 negative 写 rain；写了角色戴眼镜就不许写 glasses——那是在抹掉画面本该有的东西。写完 negative 逐词回看本图的 tag 与 nl，凡是能在里面找到对应内容的词一律删掉。拿不准时留空，空的 negative 永远比抵消正文的 negative 安全。'
     : '';
@@ -368,7 +376,10 @@ export async function buildAutoTagMessages(
   const multiCharacterBindingRule = naiCharPromptsOn
     ? '- 多人画面中，每个角色的发色、瞳色、体型、服装、物件和个人动作都必须放进各自的 characters[].tag，禁止放进 Base 或分配给其他角色。'
     : '- 多人画面中，每个角色的发色、瞳色、体型、服装、物件和个人动作都必须使用该角色的区分性称谓邻接绑定，禁止把两人的外貌特征散放成无法归属的一串公共 tag。';
+  const faceDesignRule =
+    '原创人物首次建档时 extra 应记录少量稳定面部特征（眼型、眉、轮廓、鼻唇），原文优先，缺项才补全；与已有女主比较，避免只换发色瞳色。不要堆 gorgeous face 等泛化美女词，不强加痣疤，不把微笑、半闭眼、妆容永久写入。已定妆或手动同人档案原样复用。';
   const characterRule = `7. 角色状态与 changes：${newCharacterRule}
+   ${faceDesignRule}
    ${libraryReferenceRule}
    - 按正文 P 位置为每个角色维护临时服装状态：正文未明确初始穿着时可以合理决定一次；没有穿上、脱下、换装、衣物损坏时沿用上一状态，发生明确变化后从对应 P 位置起更新。首次确定一套临时服装时，必须冻结足以复现款式的“服装视觉指纹”：服装类别之外，再固定版型/剪裁、主色和关键部件，涉及裤袜时固定颜色与透明度；例如不能只写 school uniform, pantyhose，而应具体到 navy school blazer, white collared shirt, red ribbon, dark pleated skirt, opaque white pantyhose。只补少量关键特征，不堆无关装饰。相同状态复用同一视觉指纹；镜头外不可见的部件可以省略，但省略不等于脱掉，后续重新可见且中间没有变化时必须恢复。每张图的 ${nlOn ? 'tag 与 nl 都' : 'tag 都'}要写出当前镜头可见的关键服装特征。临时穿着不得写进固定 outfit，除非设定明确它是长期不换的招牌着装。同一次输出内同一角色的临时服装必须**逐字复用同一串**：先在第一张图把整套视觉指纹定死，后续图的服装部分直接复制这串，只允许在末尾追加衣物状态词（slipped down / unzipped / wet / clinging / pulled aside / torn），不许更换单品、改颜色或改长度；正文没有写出换衣、脱下、衣物被毁时，换了就是错误。镜头外不可见的部件省略后，重新出现在画面里时必须恢复原样。
    ${multiCharacterBindingRule}
@@ -535,26 +546,34 @@ ${characterRule}
   // 后端书写规范(ComfyUI/NAI)压在固定协议之前;无适用规范时不占消息位。
   if (spec) messages.push({ role: 'system', content: spec });
   messages.push({ role: 'system', content: fixedContract });
-  messages.push({ role: 'system', content: COSTUME_PROTOCOL + '\n' + costumeBlock(costumeRequest.seed!) });
+  messages.push({
+    role: 'system',
+    content: COSTUME_PROTOCOL + '\n' + costumeBlock(costumeRequest.seed!),
+  });
   // 思维链:压在任务协议之后,要求模型先在 <thinking> 里过检查点再输出 JSON。
   // 解析端(protocol.ts)会先剥掉 think 块再取 JSON,二者配套;按后端取对应的那一份。
   const thinking = backendThinkingPrompt(options, nlOn, naiCharPromptsOn, options.maxImages);
   if (thinking) messages.push({ role: 'system', content: thinking });
-  const libraryBlock = library?.trim() || `【角色固定外貌库】[system-maintained; currently empty]\n（当前为空，没有任何角色已建档。世界书、角色卡、柏宝书和正文只提供建档依据；未列在本区块中的正式角色必须通过 field:"new" 建档。）`;
+  const libraryBlock =
+    library?.trim() ||
+    `【角色固定外貌库】[system-maintained; currently empty]\n（当前为空，没有任何角色已建档。世界书、角色卡、柏宝书和正文只提供建档依据；未列在本区块中的正式角色必须通过 field:"new" 建档。）`;
   // 素材库候选:用「目标正文 + 最近一段上下文」召回服装/姿势指纹,命中才注入。
   // 放外貌库之后、任务说明之前——模型读到候选时还没开始列槽位,不会被前面的指令带着走。
   const lore = options.lore;
   const loreBlock =
     lore?.enabled && (lore.wardrobeLimit > 0 || lore.poseLimit > 0 || lore.faces)
-      ? buildLoreBlock(previous ? `${preparedTarget.promptText}\n${previous.slice(-1500)}` : preparedTarget.promptText, {
-          costume: costumeRequest.seed,
-          maxNsfw: lore.maxNsfw,
-          wardrobeLimit: lore.wardrobeLimit,
-          poseLimit: lore.poseLimit,
-          faces: lore.faces,
-          faceLimit: lore.faceLimit,
-          rollSeed: loreSeed,
-        })
+      ? buildLoreBlock(
+          previous ? `${preparedTarget.promptText}\n${previous.slice(-1500)}` : preparedTarget.promptText,
+          {
+            costume: costumeRequest.seed,
+            maxNsfw: lore.maxNsfw,
+            wardrobeLimit: lore.wardrobeLimit,
+            poseLimit: lore.poseLimit,
+            faces: lore.faces,
+            faceLimit: lore.faceLimit,
+            rollSeed: loreSeed,
+          },
+        )
       : '';
   // 最近几张图的实拍 tag:跨楼层的服装状态与姿势去重都靠它锚定。
   // 上下文只带最近几楼,更早的图不在视野里,模型就会把已经脱掉的衣服「复穿」回去,
@@ -563,7 +582,9 @@ ${characterRule}
   const lastShotBlock = recentShots.length
     ? `【近期已出图的实拍 tag】[最近的排在最后;只用于延续状态与避免重复,不是要你再画一次]\n${recentShots
         .map((tag, index) => `${index + 1}. ${tag.slice(0, 500)}`)
-        .join('\n')}\n（这些画面已经存在。人物身上当时就是这样：已经脱掉或解开的部件不要写回去；画面取景仅作参考；服装以服装现状账本及本节 outfitChanges 为准，不能从图片 tag 改写剧情状态。这些图用过的体位、机位、接触点不要再画一次：同一动作没有实质变化时不要重复出图，相邻楼层必须换姿势或换机位。）\n\n`
+        .join(
+          '\n',
+        )}\n（这些画面已经存在。人物身上当时就是这样：已经脱掉或解开的部件不要写回去；画面取景仅作参考；服装以服装现状账本及本节 outfitChanges 为准，不能从图片 tag 改写剧情状态。这些图用过的体位、机位、接触点不要再画一次：同一动作没有实质变化时不要重复出图，相邻楼层必须换姿势或换机位。）\n\n`
     : '';
 
   const taskBlock = taskNote?.trim() ? `${taskNote.trim()}\n\n` : '';

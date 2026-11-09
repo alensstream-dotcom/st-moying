@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { findCharTag } from '@/state/charTags';
+import { adoptLook } from '@/state/characterStudio';
+import { putStudioImage } from '@/data/loreThumbs';
 import { computed, onMounted, ref, watch } from 'vue';
 
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
@@ -31,12 +34,7 @@ import { hydrateMessage } from '@/floor/hydrate';
 import { openLightbox } from '@/floor/lightbox';
 import { confirmImageMissing, isImageMissing } from '@/floor/missingImages';
 import { openPromptEditor } from '@/floor/promptEditor';
-import {
-  deleteImageResult,
-  promptHash,
-  saveImageResult,
-  type BbiImageEntry,
-} from '@/floor/storage';
+import { deleteImageResult, promptHash, saveImageResult, type BbiImageEntry } from '@/floor/storage';
 import { isTagPlanning } from '@/floor/tagPlanState';
 import { formatGenerationMeta } from '@/generationMeta';
 import { activeComfyPreset, activeOrientationLock, imageDisplayMaxHeight, settings } from '@/state/settings';
@@ -98,7 +96,7 @@ const hash = computed(() => promptHash(props.tag));
  *
  * 过滤只看**已确认 404**的图(missingImages 册),不是猜的:没被标记的图一律当作还在。
  */
-const liveHistory = computed(() => props.history.filter(entry => !isImageMissing(entry.path)));
+const liveHistory = computed(() => props.history.filter((entry) => !isImageMissing(entry.path)));
 /** 旧提示词结果同样要对账:它的文件一样可能被图库删掉。 */
 const liveStale = computed(() =>
   props.staleEntry && !isImageMissing(props.staleEntry.path) ? props.staleEntry : null,
@@ -108,7 +106,7 @@ const liveStale = computed(() =>
 const index = ref(liveHistory.value.length ? liveHistory.value.length - 1 : 0);
 watch(
   () => liveHistory.value.length,
-  length => {
+  (length) => {
     // 删掉的若是当前这张,index 会越界 → 钳回最后一张;新图落盘则跟到最新
     index.value = length ? length - 1 : 0;
   },
@@ -122,7 +120,7 @@ const promptOpen = ref(false);
  */
 const collapsed = computed<boolean>({
   get: () => isCollapsed(key.value, settings.ui.autoCollapseImages),
-  set: value => setCollapsed(key.value, value),
+  set: (value) => setCollapsed(key.value, value),
 });
 
 /** 触屏收纳菜单(⋯ 钮)的展开态;桌面 hover 一排直达,不用它。 */
@@ -253,8 +251,7 @@ const barText = computed(() => {
 
 /** 无图且后端未就绪时,占位区中央的配置引导。 */
 const pendingHint = computed(() => {
-  if (!comfyActive.value && !naiActive.value)
-    return '出图后端未选择,请到墨影「渠道」页选择出图渠道';
+  if (!comfyActive.value && !naiActive.value) return '出图后端未选择,请到墨影「渠道」页选择出图渠道';
   return naiActive.value
     ? '未配置 NAI,请到墨影「渠道」页填写 API Key'
     : '未配置 ComfyUI,请到墨影「渠道」页填写工作流';
@@ -274,7 +271,7 @@ async function generate(fresh = false): Promise<void> {
     prompt: props.prompt,
     nl: props.nl,
     negative: props.negative,
-    characters: props.characters.map(character => ({ ...character })),
+    characters: props.characters.map((character) => ({ ...character })),
     size: effectiveSize.value,
   };
   // NAI 需要闸门排队 → 先显示「排队中」;ComfyUI 有服务端队列,直接进 generating
@@ -304,12 +301,19 @@ async function generate(fresh = false): Promise<void> {
     );
     // 闸门、后端分派都在 generateImage 里(公开接口走同一条路,见 generate.ts);
     // 本组件只把进度回调接到自己的槽位运行态上。
-    const { result, meta } = await generateImage({ ...job, seed, storyFrame: { floor: job.messageId, tag: job.tag } }, signal, {
-      onStart: () => setGenPhase(slot, token, 'generating'),
-      onQueue: ahead => setQueueAhead(slot, token, ahead),
-      onRetry: retry => setGenRetry(slot, token, retry),
-    });
-    meta.continuity = [...(meta.continuity ?? []), ...clothingTrace(getContext()?.chat[job.messageId], job.tag)];
+    const { result, meta } = await generateImage(
+      { ...job, seed, storyFrame: { floor: job.messageId, tag: job.tag } },
+      signal,
+      {
+        onStart: () => setGenPhase(slot, token, 'generating'),
+        onQueue: (ahead) => setQueueAhead(slot, token, ahead),
+        onRetry: (retry) => setGenRetry(slot, token, retry),
+      },
+    );
+    meta.continuity = [
+      ...(meta.continuity ?? []),
+      ...clothingTrace(getContext()?.chat[job.messageId], job.tag),
+    ];
     // 图已经拿到手:此时若发现本任务已被取代(取消后重绘 / reconcile),不要落盘,
     // 否则会把旧提示词的结果写进 extra,并触发一次多余的重水合打断新任务。
     if (!isCurrentGen(slot, token)) {
@@ -376,7 +380,7 @@ function openEditor(): void {
       tag: props.prompt,
       nl: props.nl,
       negative: props.negative,
-      characters: props.characters.map(character => ({ ...character })),
+      characters: props.characters.map((character) => ({ ...character })),
       size: props.size,
     },
     // 存活口径:文案要许诺「改回提示词即可找回」,被图库删掉的图找不回来,不能算进去
@@ -397,20 +401,20 @@ function cancelReplan(): void {
   cancelFloorTags(props.messageId);
 }
 
-/** 删除当前展示的这一条结果(DESIGN-FLOOR-UI.md §8.2)。 */function removeCurrent(): void {
+/** 删除当前展示的这一条结果(DESIGN-FLOOR-UI.md §8.2)。 */ function removeCurrent(): void {
   const target = shownEntry.value;
   if (!target) return;
-  void removeEntry(target, { messageId: props.messageId, swipeId: props.swipeId });
+  void removeEntry(target, {
+    messageId: props.messageId,
+    swipeId: props.swipeId,
+  });
 }
 
 /**
  * 删除一条结果。楼层坐标由调用方传入而非现场读 props:
  * 本函数可能在组件销毁后才真正执行(灯箱回调 + 确认弹窗都是异步的)。
  */
-async function removeEntry(
-  target: BbiImageEntry,
-  at: { messageId: number; swipeId: number },
-): Promise<void> {
+async function removeEntry(target: BbiImageEntry, at: { messageId: number; swipeId: number }): Promise<void> {
   const ok = await confirmDialog({
     title: '删除这张图',
     text: '将删除这张图的聊天记录，无法恢复；images 中的文件会一并删除，files 中的旧图保留。同一提示词的其它历史结果不受影响。',
@@ -420,12 +424,7 @@ async function removeEntry(
   if (!ok) return;
   // stale 的图存在别的 hash 桶里,删除要用它自己的 promptHash,不能用当前 tag 的
   const bucketHash = promptHash(target.prompt);
-  const removed = await deleteImageResult(
-    at.messageId,
-    at.swipeId,
-    bucketHash,
-    target.generationId,
-  );
+  const removed = await deleteImageResult(at.messageId, at.swipeId, bucketHash, target.generationId);
   if (!removed) {
     toastr.error('删除失败,聊天记录未能保存', '墨影');
     return;
@@ -439,6 +438,25 @@ async function copyPrompt(): Promise<void> {
 }
 
 /** 另存当前展示的这张图(与灯箱共用 download.ts,免得两份逻辑漂移)。 */
+async function useAsPortrait() {
+  const chat = getContext()?.getCurrentChatId?.(),
+    name = props.characters.length === 1 ? props.characters[0].name : '';
+  const entry = findCharTag(name),
+    src = imageSrc.value;
+  if (!entry || !src) return;
+  try {
+    const response = await fetch(src);
+    if (!response.ok) throw new Error('读取图片失败');
+    const blob = await response.blob(),
+      key = 'studio:' + crypto.randomUUID();
+    await putStudioImage(key, blob, JSON.stringify(entry.fields));
+    if (chat !== getContext()?.getCurrentChatId?.()) return;
+    adoptLook(entry, key);
+    toastr.success('已设为角色立绘，付费图片参考默认关闭', '墨影');
+  } catch (e) {
+    toastr.error(e instanceof Error ? e.message : String(e), '立绘保存失败');
+  }
+}
 function downloadCurrent(): void {
   const entry = shownEntry.value;
   if (!entry) return;
@@ -447,7 +465,7 @@ function downloadCurrent(): void {
 
 // 提示词变更对账放 watch 而非 onMounted:差分水合(hydrate.ts)下同锚点卡片是
 // props patch 而非重挂,onMounted 不会再跑;tag 一变必须立刻作废旧提示词的任务。
-watch(hash, current => reconcileGen(key.value, current), { immediate: true });
+watch(hash, (current) => reconcileGen(key.value, current), { immediate: true });
 
 onMounted(() => {
   // 「写入 tag 后自动生成图片」:本槽位带着标记水合挂载 → 消费标记并直接开始生成。
@@ -456,7 +474,11 @@ onMounted(() => {
   // (本组件没有单测,留在这儿锁不住),口径见 floor/autoGenerate.ts。
   // 未配置后端时不跑(卡片维持 pending,显示配置引导);标记同样已消费掉。
   if (!props.chatId) return;
-  if (props.chatId === getContext()?.getCurrentChatId?.() && isNovelSlot(getContext()?.chat[props.messageId], props.swipeId, props.seq, hash.value)) return;
+  if (
+    props.chatId === getContext()?.getCurrentChatId?.() &&
+    isNovelSlot(getContext()?.chat[props.messageId], props.swipeId, props.seq, hash.value)
+  )
+    return;
   if (isBackgroundJobQueued(props.chatId, props.messageId, props.swipeId, props.seq)) {
     consumeAutoGenerate(props.chatId, props.messageId, props.swipeId, props.seq);
     return;
@@ -519,155 +541,186 @@ onMounted(() => {
          高度归零 + 淡出,<img> 不卸载——展开瞬间图就在,不会重新发起请求。 -->
     <div class="bbi-figure__collapse" :data-collapsed="collapsed ? '1' : ''">
       <div class="bbi-figure__collapse-inner">
-    <div class="bbi-figure__stage" :data-size="effectiveSize" :data-placeholder="imageSrc ? '' : '1'">
-      <img
-        v-if="imageSrc"
-        class="bbi-figure__img"
-        :src="imageSrc"
-        alt="生图结果"
-        @click="openImage"
-        @error="onImageError"
-      />
+        <div class="bbi-figure__stage" :data-size="effectiveSize" :data-placeholder="imageSrc ? '' : '1'">
+          <img
+            v-if="imageSrc"
+            class="bbi-figure__img"
+            :src="imageSrc"
+            alt="生图结果"
+            @click="openImage"
+            @error="onImageError"
+          />
 
-      <!-- 无图时的生成中:骨架微光扫过占位底 -->
-      <div v-if="busy && !imageSrc" class="bbi-figure__skeleton" />
+          <!-- 无图时的生成中:骨架微光扫过占位底 -->
+          <div v-if="busy && !imageSrc" class="bbi-figure__skeleton" />
 
-      <!-- 生成中遮罩:绝对定位盖在整个舞台上(有图=磨砂盖住旧图,无图=压住骨架)。
+          <!-- 生成中遮罩:绝对定位盖在整个舞台上(有图=磨砂盖住旧图,无图=压住骨架)。
            居中 spinner + 状态 + 取消,不再像旧版那样作为 flex 子项跟图片并排互挤。 -->
-      <div v-if="busy" class="bbi-figure__busy">
-        <span class="bbi-figure__spin" />
-        <span class="bbi-figure__busy-text">{{ statusLabel }}</span>
-        <button class="bbi-figure__cancel" type="button" @click="cancel">取消</button>
-      </div>
+          <div v-if="busy" class="bbi-figure__busy">
+            <span class="bbi-figure__spin" />
+            <span class="bbi-figure__busy-text">{{ statusLabel }}</span>
+            <button class="bbi-figure__cancel" type="button" @click="cancel">取消</button>
+          </div>
 
-      <!-- 提示词重写遮罩(AI 重写提示词):还是同一张图,只盖一层进度与取消;
+          <!-- 提示词重写遮罩(AI 重写提示词):还是同一张图,只盖一层进度与取消;
            与出图遮罩互斥(replan/generate 的守卫保证两者不同时在途) -->
-      <div v-else-if="planning" class="bbi-figure__busy">
-        <span class="bbi-figure__spin" />
-        <span class="bbi-figure__busy-text">AI 重写提示词…</span>
-        <button class="bbi-figure__cancel" type="button" @click="cancelReplan">取消</button>
-      </div>
+          <div v-else-if="planning" class="bbi-figure__busy">
+            <span class="bbi-figure__spin" />
+            <span class="bbi-figure__busy-text">AI 重写提示词…</span>
+            <button class="bbi-figure__cancel" type="button" @click="cancelReplan">取消</button>
+          </div>
 
-      <!-- 无图且空闲:生成入口 / 配置引导 -->
-      <div v-if="!imageSrc && !busy" class="bbi-figure__pending">
-        <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate()">
-          <Icon name="palette" :size="15" />
-          {{ phase === 'error' ? '重试' : '生成图片' }}
-        </button>
-        <p v-else class="bbi-figure__hint">{{ pendingHint }}</p>
-      </div>
+          <!-- 无图且空闲:生成入口 / 配置引导 -->
+          <div v-if="!imageSrc && !busy" class="bbi-figure__pending">
+            <button v-if="configured" class="bbi-figure__generate" type="button" @click="generate()">
+              <Icon name="palette" :size="15" />
+              {{ phase === 'error' ? '重试' : '生成图片' }}
+            </button>
+            <p v-else class="bbi-figure__hint">{{ pendingHint }}</p>
+          </div>
 
-      <!-- 提示词已改:角标提示,不再整图压暗 -->
-      <span v-if="isStale && !busy && !planning" class="bbi-figure__badge">旧提示词</span>
+          <!-- 提示词已改:角标提示,不再整图压暗 -->
+          <span v-if="isStale && !busy && !planning" class="bbi-figure__badge">旧提示词</span>
 
-      <!-- 悬浮操作组:⋯ 收纳钮钉在右上角常驻淡显;桌面 hover、触屏点开,菜单都在其左侧横向排开
+          <!-- 悬浮操作组:⋯ 收纳钮钉在右上角常驻淡显;桌面 hover、触屏点开,菜单都在其左侧横向排开
            (窄图放不下就折行),点任意操作后自动收起(图片平时只有一颗小点) -->
-      <span v-if="!busy && !planning" class="bbi-figure__actions" :data-open="menuOpen ? '1' : ''">
-        <button
-          class="bbi-fab bbi-figure__more"
-          type="button"
-          title="更多操作"
-          :aria-expanded="menuOpen"
-          @click="menuOpen = !menuOpen"
-        >
-          <Icon name="more" :size="15" />
-        </button>
-        <span class="bbi-figure__menu">
-          <button
-            class="bbi-fab"
-            type="button"
-            title="折叠图片"
-            @click="menuOpen = false; collapsed = true"
-          >
-            <Icon name="chevron" :size="15" style="transform: rotate(180deg)" />
-          </button>
-          <button
-            v-if="shownEntry"
-            class="bbi-fab"
-            type="button"
-            :disabled="!configured"
-            :title="configured ? '重绘' : '请先在墨影「渠道」页完成配置'"
-            @click="menuOpen = false; generate(true)"
-          >
-            <Icon name="refresh" :size="15" />
-          </button>
-          <button
-            v-if="shownEntry"
-            class="bbi-fab"
-            type="button"
-            title="下载这张图"
-            @click="menuOpen = false; downloadCurrent()"
-          >
-            <Icon name="download" :size="15" />
-          </button>
-          <button
-            v-if="shownEntry"
-            class="bbi-fab bbi-fab--danger"
-            type="button"
-            title="删除这张图"
-            @click="menuOpen = false; removeCurrent()"
-          >
-            <Icon name="trash" :size="15" />
-          </button>
-          <button
-            class="bbi-fab"
-            type="button"
-            title="编辑提示词"
-            @click="menuOpen = false; openEditor()"
-          >
-            <Icon name="edit" :size="15" />
-          </button>
-          <button
-            v-if="promptText"
-            class="bbi-fab"
-            :class="{ 'bbi-fab--on': promptOpen }"
-            type="button"
-            title="查看提示词"
-            :aria-expanded="promptOpen"
-            @click="menuOpen = false; promptOpen = !promptOpen"
-          >
-            <Icon name="text" :size="15" />
-          </button>
-        </span>
-      </span>
+          <span v-if="!busy && !planning" class="bbi-figure__actions" :data-open="menuOpen ? '1' : ''">
+            <button
+              class="bbi-fab bbi-figure__more"
+              type="button"
+              title="更多操作"
+              :aria-expanded="menuOpen"
+              @click="menuOpen = !menuOpen"
+            >
+              <Icon name="more" :size="15" />
+            </button>
+            <span class="bbi-figure__menu">
+              <button
+                class="bbi-fab"
+                type="button"
+                title="折叠图片"
+                @click="
+                  menuOpen = false;
+                  collapsed = true;
+                "
+              >
+                <Icon name="chevron" :size="15" style="transform: rotate(180deg)" />
+              </button>
+              <button
+                v-if="shownEntry"
+                class="bbi-fab"
+                type="button"
+                :disabled="!configured"
+                :title="configured ? '重绘' : '请先在墨影「渠道」页完成配置'"
+                @click="
+                  menuOpen = false;
+                  generate(true);
+                "
+              >
+                <Icon name="refresh" :size="15" />
+              </button>
+              <button
+                v-if="shownEntry"
+                class="bbi-fab"
+                type="button"
+                title="下载这张图"
+                @click="
+                  menuOpen = false;
+                  downloadCurrent();
+                "
+              >
+                <Icon name="download" :size="15" />
+              </button>
+              <button
+                v-if="shownEntry && characters.length === 1"
+                class="bbi-fab"
+                title="设为角色立绘（不自动开启付费参考）"
+                @click="
+                  menuOpen = false;
+                  useAsPortrait();
+                "
+              >
+                定妆
+              </button>
+              <button
+                v-if="shownEntry"
+                class="bbi-fab bbi-fab--danger"
+                type="button"
+                title="删除这张图"
+                @click="
+                  menuOpen = false;
+                  removeCurrent();
+                "
+              >
+                <Icon name="trash" :size="15" />
+              </button>
+              <button
+                class="bbi-fab"
+                type="button"
+                title="编辑提示词"
+                @click="
+                  menuOpen = false;
+                  openEditor();
+                "
+              >
+                <Icon name="edit" :size="15" />
+              </button>
+              <button
+                v-if="promptText"
+                class="bbi-fab"
+                :class="{ 'bbi-fab--on': promptOpen }"
+                type="button"
+                title="查看提示词"
+                :aria-expanded="promptOpen"
+                @click="
+                  menuOpen = false;
+                  promptOpen = !promptOpen;
+                "
+              >
+                <Icon name="text" :size="15" />
+              </button>
+            </span>
+          </span>
 
-      <!-- 翻页器:叠在图片右下角的胶囊 -->
-      <span v-if="pageable" class="bbi-figure__pager">
-        <button class="bbi-figure__pager-btn" type="button" :disabled="index <= 0" @click="index--">◀</button>
-        <span class="bbi-figure__pager-count">{{ index + 1 }}/{{ liveHistory.length }}</span>
-        <button
-          class="bbi-figure__pager-btn"
-          type="button"
-          :disabled="index >= liveHistory.length - 1"
-          @click="index++"
-        >
-          ▶
-        </button>
-      </span>
-    </div>
+          <!-- 翻页器:叠在图片右下角的胶囊 -->
+          <span v-if="pageable" class="bbi-figure__pager">
+            <button class="bbi-figure__pager-btn" type="button" :disabled="index <= 0" @click="index--">
+              ◀
+            </button>
+            <span class="bbi-figure__pager-count">{{ index + 1 }}/{{ liveHistory.length }}</span>
+            <button
+              class="bbi-figure__pager-btn"
+              type="button"
+              :disabled="index >= liveHistory.length - 1"
+              @click="index++"
+            >
+              ▶
+            </button>
+          </span>
+        </div>
 
-    <!-- 状态行:仅出错 / 提示词已改时出现,平时零占位 -->
-    <p v-if="phase === 'error'" class="bbi-figure__status bbi-figure__status--error">
-      {{ error
-      }}<button v-if="configured" class="bbi-figure__retry" type="button" @click="generate()">
-        重试
-      </button>
-    </p>
-    <p v-else-if="isStale && !busy && !planning" class="bbi-figure__status bbi-figure__status--warn">
-      提示词已修改,上图由旧提示词生成;点右上角重绘按新提示词出图
-    </p>
-    <!-- 文件被删(通常是在图库里删的):记录还在但图没了,明说一句免得像凭空丢图 -->
-    <p v-else-if="filesGone" class="bbi-figure__status bbi-figure__status--warn">
-      图片文件已删除(在图库里删掉了);可点上方重新生成
-    </p>
+        <!-- 状态行:仅出错 / 提示词已改时出现,平时零占位 -->
+        <p v-if="phase === 'error'" class="bbi-figure__status bbi-figure__status--error">
+          {{ error
+          }}<button v-if="configured" class="bbi-figure__retry" type="button" @click="generate()">
+            重试
+          </button>
+        </p>
+        <p v-else-if="isStale && !busy && !planning" class="bbi-figure__status bbi-figure__status--warn">
+          提示词已修改,上图由旧提示词生成;点右上角重绘按新提示词出图
+        </p>
+        <!-- 文件被删(通常是在图库里删的):记录还在但图没了,明说一句免得像凭空丢图 -->
+        <p v-else-if="filesGone" class="bbi-figure__status bbi-figure__status--warn">
+          图片文件已删除(在图库里删掉了);可点上方重新生成
+        </p>
 
-    <!-- 提示词面板:悬浮 文本按钮唤起,复制按钮跟着面板走 -->
-    <div v-if="promptOpen && promptText" class="bbi-figure__prompt-box">
-      <pre class="bbi-figure__prompt">{{ promptText }}</pre>
-      <button class="bbi-figure__prompt-copy" type="button" title="复制提示词" @click="copyPrompt">
-        <Icon name="copy" :size="14" />
-      </button>
-    </div>
+        <!-- 提示词面板:悬浮 文本按钮唤起,复制按钮跟着面板走 -->
+        <div v-if="promptOpen && promptText" class="bbi-figure__prompt-box">
+          <pre class="bbi-figure__prompt">{{ promptText }}</pre>
+          <button class="bbi-figure__prompt-copy" type="button" title="复制提示词" @click="copyPrompt">
+            <Icon name="copy" :size="14" />
+          </button>
+        </div>
       </div>
     </div>
   </div>

@@ -33,7 +33,7 @@ export function thumbKey(kind: ThumbKind, id: string): string {
 
 function openDb(): Promise<IDBDatabase | null> {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise(resolve => {
+  dbPromise = new Promise((resolve) => {
     try {
       if (typeof indexedDB === 'undefined') {
         resolve(null);
@@ -55,7 +55,7 @@ function openDb(): Promise<IDBDatabase | null> {
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T | null> {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     request.onsuccess = () => resolve(request.result ?? null);
     request.onerror = () => resolve(null);
   });
@@ -131,4 +131,19 @@ export async function countThumbs(): Promise<number> {
 export function resetThumbCache(): void {
   memory.clear();
   dbPromise = null;
+}
+
+/** Studio adopts only after durable storage succeeds; never silently lose a paid portrait. */
+export async function putStudioImage(key: string, blob: Blob, prompt: string): Promise<void> {
+  const db = await openDb();
+  if (!db) throw new Error('立绘未能持久保存，请下载图片备份并检查浏览器存储');
+  const record = { blob, prompt, at: Date.now() };
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(record, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(new Error('立绘未能持久保存，请下载图片备份并检查浏览器存储'));
+    tx.onabort = () => reject(new Error('立绘未能持久保存，请下载图片备份并检查浏览器存储'));
+  });
+  memory.set(key, record);
 }

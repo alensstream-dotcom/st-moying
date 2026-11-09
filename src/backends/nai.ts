@@ -3,21 +3,11 @@ import { randomUuid } from '@/randomUuid';
 
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import type { ComfyImageResult } from '@/backends/comfyui';
-import {
-  parseRetryAfter,
-  runNaiWithRetry,
-  type NaiRetryInfo,
-} from '@/backends/naiRateLimit';
+import { parseRetryAfter, runNaiWithRetry, type NaiRetryInfo } from '@/backends/naiRateLimit';
 import { parseSize, pickSize, type Orientation } from '@/backends/size';
 import { clampVibeStrength, loadVibeData } from '@/backends/vibeStore';
 import type { GenerationArtist, GenerationMeta, GenerationParams, GenerationVibe } from '@/generationMeta';
-import type {
-  NaiArtistPreset,
-  NaiSettings,
-  NaiVibe,
-  NaiVibeData,
-  NaiVibeEncodings,
-} from '@/state/settings';
+import type { NaiArtistPreset, NaiSettings, NaiVibe, NaiVibeData, NaiVibeEncodings } from '@/state/settings';
 
 /**
  * NovelAI 生图后端(浏览器直连,协议与官方 image.novelai.net 一致)。
@@ -135,7 +125,7 @@ const NAI_V5_SAMPLERS = new Set([
 ]);
 
 export function naiSamplers(model: string): { value: string; label: string }[] {
-  return isNai5(model) ? NAI_SAMPLERS.filter(sampler => NAI_V5_SAMPLERS.has(sampler.value)) : NAI_SAMPLERS;
+  return isNai5(model) ? NAI_SAMPLERS.filter((sampler) => NAI_V5_SAMPLERS.has(sampler.value)) : NAI_SAMPLERS;
 }
 
 export function isNai45(model: string): boolean {
@@ -165,7 +155,12 @@ function isNai3(model: string): boolean {
 }
 
 /** skip_cfg_above_sigma:开 variety boost 时按尺寸与模型算;关 → null。 */
-export function skipCfgAboveSigma(width: number, height: number, model: string, varietyBoost: boolean): number | null {
+export function skipCfgAboveSigma(
+  width: number,
+  height: number,
+  model: string,
+  varietyBoost: boolean,
+): number | null {
   if (!varietyBoost || isNai5(model)) return null;
   const magic = isNai45(model) ? SIGMA_MAGIC_NUMBER_V4_5 : SIGMA_MAGIC_NUMBER;
   return Math.pow((width * height) / REFERENCE_PIXEL_COUNT, 0.5) * magic;
@@ -227,12 +222,13 @@ function base64ToUint8(b64: string): Uint8Array {
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /* ============ payload 构造(纯函数,可测) ============ */
 
 export interface NaiGenerateValues {
+  characterReference?: { image: string; strength: number; fidelity: number };
   /** 正向 tag(不含质量词)。 */
   prompt: string;
   nl?: string;
@@ -290,7 +286,7 @@ export const BUILTIN_NAI_ARTISTS: readonly NaiArtistPreset[] = [
 
 /** 该 id 是否是内置配方(面板据此只读化;用户条目 id 恒为 art_*,不可能撞上)。 */
 export function isBuiltinNaiArtist(id: string): boolean {
-  return BUILTIN_NAI_ARTISTS.some(a => a.id === id);
+  return BUILTIN_NAI_ARTISTS.some((a) => a.id === id);
 }
 
 type JsonObject = Record<string, unknown>;
@@ -307,8 +303,8 @@ type JsonObject = Record<string, unknown>;
 function naiActivePreset(nai: NaiSettings): NaiArtistPreset | null {
   if (!nai.activeArtistId) return null;
   return (
-    nai.artistPresets.find(a => a.id === nai.activeArtistId) ??
-    BUILTIN_NAI_ARTISTS.find(a => a.id === nai.activeArtistId) ??
+    nai.artistPresets.find((a) => a.id === nai.activeArtistId) ??
+    BUILTIN_NAI_ARTISTS.find((a) => a.id === nai.activeArtistId) ??
     null
   );
 }
@@ -367,7 +363,7 @@ function characterCaption(character: ImageCharacterPrompt): string {
   // Character Prompts identify one subject: library count tags (1girl/1boy) become girl/boy here.
   const tag = character.tag
     .split(',')
-    .map(part => {
+    .map((part) => {
       const value = part.trim();
       if (/^\d+\s*girls?$/i.test(value)) return 'girl';
       if (/^\d+\s*boys?$/i.test(value)) return 'boy';
@@ -439,7 +435,7 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
     // NAI4/4.5/V5: v4 caption structure; Vibe uses a model-specific cached encoding.
     params.reference_image_multiple_cached = [];
     const charCaptions = naiSupportsCharacterPrompts(nai.model)
-      ? (values.characters ?? []).map(character => ({
+      ? (values.characters ?? []).map((character) => ({
           char_caption: characterCaption(character),
           centers: [{ x: 0.5, y: 0.5 }],
         }))
@@ -453,7 +449,10 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
     params.v4_negative_prompt = {
       caption: {
         base_caption: negative,
-        char_captions: charCaptions.map(() => ({ char_caption: '', centers: [{ x: 0.5, y: 0.5 }] })),
+        char_captions: charCaptions.map(() => ({
+          char_caption: '',
+          centers: [{ x: 0.5, y: 0.5 }],
+        })),
       },
       legacy_uc: false,
     };
@@ -498,9 +497,9 @@ export function applyVibes(
   nai: NaiSettings,
   dataById: ReadonlyMap<string, NaiVibeData>,
 ): VibeApplication {
-  const active = nai.vibes.filter(v => v.enabled);
+  const active = nai.vibes.filter((v) => v.enabled);
   if (!active.length) return { applied: [], skipped: [] };
-  if (!naiSupportsVibes(nai.model)) return { applied: [], skipped: active.map(vibe => vibe.name) };
+  if (!naiSupportsVibes(nai.model)) return { applied: [], skipped: active.map((vibe) => vibe.name) };
   const applied: GenerationVibe[] = [];
   const skipped: string[] = [];
   const strengths = params.reference_strength_multiple as number[];
@@ -522,7 +521,10 @@ export function applyVibes(
     return { applied, skipped };
   }
 
-  const cached = params.reference_image_multiple_cached as { cache_secret_key: string; data: string }[];
+  const cached = params.reference_image_multiple_cached as {
+    cache_secret_key: string;
+    data: string;
+  }[];
   const modelKey = vibeModelKey(nai.model);
   const picked: NaiVibe[] = [];
   for (const vibe of active) {
@@ -615,14 +617,17 @@ export async function testNaiConnection(
 }
 
 /** 解 NAI 返回的 zip,取第一张图转 base64。 */
-export function unzipNaiImage(buffer: ArrayBuffer): { base64: string; filename: string } {
+export function unzipNaiImage(buffer: ArrayBuffer): {
+  base64: string;
+  filename: string;
+} {
   let files: Record<string, Uint8Array>;
   try {
     files = unzipSync(new Uint8Array(buffer));
   } catch {
     throw new NaiError('响应不是有效的 zip 包(第三方站可能返回了其他格式)');
   }
-  const name = Object.keys(files).find(n => /\.(png|jpe?g|webp)$/i.test(n)) ?? Object.keys(files)[0];
+  const name = Object.keys(files).find((n) => /\.(png|jpe?g|webp)$/i.test(n)) ?? Object.keys(files)[0];
   if (!name) throw new NaiError('zip 包内没有图片文件');
   return { base64: uint8ToBase64(files[name]), filename: name };
 }
@@ -653,7 +658,23 @@ export async function generateNaiImage(
   // 画师串在发请求时解析一次，快照下来随图落盘：事后配方被删/改名也不丢。
   const artist = naiArtistUsage(nai);
   const params = buildNaiParameters(nai, values);
-  const activeVibes = naiSupportsVibes(nai.model) ? nai.vibes.filter(vibe => vibe.enabled) : [];
+  if (values.characterReference) {
+    if (!nai.model.includes('4-5')) throw new NaiError('当前模型不支持角色图片参考');
+    if (nai.vibes.some((v) => v.enabled)) throw new NaiError('图片参考不能与 Vibe 同用');
+    const r = values.characterReference;
+    params.director_reference_images = [r.image];
+    params.director_reference_descriptions = [
+      {
+        caption: { base_caption: 'character', char_captions: [] },
+        legacy_uc: false,
+      },
+    ];
+    params.director_reference_strengths = [r.strength];
+    params.director_reference_secondary_strengths = [1 - r.fidelity];
+    params.director_reference_information_extracted = [1];
+  }
+
+  const activeVibes = naiSupportsVibes(nai.model) ? nai.vibes.filter((vibe) => vibe.enabled) : [];
   const loaded = new Map<string, NaiVibeData>();
   for (const vibe of activeVibes) {
     try {
@@ -793,7 +814,11 @@ export async function encodeVibeImage(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${nai.key.trim()}`,
         },
-        body: JSON.stringify({ image: imageBase64, information_extracted: infoExtracted, model }),
+        body: JSON.stringify({
+          image: imageBase64,
+          information_extracted: infoExtracted,
+          model,
+        }),
         signal,
       });
       if (!resp.ok) throw await naiHttpError(resp, 'vibe 编码失败');
@@ -833,9 +858,7 @@ export function parseNaiv4vibe(text: string): ImportedVibe {
       encodings[modelKey] = {
         encoding: first.encoding,
         infoExtracted:
-          typeof first.params?.information_extracted === 'number'
-            ? first.params.information_extracted
-            : 1,
+          typeof first.params?.information_extracted === 'number' ? first.params.information_extracted : 1,
       };
     }
   }

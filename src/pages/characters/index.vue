@@ -1,1101 +1,1051 @@
 <script setup lang="ts">
-import BbiTextarea from '@/components/BbiTextarea.vue';
-import Collapsible from '@/components/Collapsible.vue';
-import { reviewAutomaticProfiles } from '@/autoTag/identityReview';
-import { confirmCharacterIdentity, currentIdentityFacts, identityEntrySuspended, identityFactFor, identityUi, undoIdentityReview } from '@/state/characterIdentity';
-import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import Icon from '@/components/Icon.vue';
-import ModalMask from '@/components/ModalMask.vue';
-import { generateCharTags } from '@/autoTag/charAnchors';
-import { readBookMemory } from '@/autoTag/bookMemory';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import {
-  allCharacterRecords,
-  recomputeCharTags,
-  CHAR_TAG_FIELDS,
-  CHAR_TAG_FIELD_LABELS,
-  buildEntryTag,
   charTagBaseNames,
   charTagLib,
   emptyCharFields,
-  findCharTag,
-  removeCharTag,
-  rollbackCharTag,
   upsertCharTag,
-  type CharTagChangeRecord,
+  removeCharTag,
   type CharTagEntry,
-  type CharTagField,
+  CHAR_TAG_FIELDS,
+  CHAR_TAG_FIELD_LABELS,
+  isManualFandom,
 } from '@/state/charTags';
 import {
-  copyGlobalCharTagToChat,
   globalCharTagLib,
-  promoteCharTagToGlobal,
-  removeGlobalCharTag,
+  copyGlobalCharTagToChat,
   upsertGlobalCharTag,
+  removeGlobalCharTag,
 } from '@/state/globalCharTags';
+import {
+  lookSettings,
+  saveLook,
+  adoptLook,
+  fingerprint,
+  loadTagChinese,
+  explainTags,
+  setTagChinese,
+  searchTagChinese,
+  type LookVersion,
+} from '@/state/characterStudio';
+import { getThumb, putStudioImage } from '@/data/loreThumbs';
 import { getContext } from '@/st/context';
-import { computed, ref } from 'vue';
-
-const identityRows = computed(() => {
-  void charTagLib.entries; void identityUi.revision;
-  const facts = currentIdentityFacts(), entries = allCharacterRecords();
-  const names = [...new Set([...entries.filter(e => e.source !== 'manual').map(e => e.name), ...facts.map(f => f.name)])];
-  return names.map(name => { const entry = entries.find(e => e.name === name), fact = identityFactFor(name, facts);
-    return { name, entry, fact, suspended: !!entry && identityEntrySuspended(entry, facts) }; });
+import { fetchCharCard, fetchUserPersona, fetchWorldInfo } from '@/autoTag/context';
+import { readBookMemory } from '@/autoTag/bookMemory';
+import { requestCompletion, requestViaMainApi } from '@/api/client';
+import { settings, getTagGenChannel } from '@/state/settings';
+import { generateImage, decideSeed } from '@/generate';
+import { costumeBefore } from '@/autoTag/costumeContext';
+import { clothingBefore } from '@/autoTag/outfitTimeline';
+import { allFandomItems } from '@/data/loreIndex';
+import { reviewAutomaticProfiles } from '@/autoTag/identityReview';
+import {
+  currentIdentityFacts,
+  confirmCharacterIdentity,
+  undoIdentityReview,
+} from '@/state/characterIdentity';
+let taskChat: string | undefined;
+function checkTask() {
+  if (controller?.signal.aborted) throw new DOMException('已取消', 'AbortError');
+  if (taskChat !== getContext()?.getCurrentChatId?.()) throw new Error('聊天已切换，已停止写入');
+}
+const query = ref(''),
+  selected = ref(''),
+  tab = ref('档案'),
+  busy = ref(false),
+  feedback = ref(''),
+  dictionaryReady = ref(false),
+  showTemplates = ref(false);
+const draft = ref<CharTagEntry | null>(null),
+  candidate = ref<CharTagEntry | null>(null),
+  portrait = ref(''),
+  candidateUrl = ref('');
+let candidateBlob: Blob | null = null;
+let controller: AbortController | null = null;
+const tagSearch = ref(''),
+  tagTarget = ref<keyof CharTagEntry['fields']>('extra');
+const tagMatches = computed(() => {
+  dictionaryReady.value;
+  return searchTagChinese(tagSearch.value);
 });
-async function checkIdentity() {
-  try { await reviewAutomaticProfiles(); } catch (error) { toastr.error(error instanceof Error ? error.message : String(error), '身份审核'); }
+function appendTag(tag: string) {
+  if (!draft.value) return;
+  const old = draft.value.fields[tagTarget.value];
+  draft.value.fields[tagTarget.value] = [
+    ...new Set([
+      ...old
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean),
+      tag,
+    ]),
+  ].join(', ');
 }
-function identityAction(action: () => void) {
-  try { action(); recomputeCharTags(); identityUi.feedback = '身份审核状态已更新；原档案保留，旧图片未删除'; }
-  catch (error) { toastr.error(error instanceof Error ? error.message : String(error), '身份审核'); }
-}
-
-/**
- * 角色管理 —— 两层固定外貌库:
- * - 全局库:跨所有聊天生效的只读模板,AI 永不修改,仅手动维护(适合玩家角色等固定形象)。
- * - 本聊天库:仅当前聊天,柏宝书自动建档、AI 随剧情变更;同名时优先于全局。
- * 外貌按字段记录(sex/hair/eyes/...),拼接结果即最终 tag;生成 tag 时 AI 照抄库中字段,
- * 残留的 @角色名 占位符由插件兜底替换 —— 外貌稳定不漂移。
- */
-
-type Scope = 'chat' | 'global';
-
-interface Draft {
-  name: string;
-  fields: Record<CharTagField, string>;
-  raw: string;
-  nl: string;
-}
-
-// editingName:正在编辑的已有条目名;null = 新建。弹窗开关以 draft 是否存在为准。
-const editingName = ref<string | null>(null);
-// editingScope:被编辑条目所在层;draftScope:草稿保存到哪层(仅新建时可选)。
-const editingScope = ref<Scope>('chat');
-const draftScope = ref<Scope>('chat');
-const draft = ref<Draft | null>(null);
-// 草稿来源:手改内容即转 manual;「从柏宝书重新生成」后转 book。
-const draftSource = ref<CharTagEntry['source']>('manual');
-const draftDesc = ref('');
-const regenerating = ref(false);
-// 弹窗内历史面板开关
-const historyOpen = ref(false);
-// 回滚确认
-const confirmRollbackOpen = ref(false);
-const pendingRollback = ref<{ name: string; record: CharTagChangeRecord } | null>(null);
-
-const FIELD_PLACEHOLDERS: Record<CharTagField, string> = {
-  fandom: '同人角色填: character name (copyright name), 不带转义括号; 原创留空',
-  sex: '如 1girl / 1boy',
-  age: '如 young adult / teenager / mature female / child',
-  hair: '如 long black hair',
-  eyes: '如 red eyes',
-  skin: '如 pale skin(可不填)',
-  body: '如 petite, small breasts',
-  extra: '如 heterochromia(可不填)',
-  outfit: '固定着装,可不填',
-};
-
-/** 全局库名字集(响应式),用于分区与「覆盖」徽标。 */
-const globalNameSet = computed(() => new Set(globalCharTagLib.entries.map(entry => entry.name)));
-
-/**
- * 本聊天分区 = 派生库里「属于本聊天」的条目:
- * 本聊天基线里的(含覆盖全局的同名条目)+ 非全局的(AI 楼层建档等)。
- * 纯全局条目只出现在全局分区。
- */
-const chatEntries = computed(() =>
-  charTagLib.entries.filter(
-    entry => charTagBaseNames.has(entry.name) || !globalNameSet.value.has(entry.name),
-  ),
+const locks = ref<string[]>(['sex', 'age', 'hair', 'eyes', 'body', 'fandom']);
+const version = ref(0),
+  floor = ref(0),
+  fandomQuery = ref(''),
+  customTag = ref(''),
+  customZh = ref('');
+const rows = computed(() =>
+  charTagLib.entries
+    .filter((e) => charTagBaseNames.has(e.name) || !globalCharTagLib.entries.some((g) => g.name === e.name))
+    .filter((e) =>
+      (e.name + ' ' + e.desc + ' ' + JSON.stringify(e.fields))
+        .toLowerCase()
+        .includes(query.value.toLowerCase()),
+    ),
 );
-
-/** 是否整串模式:有 raw 且没有字段。 */
-const draftIsRaw = computed(
-  () => !!draft.value && !!draft.value.raw.trim() && CHAR_TAG_FIELDS.every(f => !draft.value!.fields[f].trim()),
+const look = computed(() => {
+  version.value;
+  return lookSettings(selected.value);
+});
+const clothing = computed(() => {
+  version.value;
+  const ctx = getContext();
+  return ctx
+    ? [
+        ...clothingBefore(ctx.chat, Math.min(floor.value + 1, ctx.chat.length), charTagLib.entries).values(),
+      ].find((e) => e.name === selected.value)
+    : null;
+});
+const fandoms = computed(() =>
+  fandomQuery.value.trim()
+    ? allFandomItems()
+        .filter((e) =>
+          (e.name + e.franchise + e.aliases.join(' '))
+            .toLowerCase()
+            .includes(fandomQuery.value.toLowerCase()),
+        )
+        .slice(0, 12)
+    : [],
 );
-
-const previewTag = computed(() => {
-  const d = draft.value;
-  if (!d) return '';
-  return buildEntryTag({ fields: d.fields, raw: d.raw });
-});
-
-/** 正在编辑的本聊天条目的实时历史(回滚后随之刷新);全局条目不记历史。 */
-const editingHistory = computed<CharTagChangeRecord[]>(() => {
-  if (!editingName.value || editingScope.value !== 'chat') return [];
-  return findCharTag(editingName.value)?.history ?? [];
-});
-
-/** 卡片上的字段 chips:有字段用字段,整串模式回退 raw 文本(模板里分支)。 */
-function chipsOf(entry: CharTagEntry): { label: string; value: string }[] {
-  const chips: { label: string; value: string }[] = [];
-  for (const f of CHAR_TAG_FIELDS) {
-    const value = entry.fields[f]?.trim();
-    if (value) chips.push({ label: CHAR_TAG_FIELD_LABELS[f], value });
-  }
-  return chips;
+function clone<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v));
 }
-
-function openEntry(entry: CharTagEntry, scope: Scope) {
-  editingName.value = entry.name;
-  editingScope.value = scope;
-  draftScope.value = scope;
+function revoke() {
+  if (candidateUrl.value) URL.revokeObjectURL(candidateUrl.value);
+  candidateUrl.value = '';
+  candidateBlob = null;
+  candidate.value = null;
+}
+async function select(name: string) {
+  if (busy.value) return;
+  selected.value = name;
+  draft.value = clone(charTagLib.entries.find((e) => e.name === name)!);
+  revoke();
+  locks.value = lookSettings(name).locks ?? ['sex', 'age', 'hair', 'eyes', 'body', 'fandom'];
+  await refreshPortrait();
+}
+async function refreshPortrait() {
+  const name = selected.value,
+    key = lookSettings(name).active?.image;
+  const image = key ? await getThumb(key) : null;
+  if (name !== selected.value) return;
+  if (portrait.value) URL.revokeObjectURL(portrait.value);
+  portrait.value = image ? URL.createObjectURL(image.blob) : '';
+  version.value++;
+}
+function save() {
+  if (!draft.value) return;
+  const e = clone(draft.value);
+  e.source = 'manual';
+  e.desc = '';
+  if (!upsertCharTag(e, selected.value, { recordChanges: true })) throw new Error('名称或外貌不能为空');
+  selected.value = e.name;
+  feedback.value = '已保存档案；与旧定妆不一致时自动停用图片参考';
+  saveLook(e.name, { ...lookSettings(e.name), locks: [...locks.value] });
+  version.value++;
+}
+function add() {
+  if (busy.value) return;
   draft.value = {
-    name: entry.name,
-    fields: { ...emptyCharFields(), ...entry.fields },
-    raw: entry.raw,
-    nl: entry.nl,
-  };
-  draftSource.value = entry.source;
-  draftDesc.value = entry.desc;
-  historyOpen.value = false;
-}
-
-function addEntry(scope: Scope = 'chat') {
-  editingName.value = null;
-  editingScope.value = scope;
-  draftScope.value = scope;
-  draft.value = { name: '', fields: emptyCharFields(), raw: '', nl: '' };
-  draftSource.value = 'manual';
-  draftDesc.value = '';
-  historyOpen.value = false;
-}
-
-/* —— 分区折叠(参照柏宝书「计划/悬念」)——
- * 标题行兼作折叠开关;折叠态是本机视图偏好,走 localStorage、不进设置(跨设备同步没意义)。 */
-const COLLAPSE_KEYS: Record<Scope, string> = {
-  global: 'bbi.ui.charGlobalCollapsed.v1',
-  chat: 'bbi.ui.charChatCollapsed.v1',
-};
-function loadCollapsed(key: string): boolean {
-  try {
-    return localStorage.getItem(key) === '1';
-  } catch {
-    return false;
-  }
-}
-function persistCollapsed(key: string, value: boolean) {
-  try {
-    localStorage.setItem(key, value ? '1' : '0');
-  } catch {
-    /* localStorage 不可用时仅本次会话生效 */
-  }
-}
-const globalCollapsed = ref(loadCollapsed(COLLAPSE_KEYS.global));
-const chatCollapsed = ref(loadCollapsed(COLLAPSE_KEYS.chat));
-function toggleFold(scope: Scope) {
-  const target = scope === 'global' ? globalCollapsed : chatCollapsed;
-  target.value = !target.value;
-  persistCollapsed(COLLAPSE_KEYS[scope], target.value);
-}
-// 无条目即无可折叠:不显示箭头与计数,也强制展开(避免删空后卡在收拢的空态)
-const globalFoldable = computed(() => globalCharTagLib.entries.length > 0);
-const globalShown = computed(() => !globalCollapsed.value || !globalFoldable.value);
-const chatFoldable = computed(() => chatEntries.value.length > 0);
-const chatShown = computed(() => !chatCollapsed.value || !chatFoldable.value);
-
-function closeEntry() {
-  editingName.value = null;
-  draft.value = null;
-  regenerating.value = false;
-  historyOpen.value = false;
-}
-
-/** 手动编辑过的字段 → 条目归手动(但仍可被 AI 变更接管) */
-function markManual() {
-  draftSource.value = 'manual';
-  draftDesc.value = '';
-}
-
-function confirmEntry() {
-  const d = draft.value;
-  if (!d) return;
-  const name = d.name.trim();
-  if (!name) {
-    toastr.warning('角色名不能为空', '墨影');
-    return;
-  }
-  if (!previewTag.value) {
-    toastr.warning('至少填一个外貌字段(或整串 tag)', '墨影');
-    return;
-  }
-  const entryData: CharTagEntry = {
-    name,
-    fields: d.fields,
-    raw: d.raw,
-    nl: d.nl,
-    source: draftSource.value,
-    desc: draftDesc.value,
+    name: '',
+    fields: emptyCharFields(),
+    raw: '',
+    nl: '',
+    source: 'manual',
+    desc: '',
     history: [],
   };
-  const ok =
-    draftScope.value === 'global'
-      ? upsertGlobalCharTag(entryData, editingName.value ?? undefined)
-      : upsertCharTag(entryData, editingName.value ?? undefined, { recordChanges: true });
-  if (ok) closeEntry();
+  selected.value = '';
+  revoke();
+  portrait.value = '';
 }
-
-/* —— 删除:二次确认 —— */
-const confirmDeleteOpen = ref(false);
-function askRemove() {
-  confirmDeleteOpen.value = true;
-}
-function confirmRemove() {
-  confirmDeleteOpen.value = false;
-  if (!editingName.value) return;
-  if (editingScope.value === 'global') removeGlobalCharTag(editingName.value);
-  else removeCharTag(editingName.value);
-  closeEntry();
-}
-
-/* —— 提升为全局 / 复制到本聊天 —— */
-const confirmPromoteOpen = ref(false);
-function askPromote() {
-  confirmPromoteOpen.value = true;
-}
-function confirmPromote() {
-  confirmPromoteOpen.value = false;
-  if (!editingName.value) return;
-  if (promoteCharTagToGlobal(editingName.value)) {
-    toastr.success(`「${editingName.value}」已提升为全局角色,所有聊天生效`, '墨影');
-  }
-  closeEntry();
-}
-
-function copyToChat() {
-  if (!editingName.value) return;
-  const name = editingName.value;
-  if (copyGlobalCharTagToChat(name)) {
-    toastr.success(`已把「${name}」复制到本聊天,之后本聊天以副本为准`, '墨影');
-  }
-  closeEntry();
-}
-
-/* —— 从柏宝书最新状态建档:取最新楼的角色参考,找到同名角色的外貌记录,批量转换接口转字段 —— */
-async function regenerateFromBook() {
-  const d = draft.value;
-  if (!d) return;
-  const name = d.name.trim();
-  if (!name) {
-    toastr.warning('先填写角色名', '墨影');
-    return;
-  }
-  const ctx = getContext();
-  const floor = (ctx?.chat.length ?? 0) - 1;
-  if (!ctx || floor < 0) {
-    toastr.info('当前没有打开的聊天', '墨影');
-    return;
-  }
-  regenerating.value = true;
+async function task(fn: () => Promise<void>) {
+  if (busy.value) return;
+  const chat = getContext()?.getCurrentChatId?.();
+  busy.value = true;
+  taskChat = chat;
+  controller = new AbortController();
   try {
-    const memory = readBookMemory(floor, ctx.chat[floor]?.mes ?? '', ctx.name1);
-    const role = memory?.roles.find(r => r.name === name);
-    if (!role?.desc) {
-      toastr.info('柏宝书最新状态里没有该角色的外貌记录,可手动填写', '墨影');
-      return;
-    }
-    const [result] = await generateCharTags([{ name, desc: role.desc }]);
-    if (!result) {
-      toastr.warning('模型没有返回该角色的 tag,请重试或手动填写', '墨影');
-      return;
-    }
-    const fields = { ...emptyCharFields(), ...result.fields };
-    d.fields = fields;
-    d.raw = '';
-    draftSource.value = 'book';
-    draftDesc.value = role.desc;
-    toastr.success('已按柏宝书最新外貌生成,点「完成」保存', '墨影');
-  } catch (error) {
-    toastr.error(error instanceof Error ? error.message : String(error), '墨影');
+    await fn();
+    if (chat !== getContext()?.getCurrentChatId?.()) throw new Error('聊天已切换，未采用候选');
+  } catch (e) {
+    feedback.value = e instanceof Error ? e.message : String(e);
   } finally {
-    regenerating.value = false;
+    busy.value = false;
+    controller = null;
   }
 }
-
-/* —— 历史展示与回滚(仅本聊天条目) —— */
-function fieldLabel(field: CharTagChangeRecord['field']): string {
-  if (field === 'new') return '建档';
-  if (field === 'raw') return '整串';
-  if (field === 'nl') return '自然语言';
-  return CHAR_TAG_FIELD_LABELS[field];
-}
-
-function askRollback(record: CharTagChangeRecord) {
-  if (!editingName.value) return;
-  pendingRollback.value = { name: editingName.value, record };
-  confirmRollbackOpen.value = true;
-}
-
-function confirmRollback() {
-  confirmRollbackOpen.value = false;
-  const p = pendingRollback.value;
-  pendingRollback.value = null;
-  if (!p) return;
-  if (rollbackCharTag(p.name, p.record)) {
-    toastr.success(`已回滚「${p.name}」的${fieldLabel(p.record.field)}变更`, '墨影');
-  } else {
-    toastr.warning('回滚失败:条目可能已删除', '墨影');
+async function ask(mode: string) {
+  if (!draft.value?.name.trim()) throw new Error('请填写角色名并打开聊天');
+  const ctx = getContext();
+  if (!ctx) throw new Error('请填写角色名并打开聊天');
+  const source = clone(draft.value);
+  const at = ctx.chat.length - 1;
+  const world = await fetchWorldInfo(ctx.chat, [Math.max(0, at)], ctx.name1, ctx.name2);
+  const memory = at >= 0 ? readBookMemory(at, ctx.chat[at].mes, ctx.name1) : null;
+  const messages = [
+    {
+      role: 'system' as const,
+      content:
+        '为已有角色设计稳定外貌，只返回 JSON {fields:{sex,age,hair,eyes,skin,body,extra,outfit,fandom},desc}。extra 只记录稳定面部特征：轮廓、眼型、眉、鼻唇，不堆通用美女词，不添加服装、表情、动作、画师或画风。英文标签须可靠，不编造复合标签。desc 用中文解释变化与补全。原文明确特征优先；未说明才补全，不能强加痣疤。原姓名、性别、年龄不改。锁定字段原样保留。' +
+        (mode === '补全'
+          ? '只补空白字段。'
+          : mode === '只换脸'
+            ? '只重新设计 extra 的面部特征，其他字段不变。'
+            : '重新设计未锁定外貌。'),
+    },
+    {
+      role: 'user' as const,
+      content: JSON.stringify({
+        mode,
+        role: source,
+        locked: locks.value,
+        card: fetchCharCard(ctx),
+        persona: fetchUserPersona(ctx),
+        world,
+        memory: memory?.roles,
+        story: ctx.chat.slice(-4).map((e) => e.mes.replace(/<bbi_image>[\s\S]*?<\/bbi_image>/g, '')),
+        others: charTagLib.entries
+          .filter((e) => e.name !== source.name)
+          .map((e) => ({ name: e.name, extra: e.fields.extra })),
+      }),
+    },
+  ];
+  checkTask();
+  const ch = getTagGenChannel();
+  const raw = ch
+    ? await requestCompletion(ch, messages, {
+        signal: controller!.signal,
+        source: '角色定妆：' + mode,
+      })
+    : await requestViaMainApi(messages, {
+        signal: controller!.signal,
+        source: '角色定妆：' + mode,
+      });
+  checkTask();
+  const clean = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').replace(/```(?:json)?/g, '');
+  const parsed = JSON.parse(clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1));
+  const next = clone(source);
+  for (const field of CHAR_TAG_FIELDS) {
+    if (
+      field === 'outfit' ||
+      ((field === 'sex' || field === 'age' || locks.value.includes(field)) && !!source.fields[field]) ||
+      (mode === '只换脸' && field !== 'extra') ||
+      (mode === '补全' && source.fields[field])
+    )
+      continue;
+    const v = parsed.fields?.[field];
+    if (typeof v === 'string' && !/[<>\r\n]/.test(v)) next.fields[field] = v.slice(0, 1800);
   }
+  if (
+    locks.value.includes('eyes') &&
+    /tsurime|tareme|jitome|sanpaku|half.closed eyes/i.test(source.fields.eyes)
+  )
+    next.fields.extra = next.fields.extra
+      .split(',')
+      .filter((t) => !/tsurime|tareme|jitome|sanpaku|half.closed eyes/i.test(t))
+      .join(',');
+  next.nl =
+    CHAR_TAG_FIELDS.filter((f) => f !== 'outfit')
+      .map((f) => next.fields[f])
+      .filter(Boolean)
+      .join(', ') + '.';
+  next.desc = typeof parsed.desc === 'string' ? parsed.desc.slice(0, 3000) : '';
+  next.raw = '';
+  candidate.value = next;
+  feedback.value = '候选已准备好，采用前不改变当前档案';
 }
-
-function sourceLabel(entry: CharTagEntry): string {
-  return entry.source === 'book' ? '柏宝书' : entry.source === 'ai' ? 'AI 维护' : '手动';
+async function draw(entry: CharTagEntry) {
+  checkTask();
+  if (settings.defaultBackend !== 'nai') throw new Error('请先选用 NAI 渠道；不会自动切换你的模型');
+  const fields = isManualFandom(entry) ? ['fandom', 'sex'] : CHAR_TAG_FIELDS.filter((f) => f !== 'outfit');
+  const tags =
+    fields
+      .map((f) => entry.fields[f as keyof typeof entry.fields])
+      .filter(Boolean)
+      .join(', ') || entry.raw;
+  const ctx = getContext(),
+    era = ctx ? costumeBefore(ctx.chat, ctx.chat.length) : undefined;
+  const outfit =
+    era?.era === 'ancient'
+      ? era.culture === 'chinese'
+        ? 'hanfu'
+        : era.culture === 'japanese'
+          ? 'kimono'
+          : 'plain cloth tunic'
+      : 'simple dress';
+  const out = await generateImage(
+    {
+      prompt: 'solo, full body, standing, clothed, simple background, ' + outfit + ', ' + tags,
+      nl: entry.nl,
+      characters: [],
+      size: 'portrait',
+      seed: decideSeed('nai', undefined, true),
+      suppressCharacterReference: true,
+    },
+    controller!.signal,
+  );
+  try {
+    const response = await fetch(out.result.url, {
+      signal: controller!.signal,
+    });
+    if (!response.ok) throw new Error('立绘图片读取失败，请稍后重试');
+    const blob = await response.blob();
+    checkTask();
+    if (candidateUrl.value) URL.revokeObjectURL(candidateUrl.value);
+    candidateBlob = blob;
+    candidateUrl.value = URL.createObjectURL(blob);
+    candidate.value = clone(entry);
+  } finally {
+    out.result.revoke();
+  }
+  feedback.value = '立绘已生成，满意后采用';
 }
+async function roll(mode: string) {
+  await task(async () => {
+    revoke();
+    if (mode === '只重画') {
+      if (!draft.value) return;
+      await draw(draft.value);
+    } else {
+      await ask(mode);
+      if (mode !== '补全' && candidate.value) await draw(candidate.value);
+    }
+  });
+}
+async function adopt() {
+  if (!candidate.value || busy.value) return;
+  const entry = clone(candidate.value),
+    ctx = getContext(),
+    chat = ctx?.getCurrentChatId?.();
+  await task(async () => {
+    let key: string | undefined;
+    if (candidateBlob) {
+      key = 'studio:' + crypto.randomUUID();
+      await putStudioImage(key, candidateBlob, JSON.stringify(entry.fields));
+      if (chat !== getContext()?.getCurrentChatId?.()) return;
+    }
+    checkTask();
+    entry.source = 'manual';
+    if (
+      !upsertCharTag(entry, selected.value || undefined, {
+        recordChanges: true,
+      })
+    )
+      throw new Error('保存失败');
+    adoptLook(entry, key);
+    saveLook(entry.name, {
+      ...lookSettings(entry.name),
+      locks: [...locks.value],
+    });
+    selected.value = entry.name;
+    draft.value = clone(entry);
+    revoke();
+    await refreshPortrait();
+    feedback.value = '已采用定妆，后续默认使用文字档案，无逐图参考费';
+  });
+}
+function useFandom(id: string) {
+  if (!draft.value) return;
+  revoke();
+  const item = allFandomItems().find((e) => e.id === id);
+  if (!item) return;
+  candidate.value = clone(draft.value);
+  candidate.value.fields.fandom = item.tags;
+  candidate.value.source = 'manual';
+  candidate.value.nl = '';
+  feedback.value = '同人模板已生成候选，采用后锁定完整形象；衣服遵循剧情';
+  tab.value = '定妆';
+}
+function referenceChanged(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked;
+  saveLook(selected.value, { ...look.value, reference: enabled });
+  version.value++;
+}
+async function upload(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file || !draft.value) return;
+  if (file.size > 20 * 1024 * 1024) {
+    feedback.value = '图片不能超过 20MB';
+    return;
+  }
+  revoke();
+  candidate.value = clone(draft.value);
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    feedback.value = '仅支持 PNG/JPEG/WebP';
+    return;
+  }
+  candidateBlob = file;
+  candidateUrl.value = URL.createObjectURL(file);
+  feedback.value = '已上传为候选；采用后仍默认使用文字定妆';
+}
+async function restore(v: LookVersion) {
+  if (!draft.value) return;
+  revoke();
+  candidate.value = {
+    ...clone(draft.value),
+    fields: clone(v.fields),
+    nl: v.nl,
+    raw: v.raw ?? '',
+  };
+  if (v.image) {
+    const image = await getThumb(v.image);
+    if (image) {
+      candidateBlob = image.blob;
+      candidateUrl.value = URL.createObjectURL(image.blob);
+    }
+  }
+  tab.value = '定妆';
+}
+async function exportStudio() {
+  await task(async () => {
+    const entries = clone(charTagLib.entries),
+      looks: Record<string, unknown> = {},
+      images: Record<string, string> = {};
+    for (const e of entries) {
+      const l = lookSettings(e.name);
+      looks[e.name] = l;
+      for (const v of [l.active, ...l.history])
+        if (v?.image && !images[v.image]) {
+          const record = await getThumb(v.image);
+          if (record)
+            images[v.image] = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result));
+              reader.onerror = () => reject(new Error('读取立绘备份失败'));
+              reader.readAsDataURL(record.blob);
+            });
+        }
+    }
+    checkTask();
+    const blob = new Blob([JSON.stringify({ version: 1, entries, looks, images })], {
+        type: 'application/json',
+      }),
+      url = URL.createObjectURL(blob),
+      a = document.createElement('a');
+    a.href = url;
+    a.download = '墨影角色与立绘备份.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    feedback.value = '已导出角色、定妆图与历史；自定义词义可在本机继续使用';
+  });
+}
+async function importStudio(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  await task(async () => {
+    if (file.size > 100 * 1024 * 1024) throw new Error('备份超过 100MB');
+    const data = JSON.parse(await file.text());
+    if (data.version !== 1 || !Array.isArray(data.entries) || data.entries.length > 500)
+      throw new Error('不是有效的墨影角色备份');
+    const keys = new Map<string, string>();
+    for (const [old, value] of Object.entries(data.images ?? {})) {
+      if (typeof value !== 'string' || !/^data:image\/(png|jpeg|webp);base64,/.test(value)) continue;
+      const blob = await (await fetch(value)).blob(),
+        key = 'studio:' + crypto.randomUUID();
+      await putStudioImage(key, blob, old);
+      keys.set(old, key);
+    }
+    checkTask();
+    for (const raw of data.entries) {
+      if (typeof raw.name !== 'string' || !raw.name.trim() || !raw.fields) continue;
+      const fields = emptyCharFields();
+      for (const k of CHAR_TAG_FIELDS)
+        if (typeof raw.fields[k] === 'string') fields[k] = raw.fields[k].slice(0, 4000);
+      const entry: CharTagEntry = {
+        name: raw.name.slice(0, 200),
+        fields,
+        raw: typeof raw.raw === 'string' ? raw.raw.slice(0, 8000) : '',
+        nl: typeof raw.nl === 'string' ? raw.nl.slice(0, 4000) : '',
+        desc: '从用户备份导入',
+        source: 'manual',
+        history: [],
+      };
+      if (!upsertCharTag(entry, entry.name, { recordChanges: true })) continue;
+      const old = data.looks?.[entry.name];
+      if (old) {
+        const remap = (v: any) =>
+          v && typeof v.id === 'string' && v.fields ? { ...v, image: keys.get(v.image) } : undefined;
+        saveLook(entry.name, {
+          reference: false,
+          strength: 0.6,
+          fidelity: 0.5,
+          active: remap(old.active),
+          history: (Array.isArray(old.history) ? old.history : []).map(remap).filter(Boolean).slice(0, 16),
+        });
+      }
+    }
+    version.value++;
+    feedback.value = '已导入备份；付费图片参考默认关闭。请选择角色查看';
+  });
+}
+onMounted(async () => {
+  try {
+    await loadTagChinese();
+    dictionaryReady.value = true;
+  } catch {
+    feedback.value = '本地词库加载失败，暂显示英文；重新打开页面可重试。不会调用 LLM 翻译';
+  }
+  floor.value = Math.max(0, (getContext()?.chat.length ?? 1) - 1);
+  if (rows.value[0]) await select(rows.value[0].name);
+});
+onUnmounted(() => {
+  controller?.abort();
+  revoke();
+  if (portrait.value) URL.revokeObjectURL(portrait.value);
+});
+watch(
+  () => getContext()?.getCurrentChatId?.(),
+  () => {
+    controller?.abort();
+    draft.value = null;
+    selected.value = '';
+    revoke();
+  },
+);
 </script>
 
 <template>
-  <section class="bbi-page">
-    <div class="bbi-page-head">
-      <h2 class="bbi-title bbi-title-sub">角色管理</h2>
-    </div>
-    <hr class="bbi-rule" />
-
-    <p class="bbi-field-hint">
-      角色固定外貌库:生成 tag 时 AI 照抄库中字段,@角色名 占位符也会被替换为库中最新外貌,稳定不漂移。
-    </p>
-
-    <Collapsible title="身份审核 · 检查错误入库" :open="false">
-      <p class="bbi-field-hint">只依据真实设定或剧情判断身份；1girl、女装和长相不算证据。明确男性的自动档案暂停使用，手动绘图形象保留。旧档案未核实时继续兼容，新角色不确定则只画本张、不自动入库。</p>
-      <button class="bbi-btn" :disabled="identityUi.busy" @click="checkIdentity">{{ identityUi.busy ? '正在核对…' : '用已保存 LLM 检查错误入库' }}</button>
-      <button class="bbi-btn" :disabled="identityUi.busy" @click="identityAction(undoIdentityReview)">撤销上次审核 / 确认</button>
-      <p v-if="identityUi.feedback" role="status" class="bbi-field-hint">{{ identityUi.feedback }}</p>
-      <details v-for="row in identityRows" :key="row.name">
-        <summary>{{ row.name }} · {{ row.suspended ? '自动档案已暂停' : row.entry?.source === 'manual' ? '手动形象保留' : !row.fact || row.fact.gender === 'unknown' ? '身份未核实' : row.fact.gender === 'male' ? '男性 · 禁止自动入库' : row.fact.heroine ? '女性 · 女主' : '女性 · 未确认女主资格' }}</summary>
-        <p class="bbi-field-hint">{{ row.fact?.evidence || '旧绘图标签不能证明身份，尚无可验证的性别依据' }} · {{ row.fact?.reason }}</p>
-        <p v-if="row.fact?.conflict" class="bbi-field-hint">{{ row.fact.conflict }}</p>
-        <button class="bbi-btn" @click="identityAction(() => confirmCharacterIdentity(row.name, 'male', false))">确认男性 · 停用自动女性档案</button>
-        <button class="bbi-btn" @click="identityAction(() => confirmCharacterIdentity(row.name, 'female', true))">确认女性且是女主</button>
-        <button class="bbi-btn" @click="identityAction(() => confirmCharacterIdentity(row.name, 'unknown', false))">不加入女主库</button>
-        <details v-if="row.entry"><summary>原档案（保留备份）</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ JSON.stringify(row.entry.fields, null, 2) }}</pre></details>
-      </details>
-    </Collapsible>
-
-    <!-- ===== 全局角色库 ===== -->
-    <div class="bbi-char-section">
-      <div class="bbi-char-section-head">
+  <section class="bbi-page studio">
+    <header class="studio-head">
+      <div>
+        <h2>角色定妆室</h2>
+        <p>定下一张脸，让她走进故事。</p>
+      </div>
+      <div>
+        <button class="bbi-btn" :disabled="busy" @click="add">新建角色</button
+        ><button class="bbi-btn" :disabled="busy" @click="exportStudio">备份</button
+        ><label class="bbi-btn"
+          >导入备份<input type="file" accept="application/json" :disabled="busy" @change="importStudio"
+        /></label>
+      </div>
+    </header>
+    <div class="studio-layout">
+      <aside>
+        <input v-model="query" class="bbi-input" aria-label="搜索角色" placeholder="搜索姓名或外貌标签" />
         <button
-          class="bbi-fold-head"
-          type="button"
-          :class="{ 'is-static': !globalFoldable }"
-          :disabled="!globalFoldable"
-          :aria-expanded="globalShown"
-          :title="globalFoldable ? (globalShown ? '收起全局角色库' : '展开全局角色库') : ''"
-          @click="toggleFold('global')"
+          v-for="e in rows"
+          :key="e.name"
+          class="person"
+          :class="{ active: selected === e.name }"
+          :disabled="busy"
+          @click="select(e.name)"
         >
-          <Icon v-if="globalFoldable" name="chevron" class="bbi-fold-caret" :class="{ 'is-collapsed': !globalShown }" />
-          <span class="bbi-field-label">全局角色库</span>
-          <span v-if="globalFoldable" class="bbi-count">{{ globalCharTagLib.entries.length }}</span>
+          <strong>{{ e.name }}</strong
+          ><small>{{
+            dictionaryReady ? explainTags(e.fields.hair + ', ' + e.fields.eyes) : e.fields.hair
+          }}</small>
         </button>
-        <button class="bbi-add-mini" type="button" title="添加全局角色" @click="addEntry('global')">
-          <Icon name="plus" />
-        </button>
-      </div>
-      <!-- grid 1fr↔0fr 收展:高度自适应、无需写死 max-height -->
-      <div class="bbi-fold-wrap" :class="{ 'is-collapsed': !globalShown }">
-        <div class="bbi-fold-inner">
-          <p class="bbi-field-hint">
-            所有聊天生效,仅手动维护——AI 不会修改全局角色,适合玩家角色等固定形象。本聊天有同名角色时以本聊天为准。
-          </p>
-          <ul v-if="globalCharTagLib.entries.length" class="bbi-char-grid">
-          <li v-for="entry in globalCharTagLib.entries" :key="entry.name" class="bbi-char-card">
-            <button class="bbi-char-card-btn" type="button" @click="openEntry(entry, 'global')">
-              <span class="bbi-char-card-head">
-                <span class="bbi-char-name">{{ entry.name }}</span>
-                <span class="bbi-char-pills">
-                  <span class="bbi-char-pill is-global">全局</span>
-                  <span v-if="charTagBaseNames.has(entry.name)" class="bbi-char-pill is-override" title="本聊天有同名角色,当前聊天以本聊天的为准">
-                    本聊天已覆盖
-                  </span>
-                </span>
-              </span>
-              <span v-if="chipsOf(entry).length" class="bbi-char-chips">
-                <span v-for="chip in chipsOf(entry)" :key="chip.label" class="bbi-chip" :title="chip.label">
-                  {{ chip.value }}
-                </span>
-              </span>
-              <span v-else class="bbi-char-raw">{{ entry.raw }}</span>
-            </button>
-          </li>
-          </ul>
-          <p v-else class="bbi-char-empty">
-            还没有全局角色。在本聊天角色的编辑弹窗里点「提升为全局」,或点右上角「+」添加。
-          </p>
-        </div>
-      </div>
-    </div>
-
-    <!-- ===== 本聊天角色 ===== -->
-    <div class="bbi-char-section">
-      <div class="bbi-char-section-head">
-        <button
-          class="bbi-fold-head"
-          type="button"
-          :class="{ 'is-static': !chatFoldable }"
-          :disabled="!chatFoldable"
-          :aria-expanded="chatShown"
-          :title="chatFoldable ? (chatShown ? '收起本聊天角色' : '展开本聊天角色') : ''"
-          @click="toggleFold('chat')"
-        >
-          <Icon v-if="chatFoldable" name="chevron" class="bbi-fold-caret" :class="{ 'is-collapsed': !chatShown }" />
-          <span class="bbi-field-label">本聊天角色</span>
-          <span v-if="chatFoldable" class="bbi-count">{{ chatEntries.length }}</span>
-        </button>
-        <button class="bbi-add-mini" type="button" title="添加本聊天角色" @click="addEntry('chat')">
-          <Icon name="plus" />
-        </button>
-      </div>
-      <div class="bbi-fold-wrap" :class="{ 'is-collapsed': !chatShown }">
-        <div class="bbi-fold-inner">
-          <p class="bbi-field-hint">
-            仅当前聊天生效:柏宝书角色自动建档,AI 随剧情报告永久变化;可查看历史并回滚。
-          </p>
-          <ul v-if="chatEntries.length" class="bbi-char-grid">
-          <li v-for="entry in chatEntries" :key="entry.name" class="bbi-char-card">
-            <button class="bbi-char-card-btn" type="button" @click="openEntry(entry, 'chat')">
-              <span class="bbi-char-card-head">
-                <span class="bbi-char-name">{{ entry.name }}</span>
-                <span class="bbi-char-pills">
-                  <span
-                    class="bbi-char-pill"
-                    :class="{ 'is-book': entry.source === 'book', 'is-ai': entry.source === 'ai' }"
-                  >
-                    {{ sourceLabel(entry) }}
-                  </span>
-                  <span v-if="globalNameSet.has(entry.name)" class="bbi-char-pill is-override" title="与全局库同名,当前聊天以本条为准">
-                    覆盖全局
-                  </span>
-                  <span
-                    v-if="entry.history.length"
-                    class="bbi-char-history-badge"
-                    :title="`${entry.history.length} 条变更记录,点卡片查看`"
-                  >
-                    <Icon name="history" />{{ entry.history.length }}
-                  </span>
-                </span>
-              </span>
-              <span v-if="chipsOf(entry).length" class="bbi-char-chips">
-                <span v-for="chip in chipsOf(entry)" :key="chip.label" class="bbi-chip" :title="chip.label">
-                  {{ chip.value }}
-                </span>
-              </span>
-              <span v-else class="bbi-char-raw">{{ entry.raw }}</span>
-            </button>
-          </li>
-          </ul>
-          <p v-else class="bbi-char-empty">
-            本聊天还没有角色。生成 tag 时柏宝书角色会自动建档,也可点右上角「+」手动补。
-          </p>
-        </div>
-      </div>
-    </div>
-
-    <!-- ===== 角色编辑弹窗 ===== -->
-    <ModalMask :open="!!draft" @close="closeEntry">
-      <div v-if="draft" class="bbi-modal bbi-char-modal" role="dialog" aria-modal="true" aria-label="编辑角色">
-        <header class="bbi-modal-head">
-          <span class="bbi-modal-title">
-            {{ editingName ? '编辑角色' : '添加角色' }}
-            <span v-if="editingName" class="bbi-char-pill" :class="editingScope === 'global' ? 'is-global' : 'is-chat'">
-              {{ editingScope === 'global' ? '全局' : '本聊天' }}
-            </span>
-          </span>
-          <button class="bbi-icon-mini" type="button" title="关闭" @click="closeEntry"><Icon name="close" /></button>
-        </header>
-
-        <!-- 作用域:仅新建时可选;已有条目换层用底部「提升为全局 / 复制到本聊天」 -->
-        <div v-if="!editingName" class="bbi-modal-field">
-          <span class="bbi-modal-label">保存到</span>
-          <div class="bbi-segmented">
-            <button
-              class="bbi-seg"
-              :class="{ 'is-on': draftScope === 'chat' }"
-              type="button"
-              @click="draftScope = 'chat'"
-            >
-              本聊天
-            </button>
-            <button
-              class="bbi-seg"
-              :class="{ 'is-on': draftScope === 'global' }"
-              type="button"
-              @click="draftScope = 'global'"
-            >
-              全局
-            </button>
-          </div>
-          <span class="bbi-field-hint">
-            {{ draftScope === 'global' ? '全局:所有聊天生效,AI 不会修改,tag 有问题需手动改。' : '本聊天:仅当前聊天,AI 可随剧情自动变更。' }}
-          </span>
-        </div>
-
-        <label class="bbi-modal-field">
-          <span class="bbi-modal-label">角色名</span>
-          <input v-model="draft.name" class="bbi-input" placeholder="与正文/柏宝书中的名字一致" @input="markManual" />
-        </label>
-        <span class="bbi-field-hint">按这个名字去正文和柏宝书角色参考里匹配;AI 引用时也用它(@角色名)。改名不会自动跟随。</span>
-
-        <div class="bbi-modal-field">
-          <span class="bbi-modal-label">外貌字段</span>
-          <div class="bbi-char-form">
-            <label
-              v-for="f in CHAR_TAG_FIELDS"
-              :key="f"
-              class="bbi-char-form-row"
-              :class="{ 'is-wide': f === 'outfit' }"
-            >
-              <span class="bbi-char-form-label">{{ CHAR_TAG_FIELD_LABELS[f] }}</span>
-              <input
-                v-model="draft.fields[f]"
-                class="bbi-input"
-                :placeholder="FIELD_PLACEHOLDERS[f]"
-                @input="markManual"
-              />
-            </label>
-          </div>
-        </div>
-        <span class="bbi-field-hint">只写固定基础特征;服装、表情、动作不入库,每次按剧情生成。</span>
-        <p v-if="draft.fields.fandom.trim() && draftSource === 'manual'" class="bbi-field-hint">手动同人形象已锁定：生图以此同人 tag 为准，AI 不再修改人物档案；原来的发色、瞳色、体型和自然语言记录保留但不混入同人形象。服装与穿脱状态继续按剧情继承。清空同人字段可恢复普通人物模式。</p>
-
-        <label class="bbi-modal-field">
-          <span class="bbi-modal-label">整串模式(可选)</span>
-          <BbiTextarea
-            v-model="draft.raw"
-            :rows="2"
-            :max-rows="6"
-            mono
-            placeholder="留空则用上面的字段拼接;填了整串且字段全空时,以整串为准(旧数据格式)"
-            @input="markManual"
-          />
-        </label>
-
-        <label class="bbi-modal-field">
-          <span class="bbi-modal-label">自然语言外貌(可选)</span>
-          <BbiTextarea
-            v-model="draft.nl"
-            :rows="2"
-            :max-rows="4"
-            mono
-            placeholder="一句连贯英文外貌描述,自然语言模式下替换 nl 里的 @角色名 用;留空则用 tag 串替换"
-            @input="markManual"
-          />
-        </label>
-
-        <div class="bbi-char-preview">
-          <span class="bbi-field-label">最终 tag 预览</span>
-          <code class="bbi-char-preview-tag">{{ previewTag || '(空)' }}</code>
-          <span v-if="draftIsRaw" class="bbi-char-preview-mode">整串模式</span>
-        </div>
-
-        <!-- 变更历史:仅本聊天条目;全局条目无历史(AI 不可改,手动编辑不留痕) -->
-        <div v-if="editingHistory.length" class="bbi-char-history">
-          <button class="bbi-char-history-toggle" type="button" @click="historyOpen = !historyOpen">
-            <span class="bbi-char-history-caret" :class="{ 'is-open': historyOpen }"><Icon name="chevron" /></span>
-            变更历史({{ editingHistory.length }})
+        <p v-if="!rows.length">暂无本聊天角色。剧情分析会自动建档，也可以手动新建。</p>
+        <details>
+          <summary>跨聊天模板</summary>
+          <button
+            v-for="e in globalCharTagLib.entries"
+            :key="e.name"
+            class="bbi-btn"
+            :disabled="busy"
+            @click="copyGlobalCharTagToChat(e.name)"
+          >
+            导入 {{ e.name }}
           </button>
-          <ul v-if="historyOpen" class="bbi-char-history-list">
-            <li v-for="(record, i) in [...editingHistory].reverse()" :key="i" class="bbi-char-history-item">
-              <div class="bbi-char-history-main">
-                <span class="bbi-char-history-field">{{ fieldLabel(record.field) }}</span>
-                <span class="bbi-char-history-change">
-                  <template v-if="record.from">{{ record.from }} → {{ record.to }}</template>
-                  <template v-else>{{ record.to }}</template>
-                </span>
-                <span v-if="record.reason" class="bbi-char-history-reason">{{ record.reason }}</span>
-                <span class="bbi-char-history-meta">{{ record.floor >= 0 ? `第${record.floor}楼` : '手动' }}·{{ new Date(record.at).toLocaleString() }}</span>
+        </details>
+        <details>
+          <summary>身份审核</summary>
+          <button
+            class="bbi-btn"
+            :disabled="busy"
+            @click="
+              task(async () => {
+                await reviewAutomaticProfiles();
+              })
+            "
+          >
+            检查错误入库（LLM）</button
+          ><button class="bbi-btn" :disabled="busy" @click="undoIdentityReview">撤销审核</button>
+          <div v-for="fact in currentIdentityFacts()" :key="fact.name">
+            <span>{{ fact.name }} · {{ fact.gender }}</span
+            ><button class="bbi-btn" @click="confirmCharacterIdentity(fact.name, 'male', false)">
+              确认男性</button
+            ><button class="bbi-btn" @click="confirmCharacterIdentity(fact.name, 'female', true)">
+              确认女主
+            </button>
+          </div>
+        </details>
+      </aside>
+      <main v-if="draft">
+        <nav>
+          <button
+            v-for="t in ['档案', '定妆', '穿搭', '历史']"
+            :key="t"
+            :class="{ active: tab === t }"
+            @click="tab = t"
+          >
+            {{ t }}
+          </button>
+        </nav>
+        <div class="studio-body">
+          <fieldset :disabled="busy" class="studio-fields">
+            <figure class="portrait">
+              <img v-if="portrait" :src="portrait" alt="当前采用的角色立绘" />
+              <div v-else class="empty-portrait">
+                <span>尚未定妆</span>
+                <p>生成立绘候选，或上传已有的满意图片。</p>
               </div>
-              <button class="bbi-btn bbi-btn-sm" type="button" title="把该字段回滚到变更前的值" @click="askRollback(record)">
-                回滚
+              <figcaption>
+                {{ selected || '新角色' }} · {{ look.active ? '已定妆' : '文字档案' }}<br /><small>{{
+                  look.reference ? '已请求单人图参考（受模型和版本限制）' : '文字定妆 · 无逐图参考费'
+                }}</small>
+              </figcaption>
+            </figure>
+            <section v-if="tab === '档案'" class="editor">
+              <label>姓名<input v-model="draft.name" class="bbi-input" /></label>
+              <p>勾选锁定项：重 Roll 时保留。性别和年龄已有值时保留。没有证据的细节由你决定是否补全。</p>
+              <button
+                class="bbi-btn"
+                @click="
+                  task(async () => {
+                    if (draft) {
+                      if (!upsertGlobalCharTag({ ...clone(draft), source: 'manual' }))
+                        throw new Error('模板保存失败');
+                      feedback = '已保存跨聊天模板，需从模板入口导入聊天';
+                    }
+                  })
+                "
+              >
+                另存为跨聊天模板
               </button>
-            </li>
-          </ul>
+              <details>
+                <summary>本地中文选词 · 不调用 LLM</summary>
+                <input
+                  v-model="tagSearch"
+                  class="bbi-input"
+                  placeholder="搜索中文词义或英文标签，如：眉毛"
+                /><select v-model="tagTarget" class="bbi-input">
+                  <option v-for="f in CHAR_TAG_FIELDS.filter((f) => f !== 'outfit')" :key="f" :value="f">
+                    添加到 {{ CHAR_TAG_FIELD_LABELS[f] }}
+                  </option></select
+                ><button
+                  v-for="[en, zh] in tagMatches"
+                  :key="en"
+                  class="bbi-btn"
+                  :title="en"
+                  @click="appendTag(en)"
+                >
+                  {{ zh }} · {{ en }}
+                </button>
+                <p v-if="tagSearch && !tagMatches.length">未找到本地词条，可在下方补充词义。</p>
+              </details>
+              <label v-for="f in CHAR_TAG_FIELDS.filter((f) => f !== 'outfit')" :key="f" class="field"
+                ><span
+                  >{{ f === 'extra' ? '面部与标志特征' : CHAR_TAG_FIELD_LABELS[f]
+                  }}<input v-model="locks" type="checkbox" :value="f" />锁定</span
+                ><input v-model="draft.fields[f]" class="bbi-input" /><small>{{
+                  dictionaryReady ? explainTags(draft.fields[f]) : ''
+                }}</small></label
+              >
+              <label>英文外貌说明<textarea v-model="draft.nl" class="bbi-input" rows="3" /></label>
+              <p>
+                {{ draft.desc || '原文与用户设定优先。补全候选会显示中文说明。' }}
+              </p>
+              <details>
+                <summary>旧整串标签（兼容）</summary>
+                <textarea v-model="draft.raw" class="bbi-input" />
+              </details>
+              <button class="bbi-btn bbi-btn-primary" @click="task(async () => save())">保存档案</button
+              ><button class="bbi-btn" @click="roll('补全')">从设定与剧情补全（LLM）</button
+              ><button
+                class="bbi-btn"
+                :disabled="!selected"
+                @click="
+                  removeCharTag(selected);
+                  draft = null;
+                  selected = '';
+                "
+              >
+                移出角色库
+              </button>
+              <details>
+                <summary>补充本地翻译 · 零 LLM</summary>
+                <input v-model="customTag" class="bbi-input" placeholder="英文标签" /><input
+                  v-model="customZh"
+                  class="bbi-input"
+                  placeholder="中文解释"
+                /><button
+                  class="bbi-btn"
+                  @click="
+                    setTagChinese(customTag, customZh);
+                    version++;
+                    dictionaryReady = false;
+                    dictionaryReady = true;
+                  "
+                >
+                  保存词义
+                </button>
+              </details>
+            </section>
+            <section v-else-if="tab === '定妆'" class="editor">
+              <h3>候选先看，满意再采用</h3>
+              <p>
+                预览使用当前 NAI 模型与配方，每次一张。中性衣服仅用于立绘，不改剧情穿搭。只重画不请求
+                LLM；换脸和重设计会调用 LLM。
+              </p>
+              <div class="actions">
+                <button class="bbi-btn" :disabled="!!draft.fields.fandom" @click="roll('只换脸')">
+                  只换脸</button
+                ><button class="bbi-btn" :disabled="!!draft.fields.fandom" @click="roll('整体外貌')">
+                  重设未锁定外貌</button
+                ><button class="bbi-btn" @click="roll('只重画')">生成 / 重画立绘</button
+                ><label class="bbi-btn"
+                  >上传定妆图<input type="file" accept="image/png,image/jpeg,image/webp" @change="upload"
+                /></label>
+              </div>
+              <small>同人身份非空时锁定完整形象；要恢复原创设计，请先清空同人身份。</small>
+              <div v-if="candidate" class="candidate">
+                <img v-if="candidateUrl" :src="candidateUrl" alt="尚未采用的立绘候选" />
+                <h4>未采用候选</h4>
+                <a v-if="candidateUrl" class="bbi-btn" :href="candidateUrl" download="角色立绘候选.png"
+                  >下载候选</a
+                >
+                <p>{{ candidate.desc }}</p>
+                <div
+                  v-for="f in CHAR_TAG_FIELDS.filter((f) => candidate!.fields[f] !== draft!.fields[f])"
+                  :key="f"
+                >
+                  <strong>{{ CHAR_TAG_FIELD_LABELS[f] }}</strong>
+                  <p>
+                    {{ explainTags(draft.fields[f]) }} →
+                    {{ explainTags(candidate.fields[f]) }}
+                  </p>
+                </div>
+                <button class="bbi-btn bbi-btn-primary" @click="adopt">采用此候选</button
+                ><button class="bbi-btn" @click="revoke">丢弃候选</button>
+              </div>
+              <details>
+                <summary>从同人素材选择外貌模板</summary>
+                <input v-model="fandomQuery" class="bbi-input" placeholder="中文角色名或作品" /><button
+                  v-for="f in fandoms"
+                  :key="f.id"
+                  class="bbi-btn"
+                  @click="useFandom(f.id)"
+                >
+                  {{ f.name }} · {{ f.franchise }}
+                </button>
+              </details>
+              <div class="reference">
+                <h3>图片参考 · 可选付费增强</h3>
+                <label
+                  ><input
+                    type="checkbox"
+                    :checked="look.reference"
+                    :disabled="!look.active?.image"
+                    @change="referenceChanged"
+                  />单角色剧情图自动携带定妆图</label
+                >
+                <p>
+                  约 +5 Anlas / 张。仅 V4.5、单角色、未启用 Vibe
+                  且档案与定妆一致时发送；其他情况回退文字并在详情说明。中转接口是否应用需自行验证。
+                </p>
+                <p>原图保存在本机浏览器，换设备需重新导入；头像不等于已发送参考。</p>
+                <label
+                  >参考强度<input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    :value="look.strength"
+                    @change="
+                      saveLook(selected, {
+                        ...look,
+                        strength: Number(($event.target as HTMLInputElement).value),
+                      });
+                      version++;
+                    "
+                /></label>
+              </div>
+            </section>
+            <section v-else-if="tab === '穿搭'" class="editor">
+              <h3>剧情衣物账本</h3>
+              <label
+                >查看楼层<input
+                  v-model.number="floor"
+                  class="bbi-input"
+                  type="number"
+                  min="0"
+                  :max="(getContext()?.chat.length ?? 1) - 1"
+              /></label>
+              <p v-if="!clothing">该位置尚无已分析的穿搭记录，请先分析对应剧情。</p>
+              <article v-for="p in clothing?.pieces" :key="p.id">
+                <h4>{{ explainTags(p.design) }}</h4>
+                <code>{{ p.design }}</code>
+                <p>
+                  {{
+                    Object.entries(p.state)
+                      .map(([k, v]) => k + '：' + v)
+                      .join('；')
+                  }}
+                </p>
+              </article>
+              <small>当前穿搭不写进永久面部档案，按楼层剧情继承。</small>
+            </section>
+            <section v-else class="editor">
+              <h3>定妆历史</h3>
+              <p v-if="!look.history.length">采用新候选后，上一版会自动保留。</p>
+              <article v-for="v in look.history" :key="v.id">
+                <strong>{{ new Date(v.at).toLocaleString() }}</strong>
+                <p>
+                  {{ explainTags(v.fields.hair + ', ' + v.fields.eyes + ', ' + v.fields.extra) }}
+                </p>
+                <button class="bbi-btn" @click="restore(v)">恢复为候选</button>
+              </article>
+              <h3>档案变更</h3>
+              <p v-for="(h, i) in draft.history.slice(-12).reverse()" :key="i">
+                {{ h.field }}：{{ explainTags(h.from) }} →
+                {{ explainTags(h.to) }}
+              </p>
+            </section>
+          </fieldset>
         </div>
-
-        <footer class="bbi-modal-foot">
-          <button v-if="editingName" class="bbi-btn bbi-btn-danger" type="button" @click="askRemove">
-            <Icon name="trash" /> 删除
-          </button>
-          <span class="bbi-modal-foot-spacer"></span>
-          <button
-            v-if="editingName && editingScope === 'chat'"
-            class="bbi-btn"
-            type="button"
-            title="把当前外貌快照进全局库,所有聊天生效;本聊天副本与变更记录将清除"
-            @click="askPromote"
-          >
-            <Icon name="star" /> 提升为全局
-          </button>
-          <button
-            v-if="editingName && editingScope === 'global'"
-            class="bbi-btn"
-            type="button"
-            title="复制为本聊天副本:之后本聊天以副本为准,AI 可对其变更"
-            @click="copyToChat"
-          >
-            <Icon name="copy" /> 复制到本聊天
-          </button>
-          <button
-            class="bbi-btn"
-            type="button"
-            title="读取柏宝书最新状态里该角色的外貌,重新转换成字段"
-            :disabled="regenerating"
-            @click="regenerateFromBook"
-          >
-            <Icon name="refresh" /> {{ regenerating ? '生成中…' : '从柏宝书生成' }}
-          </button>
-          <button class="bbi-btn bbi-btn-primary" type="button" @click="confirmEntry">完成</button>
-        </footer>
-
-        <ConfirmDialog
-          v-model:open="confirmDeleteOpen"
-          title="删除角色"
-          confirm-text="删除"
-          confirm-icon="trash"
-          tone="danger"
-          top-layer
-          @confirm="confirmRemove"
-        >
-          确定删除「{{ editingName }}」的固定外貌 tag 吗?之后生成时该角色的外貌将不再锚定。
-        </ConfirmDialog>
-
-        <ConfirmDialog
-          v-model:open="confirmPromoteOpen"
-          title="提升为全局"
-          confirm-text="提升"
-          confirm-icon="star"
-          top-layer
-          @confirm="confirmPromote"
-        >
-          把「{{ editingName }}」的当前外貌快照进全局库?之后所有聊天(包括本聊天)都以全局值为准,
-          AI 不能再修改它;本聊天的副本与变更记录将被清除。
-        </ConfirmDialog>
-      </div>
-    </ModalMask>
-
-    <!-- ===== 回滚确认 ===== -->
-    <ConfirmDialog
-      v-model:open="confirmRollbackOpen"
-      title="回滚变更"
-      confirm-text="回滚"
-      tone="danger"
-      top-layer
-      @confirm="confirmRollback"
-    >
-      <template v-if="pendingRollback">
-        把「{{ pendingRollback.name }}」的「{{ fieldLabel(pendingRollback.record.field) }}」从
-        <code>{{ pendingRollback.record.to }}</code> 回滚到
-        <code>{{ pendingRollback.record.from || '(空)' }}</code> ?
-        建档记录的回滚会删除整个条目。
-      </template>
-    </ConfirmDialog>
+      </main>
+      <main v-else class="welcome">
+        <h3>为故事里的每个人留下清晰的面貌</h3>
+        <p>选择角色，查看中文档案、生成立绘或重新定妆。</p>
+      </main>
+    </div>
+    <footer role="status">
+      <span v-if="busy">正在处理，候选不会自动覆盖档案。</span>{{ feedback
+      }}<button v-if="busy" class="bbi-btn" @click="controller?.abort()">取消</button>
+    </footer>
   </section>
 </template>
-
 <style scoped>
-/* —— 计数药丸:与设置页版本号同款观感 —— */
-.bbi-count {
-  border: 0;
-  padding: 7px 12px;
-  border-radius: var(--bbi-radius-pill);
-  background: var(--bbi-surface-2);
-  color: var(--bbi-ink-soft);
-  font-family: var(--bbi-font-mono);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
+.studio-fields {
+  display: contents;
 }
-
-/* —— 分区 —— */
-.bbi-char-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 20px;
+.studio {
+  --studio-accent: #6b83b4;
 }
-.bbi-char-section-head {
+.studio-head {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 12px;
-}
-
-/* —— 折叠开关(参照柏宝书「计划/悬念」)——
- * 标题行整体可点:左箭头 + 标题 + 计数标。无框透明,折叠是辅助操作,标题仍是主体。 */
-.bbi-fold-head {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
+  margin-bottom: 24px;
 }
-.bbi-fold-head.is-static {
-  cursor: default;
-}
-/* 折叠箭头:展开朝下,收拢转 -90° 朝右。描边继承 currentColor(muted),hover 整行点亮强调色。 */
-.bbi-fold-caret {
-  flex: 0 0 auto;
-  color: var(--bbi-ink-muted);
-  transition: transform 0.2s var(--bbi-ease), color 0.15s;
-}
-.bbi-fold-caret.is-collapsed {
-  transform: rotate(-90deg);
-}
-.bbi-fold-head:hover:not(.is-static) .bbi-fold-caret,
-.bbi-fold-head:focus-visible .bbi-fold-caret {
-  color: var(--bbi-accent);
-}
-
-/* 可收展容器:grid 1fr↔0fr,高度随内容自适应,无需写死 max-height */
-.bbi-fold-wrap {
-  display: grid;
-  grid-template-rows: 1fr;
-  transition: grid-template-rows 0.24s var(--bbi-ease);
-}
-.bbi-fold-wrap.is-collapsed {
-  grid-template-rows: 0fr;
-}
-.bbi-fold-inner {
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* 区头右侧小「+」:透明底,hover 才点亮,不喷宾夺主 */
-.bbi-add-mini {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--bbi-radius-sm);
-  background: transparent;
-  color: var(--bbi-ink-muted);
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
-}
-.bbi-add-mini:hover {
-  color: var(--bbi-accent);
-  background: var(--bbi-surface-2);
-}
-.bbi-char-empty {
+.studio-head h2 {
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  font-size: 28px;
   margin: 0;
-  padding: 14px 16px;
-  border: 1px dashed var(--bbi-line);
-  border-radius: var(--bbi-radius);
+}
+.studio-head p {
   color: var(--bbi-ink-muted);
-  font-size: 12.5px;
+  margin: 8px 0;
 }
-
-/* —— 角色卡片网格 —— */
-.bbi-char-grid {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.studio-layout {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 10px;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 24px;
 }
-.bbi-char-card {
-  min-width: 0;
+.studio aside {
+  border-right: 1px solid var(--bbi-border, #5555);
+  padding-right: 16px;
 }
-.bbi-char-card-btn {
+.person {
+  display: block;
   width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--bbi-line);
-  border-radius: var(--bbi-radius);
-  background: var(--bbi-surface);
-  color: var(--bbi-ink);
-  font-family: var(--bbi-font-sans);
-  cursor: pointer;
   text-align: left;
-  transition:
-    border-color var(--bbi-dur) var(--bbi-ease),
-    box-shadow var(--bbi-dur) var(--bbi-ease),
-    transform var(--bbi-dur) var(--bbi-ease);
-}
-.bbi-char-card-btn:hover {
-  border-color: var(--bbi-accent);
-  box-shadow: 0 8px 20px -12px var(--bbi-overlay);
-  transform: translateY(-1px);
-}
-.bbi-char-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-}
-.bbi-char-name {
-  font-size: 15px;
-  font-weight: 600;
-  word-break: break-word;
-  min-width: 0;
-}
-.bbi-char-pills {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* —— 徽标药丸:全局=实心强调;柏宝书/AI=强调浅底;手动=弱化;覆盖=警示色 —— */
-.bbi-char-pill {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 9px;
-  border-radius: var(--bbi-radius-pill);
-  color: var(--bbi-ink-muted);
-  background: var(--bbi-surface-2);
-  border: 1px solid var(--bbi-line);
-  white-space: nowrap;
-}
-.bbi-char-pill.is-global {
-  color: var(--bbi-accent-ink);
-  background: var(--bbi-accent);
-  border-color: transparent;
-}
-.bbi-char-pill.is-chat {
-  color: var(--bbi-ink-soft);
-}
-.bbi-char-pill.is-book,
-.bbi-char-pill.is-ai {
-  color: var(--bbi-accent);
-  background: var(--bbi-accent-soft);
-  border-color: transparent;
-}
-.bbi-char-pill.is-override {
-  color: var(--bbi-warning);
-  background: var(--bbi-warning-soft);
-  border-color: transparent;
-}
-
-/* —— 字段 chips:两行封顶,超出裁切 —— */
-.bbi-char-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  max-height: 52px;
-  overflow: hidden;
-}
-.bbi-chip {
-  font-family: var(--bbi-font-mono);
-  font-size: 11px;
-  padding: 3px 9px;
-  border-radius: var(--bbi-radius-pill);
-  background: var(--bbi-surface-2);
-  color: var(--bbi-ink-soft);
-  border: 1px solid var(--bbi-line);
-  white-space: nowrap;
-}
-/* 整串模式:mono 小字两行截断 */
-.bbi-char-raw {
-  font-family: var(--bbi-font-mono);
-  font-size: 12px;
-  color: var(--bbi-ink-muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-}
-.bbi-char-history-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-family: var(--bbi-font-mono);
-  font-size: 11px;
-  color: var(--bbi-ink-muted);
-}
-
-/* —— 弹窗加宽,容纳两列字段表单 —— */
-.bbi-char-modal {
-  max-width: 600px;
-}
-
-/* —— 字段表单:两列网格,固定着装独占一行 —— */
-.bbi-char-form {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 12px;
-}
-.bbi-char-form-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.bbi-char-form-row.is-wide {
-  grid-column: 1 / -1;
-}
-.bbi-char-form-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--bbi-ink-soft);
-}
-
-/* —— 弹窗内历史面板 —— */
-.bbi-char-history {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.bbi-char-history-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
+  background: transparent;
   border: 0;
+  border-left: 3px solid transparent;
+  color: inherit;
+  padding: 14px 12px;
+  cursor: pointer;
+}
+.person.active {
+  border-color: var(--studio-accent);
+  background: #6b83b41c;
+}
+.person strong,
+.person small {
+  display: block;
+}
+.person small {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--bbi-ink-muted);
+  margin-top: 6px;
+}
+.studio nav {
+  display: flex;
+  border-bottom: 1px solid #8885;
+  margin-bottom: 20px;
+  gap: 24px;
+}
+.studio nav button {
   background: none;
-  padding: 2px 6px;
-  color: var(--bbi-ink-muted);
-  font-size: 12px;
-  font-family: var(--bbi-font-sans);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 12px 0;
+  color: inherit;
   cursor: pointer;
-  border-radius: var(--bbi-radius-sm);
 }
-.bbi-char-history-toggle:hover {
-  color: var(--bbi-accent);
-  background: var(--bbi-surface-2);
+.studio nav button.active {
+  border-color: var(--studio-accent);
 }
-.bbi-char-history-caret {
-  display: inline-flex;
-  transition: transform var(--bbi-dur) var(--bbi-ease);
+.studio-body {
+  display: grid;
+  grid-template-columns: minmax(160px, 32%) minmax(0, 1fr);
+  gap: 24px;
 }
-.bbi-char-history-caret.is-open {
-  transform: rotate(180deg);
-}
-.bbi-char-history-list {
-  list-style: none;
+.portrait {
   margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--bbi-line);
-  border-radius: var(--bbi-radius-sm);
-  background: var(--bbi-surface-2);
+  align-self: start;
+  position: sticky;
+  top: 12px;
+}
+.portrait img {
+  width: 100%;
+  max-height: 650px;
+  object-fit: contain;
+  background: #6b83b410;
+  border-radius: 4px;
+}
+.empty-portrait {
+  aspect-ratio: 2/3;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-height: 240px;
-  overflow-y: auto;
-}
-.bbi-char-history-item {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-.bbi-char-history-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.bbi-char-history-field {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--bbi-accent);
-}
-.bbi-char-history-change {
-  font-family: var(--bbi-font-mono);
-  font-size: 12px;
-  color: var(--bbi-ink);
-  word-break: break-word;
-}
-.bbi-char-history-reason {
-  font-size: 12px;
-  color: var(--bbi-ink-muted);
-}
-.bbi-char-history-meta {
-  font-size: 11px;
-  color: var(--bbi-ink-muted);
-}
-
-/* —— 最终 tag 预览 —— */
-.bbi-char-preview {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border: 1px solid var(--bbi-line);
-  border-radius: var(--bbi-radius-sm);
-  background: var(--bbi-surface-2);
-}
-.bbi-char-preview-tag {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-family: var(--bbi-font-mono);
-  font-size: 12px;
-  color: var(--bbi-ink);
-  word-break: break-word;
-}
-.bbi-char-preview-mode {
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: var(--bbi-radius-pill);
-  color: var(--bbi-ink-muted);
-  background: var(--bbi-surface);
-  border: 1px solid var(--bbi-line);
-}
-
-.bbi-icon-mini {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--bbi-line-strong);
-  border-radius: var(--bbi-radius-sm);
-  background: var(--bbi-surface);
-  color: var(--bbi-ink-soft);
-  cursor: pointer;
-  font-size: 14px;
+  text-align: center;
+  padding: 20px;
+  background: repeating-linear-gradient(45deg, #6b83b40a, #6b83b40a 12px, #6b83b412 12px, #6b83b412 13px);
+  border: 1px solid #8883;
 }
-.bbi-icon-mini:hover {
-  color: var(--bbi-accent);
-  border-color: var(--bbi-accent);
+.empty-portrait span {
+  font-family: serif;
+  font-size: 22px;
 }
-
-.bbi-modal-foot {
+.empty-portrait p,
+figcaption {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--bbi-ink-muted);
+}
+.editor {
+  min-width: 0;
+}
+.editor label {
+  display: block;
+  margin: 12px 0;
+}
+.field > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.field small {
+  display: block;
+  line-height: 1.7;
+  margin-top: 6px;
+  color: var(--bbi-ink-muted);
+}
+.actions {
+  display: flex;
+  gap: 8px;
   flex-wrap: wrap;
 }
-.bbi-modal-foot-spacer {
-  flex: 1 1 auto;
+.candidate {
+  border: 1px solid var(--studio-accent);
+  padding: 16px;
+  margin: 20px 0;
 }
-.bbi-btn-danger {
-  color: var(--bbi-danger);
-  border-color: var(--bbi-line-strong);
+.candidate img {
+  max-width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  display: block;
+  margin: auto;
 }
-.bbi-btn-danger:hover {
-  color: var(--bbi-danger);
-  border-color: var(--bbi-danger);
-  background: var(--bbi-danger-soft);
+.reference,
+article {
+  border-top: 1px solid #8884;
+  margin-top: 20px;
+  padding-top: 12px;
 }
-
-@media (max-width: 640px) {
-  .bbi-char-grid {
+details {
+  margin: 20px 0;
+}
+summary {
+  cursor: pointer;
+  line-height: 2;
+}
+.welcome {
+  padding: 40px 0;
+}
+footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--bbi-surface);
+  padding: 12px 0;
+  line-height: 1.8;
+}
+button:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 3px;
+}
+input[type='file'] {
+  max-width: 160px;
+}
+.editor .bbi-btn {
+  margin: 4px;
+}
+.editor p {
+  line-height: 1.7;
+  font-size: 13px;
+}
+@media (max-width: 720px) {
+  .studio-layout {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .studio aside {
+    border: 0;
+    max-height: 180px;
+    overflow: auto;
+  }
+  .studio-body {
     grid-template-columns: 1fr;
   }
-  .bbi-char-form {
-    grid-template-columns: 1fr;
+  .portrait {
+    position: static;
   }
-  .bbi-char-name {
-    font-size: 14px;
+  .portrait img,
+  .empty-portrait {
+    max-height: 320px;
+    max-width: 240px;
+    margin: auto;
+  }
+  .studio-head h2 {
+    font-size: 24px;
+  }
+  .studio nav {
+    gap: 28px;
+  }
+  .portrait figcaption {
+    text-align: center;
   }
 }
 </style>

@@ -25,13 +25,7 @@ import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
 import { BODY_EXTRA, FACE_EXTRA, FANDOM_EXTRA } from '@/data/faceExtra';
 import { FANDOM_EXTRA_2 } from '@/data/fandomExtra2';
 import { scoreLore } from '@/data/loreMatch';
-import {
-  LOOK_DIMENSION_LABEL,
-  compareLook,
-  isLookPin,
-  lookTextOf,
-  scanLook,
-} from '@/data/lookMatch';
+import { LOOK_DIMENSION_LABEL, compareLook, isLookPin, lookTextOf, scanLook } from '@/data/lookMatch';
 import { customFandom, customPoses, customWardrobe } from '@/data/customLore';
 import type {
   BodyPreset,
@@ -93,7 +87,9 @@ export interface LoreCandidates {
 
 /** 人物指纹的三种来源:脸型 / 体型 / 同人角色。 */
 export type FaceCardKind = 'face' | 'body' | 'fandom';
-export type FaceCard = (FacePreset | BodyPreset | FandomPreset) & { kind: FaceCardKind };
+export type FaceCard = (FacePreset | BodyPreset | FandomPreset) & {
+  kind: FaceCardKind;
+};
 
 /**
  * 三类人物预设拼成一张表。
@@ -102,15 +98,26 @@ export type FaceCard = (FacePreset | BodyPreset | FandomPreset) & { kind: FaceCa
  * 「精灵」是同人词),拼在一起后 categoryOf 用 kind 区分,配额就自然按三类分。
  */
 export const FACE_CARDS: FaceCard[] = [
-  ...[...FACE_PRESETS, ...FACE_EXTRA].map(preset => ({ ...preset, kind: 'face' as const })),
-  ...[...BODY_PRESETS, ...BODY_EXTRA].map(preset => ({ ...preset, kind: 'body' as const })),
-  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2].map(preset => ({ ...preset, kind: 'fandom' as const })),
+  ...[...FACE_PRESETS, ...FACE_EXTRA].map((preset) => ({
+    ...preset,
+    kind: 'face' as const,
+  })),
+  ...[...BODY_PRESETS, ...BODY_EXTRA].map((preset) => ({
+    ...preset,
+    kind: 'body' as const,
+  })),
+  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2].map((preset) => ({
+    ...preset,
+    kind: 'fandom' as const,
+  })),
 ];
 
-export function allFaceCards(): FaceCard[] { return [...FACE_CARDS, ...customFandom().map(m => ({ ...m, kind: 'fandom' as const }))]; }
+export function allFaceCards(): FaceCard[] {
+  return [...FACE_CARDS, ...customFandom().map((m) => ({ ...m, kind: 'fandom' as const }))];
+}
 
-const WARDROBE_CATEGORY_LABEL = new Map<string, string>(WARDROBE_CATEGORIES.map(c => [c.id, c.label]));
-const POSE_CATEGORY_LABEL = new Map<string, string>(POSE_CATEGORIES.map(c => [c.id, c.label]));
+const WARDROBE_CATEGORY_LABEL = new Map<string, string>(WARDROBE_CATEGORIES.map((c) => [c.id, c.label]));
+const POSE_CATEGORY_LABEL = new Map<string, string>(POSE_CATEGORIES.map((c) => [c.id, c.label]));
 
 /**
  * 按「命中类别数」自适应配额挑选:分数降序,同类别累计不超过 perCat。
@@ -125,7 +132,12 @@ export function pickDiverse<T extends LoreItemBase>(
   items: readonly T[],
   text: string,
   categoryOf: (item: T) => string,
-  options: { limit: number; maxNsfw?: NsfwLevel; vibes?: string[]; rollSeed?: number },
+  options: {
+    limit: number;
+    maxNsfw?: NsfwLevel;
+    vibes?: string[];
+    rollSeed?: number;
+  },
 ): LoreHit<T>[] {
   const maxNsfw = options.maxNsfw ?? 3;
   const vibes = options.vibes ?? [];
@@ -140,10 +152,12 @@ export function pickDiverse<T extends LoreItemBase>(
   }
   if (!scored.length) return [];
   const tieOrder = tieBreaker(options.rollSeed ?? 0);
-  scored.sort((a, b) =>
-    b.score - a.score || (options.rollSeed ? tieOrder(a.item.id) - tieOrder(b.item.id) : a.item.id.localeCompare(b.item.id)),
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      (options.rollSeed ? tieOrder(a.item.id) - tieOrder(b.item.id) : a.item.id.localeCompare(b.item.id)),
   );
-  const categories = new Set(scored.map(hit => hit.category));
+  const categories = new Set(scored.map((hit) => hit.category));
   const perCat = categories.size <= 1 ? 6 : categories.size === 2 ? 3 : 2;
   const used = new Map<string, number>();
   const picked: LoreHit<T>[] = [];
@@ -194,10 +208,7 @@ function tieBreaker(seed: number): (id: string) => number {
  * 3. **同人条目的 tags 自带权重语法 `0.6::xxx::`。** 命中时原样照抄即可,权重由库里定,
  *    不靠模型自己拿捏「像到什么程度」。
  */
-function collectFaceCandidates(
-  body: string,
-  options: LoreOptions,
-): LoreHit<FaceCard>[] {
+function collectFaceCandidates(body: string, options: LoreOptions): LoreHit<FaceCard>[] {
   const limit = Math.max(0, options.faceLimit ?? 8);
   if (!limit) return [];
   const maxNsfw = options.maxNsfw ?? 3;
@@ -206,8 +217,7 @@ function collectFaceCandidates(
   // 同分次序:有种子时按种子摇号,没种子(0)时退回 id 字典序(与 pickDiverse 同口径)
   const rollSeed = options.rollSeed ?? 0;
   const tieOrder = tieBreaker(rollSeed);
-  const tie = (a: string, b: string): number =>
-    rollSeed ? tieOrder(a) - tieOrder(b) : a.localeCompare(b);
+  const tie = (a: string, b: string): number => (rollSeed ? tieOrder(a) - tieOrder(b) : a.localeCompare(b));
 
   // 同人:外形重合 > 点名 > 气质 > 外形词。
   //
@@ -223,7 +233,9 @@ function collectFaceCandidates(
     const franchise = (preset.franchise ?? '').trim();
     // 只有「不是泛词」的命中才算点名:同人表里也有 长发 / 精灵 / 人妻 这类泛词,
     // 把它们当点名会让 direct 永远成立,「正文点名」与「只是外形撞上」就分不开了。
-    const named = preset.aliases.filter(alias => alias.length >= 2 && body.includes(alias) && !GENERIC_ALIASES.has(alias));
+    const named = preset.aliases.filter(
+      (alias) => alias.length >= 2 && body.includes(alias) && !GENERIC_ALIASES.has(alias),
+    );
     const direct = named.length > 0 || (franchise.length >= 2 && hay.includes(franchise.toLowerCase()));
     const { score, hits } = scoreLore(card, body, vibes);
     // 没有点名时,正文的发色/瞳色与条目的 hair/eyes 对得上也算线索:
@@ -247,13 +259,13 @@ function collectFaceCandidates(
       category: 'fandom',
       direct,
       pinned,
-      lookNote: pinned ? look.dimensions.map(dimension => LOOK_DIMENSION_LABEL[dimension]).join('、') : undefined,
+      lookNote: pinned
+        ? look.dimensions.map((dimension) => LOOK_DIMENSION_LABEL[dimension]).join('、')
+        : undefined,
     });
   }
   fandom.sort(
-    (a, b) =>
-      b.score - a.score ||
-      (a.direct === b.direct ? tie(a.item.id, b.item.id) : a.direct ? -1 : 1),
+    (a, b) => b.score - a.score || (a.direct === b.direct ? tie(a.item.id, b.item.id) : a.direct ? -1 : 1),
   );
 
   // 脸型与体型:正文写了气质/外形词才召回,与原先口径一致。
@@ -272,7 +284,7 @@ function collectFaceCandidates(
 
   // 同人先占位:有 pinned / direct 命中时给 4 条(多个同人同框的场合够用),
   // 只有气质/外形擦边时给 2 条,把位置让给脸型体型。
-  const directHit = fandom.some(hit => hit.direct || hit.pinned);
+  const directHit = fandom.some((hit) => hit.direct || hit.pinned);
   const fandomLimit = directHit ? Math.min(4, limit) : Math.min(2, limit);
   picked.push(...fandom.slice(0, fandomLimit));
 
@@ -290,14 +302,7 @@ function collectFaceCandidates(
   // 蓝发黄瞳的组合,上面两步就全军覆没——模型拿到的是空候选,只能自己编。
   // 此时按摇号顺序塞几条脸型/体型当底子,总比空块强;它们没命中词,渲染时也不会
   // 被说成「正文点名」,只是「挑一条最近的」。
-  if (!picked.length) {
-    const anyKind = (kind: FaceCardKind): LoreHit<FaceCard>[] =>
-      allFaceCards().filter(card => card.kind === kind && card.nsfw <= maxNsfw)
-        .sort((a, b) => tie(a.id, b.id))
-        .map(card => ({ item: card, score: 0, hits: [], category: kind }));
-    picked.push(...anyKind('face').slice(0, Math.max(1, Math.ceil(limit / 2))));
-    picked.push(...anyKind('body').slice(0, limit - picked.length));
-  }
+
   return picked.slice(0, limit);
 }
 
@@ -318,15 +323,15 @@ function looksLike(card: FaceCard, hay: string): string[] {
     text
       .toLowerCase()
       .split(/[,，]/)
-      .flatMap(part => part.replace(/\b(hair|eyes)\b/g, ' ').split(/\s+/))
-      .map(color => COLOR_ALIASES[color] ?? color)
-      .filter(color => color && color.length >= 2);
+      .flatMap((part) => part.replace(/\b(hair|eyes)\b/g, ' ').split(/\s+/))
+      .map((color) => COLOR_ALIASES[color] ?? color)
+      .filter((color) => color && color.length >= 2);
   const hair = colors(preset.hair ?? '');
   const eyes = colors(preset.eyes ?? '');
   if (!hair.length || !eyes.length) return [];
   // 发色与瞳色必须各自命中,而且不能是同一个色(白毛紫瞳对得上,白毛蓝瞳也对不上)。
-  const hairHit = hair.find(color => hay.includes(color));
-  const eyeHit = eyes.find(color => hay.includes(color));
+  const hairHit = hair.find((color) => hay.includes(color));
+  const eyeHit = eyes.find((color) => hay.includes(color));
   if (!hairHit || !eyeHit) return [];
   return [hairHit, eyeHit];
 }
@@ -394,13 +399,18 @@ export function collectLoreCandidates(text: string, options: LoreOptions = {}): 
   const body = (text ?? '').trim();
   if (!body) return { wardrobe: [], poses: [], faces: [] };
   return {
-    wardrobe: pickDiverse(allWardrobeItems().filter(item => compatibleCostumeMaterial(item, options.costume)), body, item => item.category, {
-      limit: options.wardrobeLimit ?? 8,
-      maxNsfw: options.maxNsfw,
-      vibes: options.vibes,
-      rollSeed: options.rollSeed,
-    }),
-    poses: pickDiverse(allPoseItems(), body, item => item.category, {
+    wardrobe: pickDiverse(
+      allWardrobeItems().filter((item) => compatibleCostumeMaterial(item, options.costume)),
+      body,
+      (item) => item.category,
+      {
+        limit: options.wardrobeLimit ?? 8,
+        maxNsfw: options.maxNsfw,
+        vibes: options.vibes,
+        rollSeed: options.rollSeed,
+      },
+    ),
+    poses: pickDiverse(allPoseItems(), body, (item) => item.category, {
       limit: options.poseLimit ?? 6,
       maxNsfw: options.maxNsfw,
       vibes: options.vibes,
@@ -411,11 +421,7 @@ export function collectLoreCandidates(text: string, options: LoreOptions = {}): 
 }
 
 /** 一行的渲染:`- [分类] 名字: tags`(命中词与 note 追加在后面,不占主行)。 */
-function renderLine<T extends LoreItemBase>(
-  hit: LoreHit<T>,
-  categoryLabel: string,
-  extra?: string,
-): string {
+function renderLine<T extends LoreItemBase>(hit: LoreHit<T>, categoryLabel: string, extra?: string): string {
   const hits = hit.hits.slice(0, 3).join('、');
   const note = (hit.item.note ?? '').trim();
   const tail = [hits ? `命中：${hits}` : '', note].filter(Boolean).join('；');
@@ -435,7 +441,7 @@ export function buildLoreBlock(text: string, options: LoreOptions = {}): string 
   const parts: string[] = [];
 
   if (wardrobe.length) {
-    const lines = wardrobe.map(hit =>
+    const lines = wardrobe.map((hit) =>
       renderLine(hit, WARDROBE_CATEGORY_LABEL.get(hit.category) ?? hit.category, hit.item.slot),
     );
     parts.push(
@@ -455,7 +461,7 @@ export function buildLoreBlock(text: string, options: LoreOptions = {}): string 
   }
 
   if (poses.length) {
-    const lines = poses.map(hit => {
+    const lines = poses.map((hit) => {
       const meta = [hit.item.camera ? `机位 ${hit.item.camera}` : '', hit.item.direction ?? '']
         .filter(Boolean)
         .join(' / ');
@@ -475,7 +481,7 @@ export function buildLoreBlock(text: string, options: LoreOptions = {}): string 
   }
 
   if (faces.length) {
-    const lines = faces.map(hit => {
+    const lines = faces.map((hit) => {
       const extra =
         hit.item.kind === 'fandom'
           ? ((hit.item as FandomPreset).franchise ?? '')
@@ -487,14 +493,23 @@ export function buildLoreBlock(text: string, options: LoreOptions = {}): string 
         : hit.direct && hit.item.kind === 'fandom'
           ? '正文点名'
           : extra;
-      return renderLine(hit, FACE_KIND_LABEL[hit.item.kind], tail);
+      const tags = hit.item.tags
+        .split(',')
+        .filter(
+          (t) =>
+            !/gorgeous face|delicate facial features|beautiful detailed eyes|glossy lips|lustrous hair|gentle smile|warm smile|faint blush|parted lips/i.test(
+              t,
+            ),
+        )
+        .join(',');
+      return renderLine({ ...hit, item: { ...hit.item, tags } }, FACE_KIND_LABEL[hit.item.kind], tail);
     });
-    const hasFandom = faces.some(hit => hit.item.kind === 'fandom');
-    const hasDirect = faces.some(hit => hit.direct);
-    const hasPinned = faces.some(hit => hit.pinned);
+    const hasFandom = faces.some((hit) => hit.item.kind === 'fandom');
+    const hasDirect = faces.some((hit) => hit.direct);
+    const hasPinned = faces.some((hit) => hit.pinned);
     // 全是兜底条目(正文里连一个可比对的词都没有):说清它们不是「命中」,
     // 否则模型会以为正文点名了,把它们当成铁定要照抄的答案。
-    const allLoose = faces.every(hit => !hit.hits.length && !hit.direct && !hit.pinned);
+    const allLoose = faces.every((hit) => !hit.hits.length && !hit.direct && !hit.pinned);
     parts.push(
       [
         '【人物外貌候选库】[candidate-only; copy one tag set verbatim, fandom entries carry their own weight syntax]',
