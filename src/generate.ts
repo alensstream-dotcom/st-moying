@@ -64,6 +64,8 @@ import { enforceAppearance } from '@/autoTag/appearanceLock';
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
   suppressCharacterReference?: boolean;
+  /** Explicit per-request portrait override; never mutates channel settings. */
+  naiPortraitResolution?: string;
   /** Exact saved story frame; omitted for free-form APIs and material previews. */
   storyFrame?: { floor: number; tag: string };
   /** 正向 danbooru 短 tag。 */
@@ -359,6 +361,21 @@ export async function generateImage(
       // 预设先套、模型覆盖后套:后者是调用方最具体的意图(naiModel 明确点名就用它)。
       const preset = input.genPresetId ? genPresetById(input.genPresetId) : null;
       if (preset) applyPresetToNaiConn(naiConn, preset);
+      if (input.naiPortraitResolution) {
+        const resolution = parseSize(input.naiPortraitResolution);
+        if (
+          !resolution ||
+          resolution.width % 64 ||
+          resolution.height % 64 ||
+          resolution.width < 256 ||
+          resolution.height < 256 ||
+          resolution.width > 2048 ||
+          resolution.height > 2048
+        )
+          throw new Error('立绘分辨率须为 256–2048 范围内的 64 倍数');
+        naiConn.portraitSize = input.naiPortraitResolution;
+        naiConn.landscapeSize = input.naiPortraitResolution;
+      }
       if (input.naiModel) naiConn.model = input.naiModel as typeof naiConn.model;
       const configConflicts = costumeConflicts(
         [naiArtistPrompt(naiConn), naiQualityTags(naiConn)].join(', '),

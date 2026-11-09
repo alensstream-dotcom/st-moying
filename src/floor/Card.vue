@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { findCharTag } from '@/state/charTags';
-import { adoptLook } from '@/state/characterStudio';
+import { upsertCharTag, findCharTag } from '@/state/charTags';
+import { imageAppearance, adoptLook } from '@/state/characterStudio';
 import { putStudioImage } from '@/data/loreThumbs';
 import { computed, onMounted, ref, watch } from 'vue';
 
@@ -41,7 +41,7 @@ import { activeComfyPreset, activeOrientationLock, imageDisplayMaxHeight, settin
 import { beginImage, failImage, finishImage, safeHistory } from '@/state/history';
 import { copyText } from '@/st/clipboard';
 import { getContext } from '@/st/context';
-import { formatPromptText } from '@/st/imageTagRegex';
+import { parseImageTagContent, formatPromptText } from '@/st/imageTagRegex';
 
 /**
  * 楼层生图卡片(DESIGN-FLOOR-UI.md §8)。
@@ -354,11 +354,19 @@ function openImage(): void {
   // 就地取值:灯箱挂在插件 shadow root,**活得比本卡片长**——任一兄弟槽位出图都会
   // 重水合销毁本组件,而灯箱还开着。回调里再读 props 就是读已销毁实例,故全部先快照。
   const at = { messageId: props.messageId, swipeId: props.swipeId };
+  const openedChat = getContext()?.getCurrentChatId?.();
   openLightbox({
     src: entry.path,
     prompt: lightboxPrompt.value,
     filename: downloadFileName(entry),
     onDelete: () => void removeEntry(entry, at),
+    onAdopt:
+      parseImageTagContent(entry.prompt).characters.length === 1
+        ? () => void useAsPortrait(entry, openedChat)
+        : undefined,
+    onReroll: () => {
+      if (openedChat === getContext()?.getCurrentChatId?.()) void generate(true);
+    },
   });
 }
 
@@ -438,12 +446,17 @@ async function copyPrompt(): Promise<void> {
 }
 
 /** 另存当前展示的这张图(与灯箱共用 download.ts,免得两份逻辑漂移)。 */
-async function useAsPortrait() {
+async function useAsPortrait(photo = shownEntry.value, expectedChat = getContext()?.getCurrentChatId?.()) {
+  if (expectedChat !== getContext()?.getCurrentChatId?.()) return;
   const chat = getContext()?.getCurrentChatId?.(),
-    name = props.characters.length === 1 ? props.characters[0].name : '';
+    cast = photo ? parseImageTagContent(photo.prompt).characters : [],
+    name = cast.length === 1 ? cast[0].name : '';
   const entry = findCharTag(name),
-    src = imageSrc.value;
-  if (!entry || !src) return;
+    src = photo?.path ?? '';
+  if (!entry || !src) {
+    toastr.info('请使用有命名人物标签的单角色图片；多人图可先裁剪后到角色页上传', '无法直接保存形象');
+    return;
+  }
   try {
     const response = await fetch(src);
     if (!response.ok) throw new Error('读取图片失败');
@@ -451,8 +464,10 @@ async function useAsPortrait() {
       key = 'studio:' + crypto.randomUUID();
     await putStudioImage(key, blob, JSON.stringify(entry.fields));
     if (chat !== getContext()?.getCurrentChatId?.()) return;
-    adoptLook(entry, key);
-    toastr.success('已设为角色立绘，付费图片参考默认关闭', '墨影');
+    const appearance = imageAppearance(entry, cast[0].tag);
+    if (!upsertCharTag(appearance, name, { recordChanges: true })) throw new Error('无法保存该图人物标签');
+    adoptLook(appearance, key);
+    toastr.success('已保存这张图的人物标签与头像；未训练模型，图片参考默认关闭', '墨影');
   } catch (e) {
     toastr.error(e instanceof Error ? e.message : String(e), '立绘保存失败');
   }
@@ -634,13 +649,13 @@ onMounted(() => {
               <button
                 v-if="shownEntry && characters.length === 1"
                 class="bbi-fab"
-                title="设为角色立绘（不自动开启付费参考）"
+                title="保存这张图的人物标签与头像（不自动开启图片参考）"
                 @click="
                   menuOpen = false;
                   useAsPortrait();
                 "
               >
-                定妆
+                保存形象
               </button>
               <button
                 v-if="shownEntry"

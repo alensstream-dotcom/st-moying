@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { openLightbox } from '@/floor/lightbox';
+import { genPresetList } from '@/state/genPresets';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import {
   charTagBaseNames,
@@ -80,6 +82,23 @@ function appendTag(tag: string) {
       tag,
     ]),
   ].join(', ');
+}
+const portraitPreset = ref(''),
+  portraitResolution = ref('1024x1536');
+let zoomTimer: ReturnType<typeof setTimeout> | undefined;
+function queuePortraitZoom(candidateImage = false) {
+  clearTimeout(zoomTimer);
+  zoomTimer = setTimeout(() => zoomPortrait(candidateImage), 260);
+}
+function zoomPortrait(candidateImage = false) {
+  clearTimeout(zoomTimer);
+  const src = candidateImage ? candidateUrl.value : portrait.value;
+  if (src)
+    openLightbox({
+      src,
+      filename: (draft.value?.name || '角色') + '立绘',
+      prompt: candidateImage ? candidate.value?.nl : draft.value?.nl,
+    });
 }
 const locks = ref<string[]>(['sex', 'age', 'hair', 'eyes', 'body', 'fandom']);
 const version = ref(0),
@@ -289,12 +308,18 @@ async function draw(entry: CharTagEntry) {
       : 'simple dress';
   const out = await generateImage(
     {
-      prompt: 'solo, full body, standing, clothed, simple background, ' + outfit + ', ' + tags,
+      prompt:
+        'solo, full body, standing, facing viewer, centered composition, clothed, simple background, ' +
+        outfit +
+        ', ' +
+        tags,
       nl: entry.nl,
       characters: [],
       size: 'portrait',
       seed: decideSeed('nai', undefined, true),
       suppressCharacterReference: true,
+      genPresetId: portraitPreset.value || undefined,
+      naiPortraitResolution: portraitResolution.value,
     },
     controller!.signal,
   );
@@ -503,6 +528,7 @@ onMounted(async () => {
   if (rows.value[0]) await select(rows.value[0].name);
 });
 onUnmounted(() => {
+  clearTimeout(zoomTimer);
   controller?.abort();
   revoke();
   if (portrait.value) URL.revokeObjectURL(portrait.value);
@@ -599,14 +625,24 @@ watch(
         <div class="studio-body">
           <fieldset :disabled="busy" class="studio-fields">
             <figure class="portrait">
-              <img v-if="portrait" :src="portrait" alt="当前采用的角色立绘" />
+              <img
+                v-if="portrait"
+                :src="portrait"
+                alt="当前采用的角色立绘，双击放大"
+                tabindex="0"
+                @dblclick="zoomPortrait()"
+                @keydown.enter="zoomPortrait()"
+                @click="queuePortraitZoom()"
+              />
               <div v-else class="empty-portrait">
-                <span>尚未定妆</span>
+                <span>尚未保存立绘</span>
                 <p>生成立绘候选，或上传已有的满意图片。</p>
               </div>
               <figcaption>
-                {{ selected || '新角色' }} · {{ look.active ? '已定妆' : '文字档案' }}<br /><small>{{
-                  look.reference ? '已请求单人图参考（受模型和版本限制）' : '文字定妆 · 无逐图参考费'
+                {{ selected || '新角色' }} · {{ look.active ? '已保存形象' : '文字档案' }}<br /><small>{{
+                  look.reference
+                    ? '已请求单人图参考（受模型和版本限制）'
+                    : '文字档案＋展示图片 · 图片未参与生成'
                 }}</small>
               </figcaption>
             </figure>
@@ -628,7 +664,11 @@ watch(
                 另存为跨聊天模板
               </button>
               <details>
-                <summary>本地中文选词 · 不调用 LLM</summary>
+                <summary>查词并添加英文标签（本地免费）</summary>
+                <p>
+                  通用 Danbooru 中译＋NAI 常用词＋组合解释，不是官方完整 NAI
+                  词库。中文只是解释，生成仍发送原始英文；长句和画师人名不保证能翻译。
+                </p>
                 <input
                   v-model="tagSearch"
                   class="bbi-input"
@@ -660,8 +700,8 @@ watch(
               <p>
                 {{ draft.desc || '原文与用户设定优先。补全候选会显示中文说明。' }}
               </p>
-              <details>
-                <summary>旧整串标签（兼容）</summary>
+              <details v-if="draft.raw.trim()">
+                <summary>旧数据原文（仅此角色有历史标签时显示）</summary>
                 <textarea v-model="draft.raw" class="bbi-input" />
               </details>
               <button class="bbi-btn bbi-btn-primary" @click="task(async () => save())">保存档案</button
@@ -678,7 +718,7 @@ watch(
                 移出角色库
               </button>
               <details>
-                <summary>补充本地翻译 · 零 LLM</summary>
+                <summary>纠正某个标签的中文解释（可选）</summary>
                 <input v-model="customTag" class="bbi-input" placeholder="英文标签" /><input
                   v-model="customZh"
                   class="bbi-input"
@@ -697,7 +737,26 @@ watch(
               </details>
             </section>
             <section v-else-if="tab === '定妆'" class="editor">
-              <h3>候选先看，满意再采用</h3>
+              <h3>高质量立绘与外貌候选</h3>
+              <div class="portrait-settings">
+                <label
+                  >立绘专用生成预设<select v-model="portraitPreset" class="bbi-input">
+                    <option value="">使用当前正式配置</option>
+                    <option v-for="p in genPresetList()" :key="p.id" :value="p.id">
+                      {{ p.name }} · {{ p.model }} · {{ p.steps }}步
+                    </option>
+                  </select></label
+                ><label
+                  >立绘竖向分辨率<select v-model="portraitResolution" class="bbi-input">
+                    <option value="1024x1536">1024 × 1536</option>
+                    <option value="1536x2048">1536 × 2048（高消耗）</option>
+                    <option value="2048x2048">2048 × 2048（最高像素，高消耗）</option>
+                  </select></label
+                >
+                <p>
+                  先在渠道页保存你满意的高质量模型与参数，再在这里选用；不会擅自换画师或修改剧情生图配置。尺寸、模型和步数越高通常消耗越大，服务端可能拒绝超额参数。
+                </p>
+              </div>
               <p>
                 预览使用当前 NAI 模型与配方，每次一张。中性衣服仅用于立绘，不改剧情穿搭。只重画不请求
                 LLM；换脸和重设计会调用 LLM。
@@ -714,7 +773,15 @@ watch(
               </div>
               <small>同人身份非空时锁定完整形象；要恢复原创设计，请先清空同人身份。</small>
               <div v-if="candidate" class="candidate">
-                <img v-if="candidateUrl" :src="candidateUrl" alt="尚未采用的立绘候选" />
+                <img
+                  v-if="candidateUrl"
+                  :src="candidateUrl"
+                  alt="立绘候选，双击放大"
+                  tabindex="0"
+                  @dblclick="zoomPortrait(true)"
+                  @click="queuePortraitZoom(true)"
+                  @keydown.enter="zoomPortrait(true)"
+                />
                 <h4>未采用候选</h4>
                 <a v-if="candidateUrl" class="bbi-btn" :href="candidateUrl" download="角色立绘候选.png"
                   >下载候选</a
@@ -734,7 +801,10 @@ watch(
                 ><button class="bbi-btn" @click="revoke">丢弃候选</button>
               </div>
               <details>
-                <summary>从同人素材选择外貌模板</summary>
+                <summary>将此人换成指定同人形象</summary>
+                <p>
+                  搜索已收录的角色，创建外貌候选。采用后使用该同人身份标签；不是只提取脸，会连带发色、装饰等特征。服装仍按剧情。
+                </p>
                 <input v-model="fandomQuery" class="bbi-input" placeholder="中文角色名或作品" /><button
                   v-for="f in fandoms"
                   :key="f.id"
@@ -745,7 +815,11 @@ watch(
                 </button>
               </details>
               <div class="reference">
-                <h3>图片参考 · 可选付费增强</h3>
+                <h3>让后续生成参考这张图 · 可选付费</h3>
+                <p>
+                  保存立绘不是训练模型。默认只复用文字档案，人物可能与样图不同；启用图片参考才会把原图发送给
+                  NAI，也不能保证完全一致。
+                </p>
                 <label
                   ><input
                     type="checkbox"
@@ -1046,6 +1120,128 @@ input[type='file'] {
   }
   .portrait figcaption {
     text-align: center;
+  }
+}
+</style>
+
+<style scoped>
+.studio-head > div:last-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.studio-head .bbi-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 14px;
+  font-size: 13px;
+  line-height: 1;
+  position: relative;
+  cursor: pointer;
+}
+.studio-head input[type='file'],
+.actions label input[type='file'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.studio-head label.bbi-btn,
+.actions label.bbi-btn {
+  position: relative;
+  overflow: hidden;
+}
+.portrait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.portrait img {
+  display: block;
+  margin: 0 auto;
+  object-position: center;
+  cursor: zoom-in;
+  width: 100%;
+}
+.candidate img {
+  cursor: zoom-in;
+  object-position: center;
+}
+.studio-body {
+  align-items: start;
+}
+.portrait-settings {
+  padding: 16px;
+  background: color-mix(in srgb, var(--bbi-surface) 90%, #7b96b0);
+  border: 1px solid #8295b433;
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+.portrait-settings p {
+  color: var(--bbi-ink-muted);
+}
+.editor h3 {
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  font-size: 19px;
+}
+.studio nav button {
+  min-width: 50px;
+}
+.studio .field {
+  padding-bottom: 12px;
+  border-bottom: 1px solid #8882;
+}
+.studio .field small {
+  line-height: 1.85;
+}
+.studio .portrait figcaption {
+  padding: 12px 4px;
+}
+.candidate {
+  border-radius: 8px;
+}
+.studio-head {
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.studio .actions {
+  align-items: center;
+}
+.studio .actions .bbi-btn {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  margin: 0;
+  position: relative;
+}
+.studio .actions label {
+  margin: 0;
+}
+@media (max-width: 720px) {
+  .studio-head > div:last-child {
+    justify-content: flex-start;
+  }
+  .portrait {
+    width: 100%;
+  }
+  .portrait img {
+    max-height: 440px;
+    max-width: 100%;
+  }
+  .studio .editor {
+    width: 100%;
   }
 }
 </style>

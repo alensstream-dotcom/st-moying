@@ -1,13 +1,34 @@
-import { costumeConflicts, explicitCostumeEvidence, costumeBefore, resolveCostumeFloor, costumeAt, prepareCostumeRepairs, repairCostumeState, removeUnbackedCostume, type CostumeRequest } from './costumeContext';
-import { IDENTITY_PROTOCOL, IDENTITY_EXTRA_KEY, assessIdentityClaims, currentIdentityFacts, eligibleIdentityEntries, enforceKnownMaleIdentity, identityContextHash, identityFactFor, isMaleIdentity, identityManualRevision, identityStoryHash, mayCreateHeroine, mergeIdentityFacts, type IdentitySources } from '@/state/characterIdentity';
+import {
+  costumeConflicts,
+  explicitCostumeEvidence,
+  costumeBefore,
+  resolveCostumeFloor,
+  costumeAt,
+  prepareCostumeRepairs,
+  repairCostumeState,
+  removeUnbackedCostume,
+  type CostumeRequest,
+} from './costumeContext';
+import {
+  IDENTITY_PROTOCOL,
+  IDENTITY_EXTRA_KEY,
+  assessIdentityClaims,
+  currentIdentityFacts,
+  eligibleIdentityEntries,
+  enforceKnownMaleIdentity,
+  identityContextHash,
+  identityFactFor,
+  isMaleIdentity,
+  identityManualRevision,
+  identityStoryHash,
+  mayCreateHeroine,
+  mergeIdentityFacts,
+  type IdentitySources,
+} from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
 import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { readBookMemory } from '@/autoTag/bookMemory';
-import {
-  applyPositionedCharRefs,
-  resolveCharAnchors,
-  type PositionedCharOp,
-} from '@/autoTag/charAnchors';
+import { applyPositionedCharRefs, resolveCharAnchors, type PositionedCharOp } from '@/autoTag/charAnchors';
 import {
   diagnoseCast,
   diagnoseContact,
@@ -24,8 +45,21 @@ import {
   resolveCanonicalCharName,
 } from '@/autoTag/charReuse';
 import { BBI_OUTFIT_EXTRA_KEY } from '@/autoTag/outfitState';
-import { CLOTHING_PROTOCOL, acceptClothingChanges, clothingAt, clothingBefore, clothingBlock, clothingRevision, enforceClothing, initialiseClothingFromImage,
-  narrativeHash, readClothingFloor, savedImageClothing, type ClothingFloor, type ClothingState } from '@/autoTag/outfitTimeline';
+import {
+  CLOTHING_PROTOCOL,
+  acceptClothingChanges,
+  clothingAt,
+  clothingBefore,
+  clothingBlock,
+  clothingRevision,
+  enforceClothing,
+  initialiseClothingFromImage,
+  narrativeHash,
+  readClothingFloor,
+  savedImageClothing,
+  type ClothingFloor,
+  type ClothingState,
+} from '@/autoTag/outfitTimeline';
 import { enforceAppearance } from '@/autoTag/appearanceLock';
 import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
 import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
@@ -45,11 +79,7 @@ import {
   duplicatePositionNote,
   duplicatePositions,
 } from '@/autoTag/positionCheck';
-import {
-  diagnoseTruncation,
-  EMPTY_PLAN_RETRY_NOTE,
-  truncationRetryNote,
-} from '@/autoTag/truncation';
+import { diagnoseTruncation, EMPTY_PLAN_RETRY_NOTE, truncationRetryNote } from '@/autoTag/truncation';
 import {
   BBI_CHAR_EXTRA_KEY,
   CHAR_TAG_FIELDS,
@@ -67,11 +97,7 @@ import {
   type CharTagField,
 } from '@/state/charTags';
 import { injectImageTags, parseImagePlan, type ImageInsertion, type ImagePlan } from '@/autoTag/protocol';
-import {
-  clearAutoGenerateForFloor,
-  consumeAutoGenerate,
-  markForAutoGenerate,
-} from '@/floor/autoGenerate';
+import { clearAutoGenerateForFloor, consumeAutoGenerate, markForAutoGenerate } from '@/floor/autoGenerate';
 import {
   cancelBackgroundFloorJobs,
   clearPreclaimedBackgroundSlots,
@@ -205,10 +231,29 @@ function planChangeOps(plan: ImagePlan, source: string, notes: string[]): Positi
   for (const change of plan.changes) {
     if (change.field !== 'new') {
       const lines = source.replace(/\r\n?/g, '\n').split('\n');
-      const preceding = [...lines.slice(0, change.sourceLine), (lines[change.sourceLine] ?? '').slice(0, change.charOffset || undefined)].join('\n');
-      if (!change.evidence || !preceding.includes(change.evidence) || !change.evidence.includes(change.name)) { notes.push(`${change.name}: 未采纳 ${change.field} 变更，缺少有效原文证据`); continue; }
-      const action = /染|剪|剃|长大|长高|成长|变身|变成|变为|留下.{0,6}疤|受伤|恢复|治愈|永久|dye|cut|shav|grow|transform|scar|heal|permanent/i;
-      if (!action.test(change.evidence) || change.field === 'fandom' || change.field === 'sex' || change.field === 'outfit') { notes.push(`${change.name}: 未采纳 ${change.field} 变更，不能自动重写身份或把当前穿搭写进外貌库`); continue; }
+      const preceding = [
+        ...lines.slice(0, change.sourceLine),
+        (lines[change.sourceLine] ?? '').slice(0, change.charOffset || undefined),
+      ].join('\n');
+      if (
+        !change.evidence ||
+        !preceding.includes(change.evidence) ||
+        !change.evidence.includes(change.name)
+      ) {
+        notes.push(`${change.name}: 未采纳 ${change.field} 变更，缺少有效原文证据`);
+        continue;
+      }
+      const action =
+        /染|剪|剃|长大|长高|成长|变身|变成|变为|留下.{0,6}疤|受伤|恢复|治愈|永久|dye|cut|shav|grow|transform|scar|heal|permanent/i;
+      if (
+        !action.test(change.evidence) ||
+        change.field === 'fandom' ||
+        change.field === 'sex' ||
+        change.field === 'outfit'
+      ) {
+        notes.push(`${change.name}: 未采纳 ${change.field} 变更，不能自动重写身份或把当前穿搭写进外貌库`);
+        continue;
+      }
     }
     let op: CharTagAutoOp | null = null;
     if (change.field === 'new') {
@@ -252,7 +297,9 @@ function planChangeOps(plan: ImagePlan, source: string, notes: string[]): Positi
     }
     if (op) ops.push({ op, sourceLine: change.sourceLine, charOffset: change.charOffset });
   }
-  return ops.sort((left, right) => left.sourceLine - right.sourceLine || (left.charOffset ?? 0) - (right.charOffset ?? 0));
+  return ops.sort(
+    (left, right) => left.sourceLine - right.sourceLine || (left.charOffset ?? 0) - (right.charOffset ?? 0),
+  );
 }
 
 async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> {
@@ -322,12 +369,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
   // 按钮只认开标签、这里认开也认闭,只剩 `</bbi_image>` 的楼就卡成「点了没反应」。
   // 单槽重写以「本楼已有 tag」为前提,不受此闸门拦截。
   if (hasImageTagTrace(rawSource) && !opts.replace && !slot) {
-    abort(
-      floor,
-      'already-has-image-tag',
-      opts.manual,
-      '本楼已有生图 tag，没有确认重新生成，本次未改动',
-    );
+    abort(floor, 'already-has-image-tag', opts.manual, '本楼已有生图 tag，没有确认重新生成，本次未改动');
     if (!opts.manual) console.debug(`[墨影] 第 ${floor} 楼已经含有 bbi_image tag，跳过自动分析`);
     return;
   }
@@ -385,7 +427,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const libraryAtStart = slot ? charTagsBeforeFloor(floor + 1) : charTagsBeforeFloor(floor);
     const expectedLibrary = JSON.stringify(libraryAtStart);
     const identityRevision = identityManualRevision();
-    const structuredFacts = assessIdentityClaims([], { story: '', card: '', worldbook: '', book: memory?.roles ?? [] });
+    const structuredFacts = assessIdentityClaims([], {
+      story: '',
+      card: '',
+      worldbook: '',
+      book: memory?.roles ?? [],
+    });
     const knownIdentities = mergeIdentityFacts([...currentIdentityFacts(), ...structuredFacts]);
     const entriesBefore = eligibleIdentityEntries(libraryAtStart, knownIdentities);
     // 锁定名(全局库 ⊖ 本聊天基线):AI 的 changes 对这些名字一律无效,库文本里带 [locked] 标记
@@ -395,9 +442,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 单槽重写:协议强制「恰好 1 张」,并把该槽位当前提示词与其余槽位摘要带给模型
     // (锚住同一个画面、别抢别人的画面)。min/max 要同时覆盖 build 的规则文案与下面的
     // parse 校验,只改一处会自相矛盾。
-    const promptOptions = slot
-      ? { ...settings.autoTag, minImages: 1, maxImages: 1 }
-      : settings.autoTag;
+    const promptOptions = slot ? { ...settings.autoTag, minImages: 1, maxImages: 1 } : settings.autoTag;
     // 协议形态开跑时快照一次:写协议、验收与收尾同一份,用户中途拨开关也不会前后不一
     const profile = autoTagProfile();
     // 素材候选的同分摇号种子:取自 identity(聊天+楼层+swipe+正文哈希)。
@@ -417,12 +462,19 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 账本只记变化,所以还要拿档案里的固定着装垫底——角色第一次出图时账本是空的,
     // 那正是衣服最容易开始乱飘的时候。
     const wardrobe = clothingBefore(context.chat, floor, entriesBefore);
+    const wardrobeBaseline = new Map([...wardrobe].map(([name, entry]) => [name, JSON.stringify(entry)]));
     const wardrobeRevision = clothingRevision(context.chat, floor);
     const expectedStory = narrativeHash(rawSource);
     const savedWardrobe = readClothingFloor(message, wardrobeRevision);
-    const slotWardrobe = slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
-      ? new Map(savedWardrobe.frames[slot.seq].entries.map(e => [e.name, e]))
-      : slot && slotRawTag ? savedImageClothing({ ...parseImageTagContent(slotRawTag), position: '', sourceLine: 0, charOffset: 0 }, wardrobe) : null;
+    const slotWardrobe =
+      slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
+        ? new Map(savedWardrobe.frames[slot.seq].entries.map((e) => [e.name, e]))
+        : slot && slotRawTag
+          ? savedImageClothing(
+              { ...parseImageTagContent(slotRawTag), position: '', sourceLine: 0, charOffset: 0 },
+              wardrobe,
+            )
+          : null;
     const outfitBlock = clothingBlock(slotWardrobe ?? wardrobe);
     const costumeRequest: CostumeRequest = { inherited: costumeBefore(context.chat, floor) };
     const messages = await buildAutoTagMessages(
@@ -442,11 +494,23 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     costumeRequest.story = source;
     const channel = getTagGenChannel();
     messages.push({ role: 'system', content: CLOTHING_PROTOCOL });
-    messages.push({ role: 'system', content: IDENTITY_PROTOCOL + '\n已核实身份（旧绘图档案不是性别证据）：' + JSON.stringify(knownIdentities) });
-    const identitySources: IdentitySources = { story: source,
-      card: messages.filter(m => m.role === 'system' && /^【(?:角色设定|主角设定)/.test(m.content)).map(m => m.content).join('\n'),
-      worldbook: messages.filter(m => m.role === 'system' && m.content.startsWith('【世界设定')).map(m => m.content).join('\n'),
-      book: memory?.roles ?? [] };
+    messages.push({
+      role: 'system',
+      content:
+        IDENTITY_PROTOCOL + '\n已核实身份（旧绘图档案不是性别证据）：' + JSON.stringify(knownIdentities),
+    });
+    const identitySources: IdentitySources = {
+      story: source,
+      card: messages
+        .filter((m) => m.role === 'system' && /^【(?:角色设定|主角设定)/.test(m.content))
+        .map((m) => m.content)
+        .join('\n'),
+      worldbook: messages
+        .filter((m) => m.role === 'system' && m.content.startsWith('【世界设定'))
+        .map((m) => m.content)
+        .join('\n'),
+      book: memory?.roles ?? [],
+    };
     // 失败重试:请求异常与「返回无法解析/校验不通过」都视为可重试的异常(后者常见于模型没遵守协议);
     // 中止信号立即收手,不消耗重试。parseImagePlan 对坏输出抛错,「无画面」则是正常返回空数组。
     // 解析/校验放进 validate 回调:不过则请求历史如实记为失败(而非「HTTP 拿到文本」的绿色成功),
@@ -506,9 +570,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               retryNote = truncationRetryNote(Math.max(1, promptOptions.minImages));
               throw new Error(`输出被截断(${verdict.reason})`);
             }
-            console.warn(
-              `[墨影] 第 ${floor} 楼输出被截断(${verdict.reason}),已救回可闭合的部分继续`,
-            );
+            console.warn(`[墨影] 第 ${floor} 楼输出被截断(${verdict.reason}),已救回可闭合的部分继续`);
           }
           const candidate = parseImagePlan(
             text,
@@ -519,21 +581,46 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 称呼归并与外貌兜底:模型若在 characters[].name 或 changes[].name 里写了已建档角色的
           // 别称/尊称/简称(如把「风千华」写成「风阿姨」「千华」),先唯一归并回档案主名,
           // 并在因换称呼漏抄固定外貌时把档案核心外貌字段补进 character.tag。
-          const candidateFacts = mergeIdentityFacts([...knownIdentities, ...assessIdentityClaims(candidate.identities ?? [], identitySources)]);
-          for (const change of candidate.changes) if (change.field === 'new' && !candidate.identities?.some(c => c.name === change.name)) {
-            (candidate.identities ??= []).push({ name: change.name, gender: 'unknown', heroine: false, source: 'story', evidence: '', reason: '未提供新角色身份审核依据' });
-          }
-          candidate.changes = candidate.changes.filter(c => c.field !== 'new' || mayCreateHeroine(c.name, candidateFacts));
+          const candidateFacts = mergeIdentityFacts([
+            ...knownIdentities,
+            ...assessIdentityClaims(candidate.identities ?? [], identitySources),
+          ]);
+          for (const change of candidate.changes)
+            if (change.field === 'new' && !candidate.identities?.some((c) => c.name === change.name)) {
+              (candidate.identities ??= []).push({
+                name: change.name,
+                gender: 'unknown',
+                heroine: false,
+                source: 'story',
+                evidence: '',
+                reason: '未提供新角色身份审核依据',
+              });
+            }
+          candidate.changes = candidate.changes.filter(
+            (c) => c.field !== 'new' || mayCreateHeroine(c.name, candidateFacts),
+          );
           const candidateEntries = eligibleIdentityEntries(entriesBefore, candidateFacts);
-          for (const image of candidate.images) for (const character of image.characters) {
-            const fact = identityFactFor(character.name, candidateFacts);
-            if (fact && fact.gender !== 'male' && candidateEntries.some(e => e.name === fact.name)) character.name = fact.name;
-          }
-          normalizePlanCharacters(candidate.images, candidateEntries, new Set(candidateFacts.filter(f => f.gender === 'male').flatMap(f => [f.name, ...(f.aliases ?? [])])));
+          for (const image of candidate.images)
+            for (const character of image.characters) {
+              const fact = identityFactFor(character.name, candidateFacts);
+              if (fact && fact.gender !== 'male' && candidateEntries.some((e) => e.name === fact.name))
+                character.name = fact.name;
+            }
+          normalizePlanCharacters(
+            candidate.images,
+            candidateEntries,
+            new Set(
+              candidateFacts
+                .filter((f) => f.gender === 'male')
+                .flatMap((f) => [f.name, ...(f.aliases ?? [])]),
+            ),
+          );
           if (entriesBefore.length) {
-            const existingNames = new Set(entriesBefore.map(e => e.name.trim()));
-            candidate.changes = candidate.changes.filter(change => {
-              const canonical = isMaleIdentity(change.name, candidateFacts) ? change.name : resolveCanonicalCharName(change.name, candidateEntries);
+            const existingNames = new Set(entriesBefore.map((e) => e.name.trim()));
+            candidate.changes = candidate.changes.filter((change) => {
+              const canonical = isMaleIdentity(change.name, candidateFacts)
+                ? change.name
+                : resolveCanonicalCharName(change.name, candidateEntries);
               if (canonical !== change.name) {
                 if (change.field === 'new' && existingNames.has(canonical)) return false;
                 change.name = canonical;
@@ -547,14 +634,20 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             !slot &&
             profile.naiCharPrompts &&
             profile.nl &&
-            candidate.changes.some(change => change.field === 'new' && !change.nl?.trim())
+            candidate.changes.some((change) => change.field === 'new' && !change.nl?.trim())
           ) {
             throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
           }
           // 空 images:协议上算正常返回,旧版直接放行,于是模型一句「没有值得插图的画面」
           // 就能让整楼不生、阅读器干等超时。这里在还有重试次数时把它当可纠错误,
           // 换一套口径逼它落到具体画面上;changes 非空(有建档要落)时不算空。
-          if (!slot && attempt < retries && !candidate.images.length && !candidate.changes.length && !candidate.identities?.length) {
+          if (
+            !slot &&
+            attempt < retries &&
+            !candidate.images.length &&
+            !candidate.changes.length &&
+            !candidate.identities?.length
+          ) {
             retryNote = EMPTY_PLAN_RETRY_NOTE;
             throw new Error('返回了空 images');
           }
@@ -580,7 +673,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 缺景别词只是「画面会平」,景别过远是「这张图白拍」,前者由后者一并带上。
           // 同样只在还有重试次数时纠,没次数就放行。
           if (attempt < retries) {
-            const segmentText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
+            const segmentText = new Map(preparedTarget.segments.map((item) => [item.id, item.text]));
             const prevSegText = (pos: string): string => {
               const m = /^P(\d+)$/i.exec(pos.trim());
               if (!m) return '';
@@ -589,11 +682,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             };
             const seenGap = new Set<string>();
             const farGaps = candidate.images
-              .map(image => {
+              .map((image) => {
                 const gap = diagnoseDistance(
                   segmentText.get(image.position) ?? '',
                   image.tag,
-                  (image.characters ?? []).map(character => character.tag),
+                  (image.characters ?? []).map((character) => character.tag),
                   prevSegText(image.position),
                 );
                 if (!gap) return null;
@@ -606,7 +699,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             if (farGaps.length) {
               retryNote = distanceRetryNote(farGaps);
               throw new Error(
-                `景别过远(${farGaps.map(gap => `${gap.position} 应 ${gap.suggest}`).join('、')})`,
+                `景别过远(${farGaps.map((gap) => `${gap.position} 应 ${gap.suggest}`).join('、')})`,
               );
             }
           }
@@ -615,33 +708,23 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 都是可判定的确定错,而且这类错图一眼废。排在构图缺项之前(缺项只是画面平)。
           // 单槽重写不改画面事实,跳过。
           if (!slot && attempt < retries) {
-            const segmentText = new Map(preparedTarget.segments.map(item => [item.id, item.text]));
+            const segmentText = new Map(preparedTarget.segments.map((item) => [item.id, item.text]));
             const castGaps: CastGap[] = [];
             const seenCast = new Set<string>();
             for (const image of candidate.images) {
               const text = segmentText.get(image.position) ?? '';
-              const aliasPresent = findCharAliases(entriesBefore, text).map(hit => hit.name);
+              const aliasPresent = findCharAliases(entriesBefore, text).map((hit) => hit.name);
               const present = [
                 ...new Set([
-                  ...[...entriesBefore].map(entry => entry.name).filter(name => text.includes(name)),
+                  ...[...entriesBefore].map((entry) => entry.name).filter((name) => text.includes(name)),
                   ...aliasPresent,
                 ]),
               ];
-              const charTagList = (image.characters ?? []).map(character => character.tag);
+              const charTagList = (image.characters ?? []).map((character) => character.tag);
               const found = [
-                ...diagnoseCast(
-                  text,
-                  image.tag,
-                  image.characters ?? [],
-                  present,
-                  profile.naiCharPrompts,
-                ),
+                ...diagnoseCast(text, image.tag, image.characters ?? [], present, profile.naiCharPrompts),
                 ...diagnosePropTarget(text, image.tag, charTagList),
-                ...diagnoseContact(
-                  text,
-                  image.tag,
-                  charTagList,
-                ),
+                ...diagnoseContact(text, image.tag, charTagList),
               ];
               for (const gap of found) {
                 const key = `${image.position}\u0000${gap.detail}`;
@@ -652,7 +735,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             }
             if (castGaps.length) {
               retryNote = castRetryNote(castGaps);
-              throw new Error(`画面事实不符(${castGaps.map(gap => gap.kind).join('、')})`);
+              throw new Error(`画面事实不符(${castGaps.map((gap) => gap.kind).join('、')})`);
             }
           }
           // 服装账本:衣服明明没变,穿脱程度却跳了(半脱→全裸、已脱→又穿回),
@@ -664,14 +747,14 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             const gaps = [
               ...new Set(
                 candidate.images
-                  .map(image =>
+                  .map((image) =>
                     diagnoseShot(
                       image.tag,
-                      (image.characters ?? []).map(character => character.tag),
+                      (image.characters ?? []).map((character) => character.tag),
                     ),
                   )
-                  .filter(diag => !diag.softOnly)
-                  .flatMap(diag => diag.missing),
+                  .filter((diag) => !diag.softOnly)
+                  .flatMap((diag) => diag.missing),
               ),
             ];
             if (gaps.length) {
@@ -683,7 +766,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               if (monoGaps.length) {
                 retryNote = monotonousShotRetryNote(monoGaps);
                 throw new Error(
-                  `构图雷同(${monoGaps.map(g => `${g.positions.join('/')} 均为 ${g.signature}`).join('、')})`,
+                  `构图雷同(${monoGaps.map((g) => `${g.positions.join('/')} 均为 ${g.signature}`).join('、')})`,
                 );
               }
             }
@@ -733,10 +816,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     if (!plan) {
       // 重试耗尽:允许同一正文在后续重新渲染后再试
       processed.delete(identity);
-      toastr.error(
-        `${lastError}${retries > 0 ? `(已自动重试 ${retries} 次)` : ''}`,
-        '墨影自动 tag 失败',
-      );
+      toastr.error(`${lastError}${retries > 0 ? `(已自动重试 ${retries} 次)` : ''}`, '墨影自动 tag 失败');
       if (opts.headless) throw new Error(lastError || 'tag 分析未通过校验');
       return;
     }
@@ -751,24 +831,24 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 锁定角色(全局库)不接受 AI changes:丢弃,不写入楼层、不参与 @替换。
     // 重放侧 applyCharTagOps 也会按锁定名再拦一次(旧消息里可能已存这类 ops)。
     const effectiveOps = lockedNames.size
-      ? planOps.filter(item => !lockedNames.has(item.op.name))
+      ? planOps.filter((item) => !lockedNames.has(item.op.name))
       : planOps;
     // 同人角色保护:角色库只填了 fandom、hair/eyes/skin/body 全空时,长相由同人 tag 决定。
     // 用户把那几个字段清空是刻意为之,AI 从正文抄回的发色瞳色写进去会和同人 tag 打架。
     const fandomGuarded = new Set(
       anchors.entries
         .filter(
-          entry =>
+          (entry) =>
             entry.fields.fandom.trim() &&
             !entry.fields.hair.trim() &&
             !entry.fields.eyes.trim() &&
             !entry.fields.skin.trim() &&
             !entry.fields.body.trim(),
         )
-        .map(entry => entry.name),
+        .map((entry) => entry.name),
     );
     const guardedOps = fandomGuarded.size
-      ? effectiveOps.filter(item => {
+      ? effectiveOps.filter((item) => {
           const op = item.op;
           if (op.kind !== 'set') return true;
           if (FANDOM_GUARD_FIELDS.has(op.field)) return !fandomGuarded.has(op.name);
@@ -776,41 +856,88 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         })
       : effectiveOps;
     // 男性不建档:同上,规则之外再兜一次,把 sex 明确是男性的 new 直接丢掉。
-    const maleGuarded = guardedOps.filter(item => {
+    const maleGuarded = guardedOps.filter((item) => {
       const op = item.op;
-      if (isMaleIdentity(op.name, planIdentities)) { appearanceChangeNotes.push(`${op.name}: 男性身份已确认，不自动建档或更新女主外貌`); return false; }
+      if (isMaleIdentity(op.name, planIdentities)) {
+        appearanceChangeNotes.push(`${op.name}: 男性身份已确认，不自动建档或更新女主外貌`);
+        return false;
+      }
       if (op.kind !== 'new') return true;
       const accepted = mayCreateHeroine(op.name, planIdentities) && !MALE_SEX_RE.test(op.fields.sex.trim());
-      if (!accepted) appearanceChangeNotes.push(`${op.name}: 暂不自动入库，需要已验证女性身份及女主资格；本张仍可正常出镜`);
+      if (!accepted)
+        appearanceChangeNotes.push(
+          `${op.name}: 暂不自动入库，需要已验证女性身份及女主资格；本张仍可正常出镜`,
+        );
       if (accepted) op.fields.sex = '1girl';
       return accepted;
     });
-    const floorOps = maleGuarded.map(item => item.op);
+    const floorOps = maleGuarded.map((item) => item.op);
     const previousDelta = readCharTagFloorDelta(message);
 
-    plan.images.sort((a,b) => a.sourceLine - b.sourceLine || a.charOffset - b.charOffset);
+    plan.images.sort((a, b) => a.sourceLine - b.sourceLine || a.charOffset - b.charOffset);
     const activeEntries = applyCharTagOps(safeEntries, floorOps, floor, lockedNames);
     const costumeNotes: string[] = [];
-    const costume = slot && savedWardrobe?.costume ? savedWardrobe.costume : resolveCostumeFloor(plan.costumeContexts, costumeRequest, preparedTarget.segments, costumeNotes);
-    for (const change of plan.outfitChanges ?? []) if (change.operation === 'init' && !change.evidence) {
-      change.evidence = explicitCostumeEvidence(change.name, change.pieces.map(p => p.design).join(', '), costumeAt(costume, change.sourceLine, change.charOffset), source, change.sourceLine, change.charOffset);
-    }
-    const accepted = acceptClothingChanges(slot ? [] : plan.outfitChanges ?? [], source, wardrobe, activeEntries);
-    const costumeRepairs = await prepareCostumeRepairs(slotWardrobe ?? wardrobe, accepted.changes, plan.images, costume, costumeRequest.setting ?? '', controller.signal, source);
+    const costume =
+      slot && savedWardrobe?.costume
+        ? savedWardrobe.costume
+        : resolveCostumeFloor(plan.costumeContexts, costumeRequest, preparedTarget.segments, costumeNotes);
+    for (const change of plan.outfitChanges ?? [])
+      if (change.operation === 'init' && !change.evidence) {
+        change.evidence = explicitCostumeEvidence(
+          change.name,
+          change.pieces.map((p) => p.design).join(', '),
+          costumeAt(costume, change.sourceLine, change.charOffset),
+          source,
+          change.sourceLine,
+          change.charOffset,
+        );
+      }
+    const accepted = acceptClothingChanges(
+      slot ? [] : (plan.outfitChanges ?? []),
+      source,
+      wardrobe,
+      activeEntries,
+    );
+    const costumeRepairs = await prepareCostumeRepairs(
+      slotWardrobe ?? wardrobe,
+      accepted.changes,
+      plan.images,
+      costume,
+      costumeRequest.setting ?? '',
+      controller.signal,
+      source,
+    );
     if (controller.signal.aborted) return;
     // Repair a request-local copy; historical floors stay intact. States and garment IDs never change.
     repairCostumeState(wardrobe, costume.initial, costumeRepairs);
-    for (const record of wardrobe.values()) for (const p of record.pieces) if (!p.costume && !['unknown','mixed'].includes(costume.initial.era) && !costumeConflicts(p.design, costume.initial).length) p.costume = { ...costume.initial };
+    for (const record of wardrobe.values())
+      for (const p of record.pieces)
+        if (
+          !p.costume &&
+          !['unknown', 'mixed'].includes(costume.initial.era) &&
+          !costumeConflicts(p.design, costume.initial).length
+        )
+          p.costume = { ...costume.initial };
     for (const c of accepted.changes) {
       if (c.operation === 'patch') continue;
-      for (const p of c.pieces) { p.evidence = c.evidence; p.costume = { ...costumeAt(costume, c.sourceLine, c.charOffset) }; }
-      const eventState = new Map([[c.name, { name: c.name, outfitId: '', pieces: c.pieces, source: c.evidence }]]);
+      for (const p of c.pieces) {
+        p.evidence = c.evidence;
+        p.costume = { ...costumeAt(costume, c.sourceLine, c.charOffset) };
+      }
+      const eventState = new Map([
+        [c.name, { name: c.name, outfitId: '', pieces: c.pieces, source: c.evidence }],
+      ]);
       repairCostumeState(eventState, costumeAt(costume, c.sourceLine, c.charOffset), costumeRepairs);
     }
     const scope = `${chatId}|${floor}|${swipeId ?? 0}|${expectedStory}`;
     const frames: ClothingFloor['frames'] = [];
     const completion: ClothingState = new Map();
-    const visualNotes: string[] = [...accepted.rejected, ...appearanceChangeNotes, ...costumeNotes, ...costumeRepairs.notes];
+    const visualNotes: string[] = [
+      ...accepted.rejected,
+      ...appearanceChangeNotes,
+      ...costumeNotes,
+      ...costumeRepairs.notes,
+    ];
     // @占位符按正文位置替换：变化前图片用旧档，变化位置及之后用新档。
     const unknownNames = new Set<string>();
     for (const image of plan.images) {
@@ -828,7 +955,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         maleGuarded,
         image.sourceLine,
         'tag',
-        lockedNames, image.charOffset,
+        lockedNames,
+        image.charOffset,
       );
       if (tagRes.text) image.tag = tagRes.text;
       if (image.nl) {
@@ -838,7 +966,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           maleGuarded,
           image.sourceLine,
           'nl',
-          lockedNames, image.charOffset,
+          lockedNames,
+          image.charOffset,
         );
         image.nl = nlRes.text;
         for (const n of nlRes.unknown) unknownNames.add(n);
@@ -850,7 +979,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           maleGuarded,
           image.sourceLine,
           'tag',
-          lockedNames, image.charOffset,
+          lockedNames,
+          image.charOffset,
         );
         character.tag = charTag.text;
         for (const n of charTag.unknown) unknownNames.add(n);
@@ -861,31 +991,70 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             maleGuarded,
             image.sourceLine,
             'nl',
-            lockedNames, image.charOffset,
+            lockedNames,
+            image.charOffset,
           );
           character.nl = charNl.text;
           for (const n of charNl.unknown) unknownNames.add(n);
         }
       }
       for (const n of tagRes.unknown) unknownNames.add(n);
-      const entriesAt = applyCharTagOps(safeEntries, maleGuarded.filter(o => o.op.kind === 'new' || o.sourceLine < image.sourceLine
-        || o.sourceLine === image.sourceLine && (o.charOffset ?? 0) <= image.charOffset).map(o => o.op), floor, lockedNames);
-      visualNotes.push(...enforceAppearance(image, entriesAt, profile.nl, profile.naiCharPrompts, planIdentities));
-      visualNotes.push(...enforceKnownMaleIdentity(image, libraryAtStart, planIdentities, profile.naiCharPrompts));
-      const at = slotWardrobe ?? clothingAt(wardrobe, accepted.changes, scope, image.sourceLine, image.charOffset);
+      const entriesAt = applyCharTagOps(
+        safeEntries,
+        maleGuarded
+          .filter(
+            (o) =>
+              o.op.kind === 'new' ||
+              o.sourceLine < image.sourceLine ||
+              (o.sourceLine === image.sourceLine && (o.charOffset ?? 0) <= image.charOffset),
+          )
+          .map((o) => o.op),
+        floor,
+        lockedNames,
+      );
+      visualNotes.push(
+        ...enforceAppearance(image, entriesAt, profile.nl, profile.naiCharPrompts, planIdentities),
+      );
+      visualNotes.push(
+        ...enforceKnownMaleIdentity(image, libraryAtStart, planIdentities, profile.naiCharPrompts),
+      );
+      const at =
+        slotWardrobe ?? clothingAt(wardrobe, accepted.changes, scope, image.sourceLine, image.charOffset);
       for (const [name, entry] of completion) if (!at.has(name)) at.set(name, entry);
-      const frameCostume = slot && savedWardrobe?.frames[slot.seq]?.costume || costumeAt(costume, image.sourceLine, image.charOffset);
+      const frameCostume =
+        (slot && savedWardrobe?.frames[slot.seq]?.costume) ||
+        costumeAt(costume, image.sourceLine, image.charOffset);
       initialiseClothingFromImage(image, at);
-      for (const record of at.values()) if (/旧版记录/.test(record.source) && !wardrobe.has(record.name)) {
-        const evidence = explicitCostumeEvidence(record.name, record.pieces.map(p => p.design).join(', '), frameCostume, source, image.sourceLine, image.charOffset);
-        if (evidence) { record.source = evidence; for (const p of record.pieces) p.evidence = evidence; }
-      }
+      for (const record of at.values())
+        if (/旧版记录/.test(record.source) && !wardrobe.has(record.name)) {
+          const evidence = explicitCostumeEvidence(
+            record.name,
+            record.pieces.map((p) => p.design).join(', '),
+            frameCostume,
+            source,
+            image.sourceLine,
+            image.charOffset,
+          );
+          if (evidence) {
+            record.source = evidence;
+            for (const p of record.pieces) p.evidence = evidence;
+          }
+        }
       repairCostumeState(at, frameCostume, costumeRepairs);
-      for (const record of at.values()) for (const p of record.pieces) if (!p.costume) p.costume = { ...frameCostume };
+      for (const record of at.values())
+        for (const p of record.pieces) if (!p.costume) p.costume = { ...frameCostume };
       visualNotes.push(...removeUnbackedCostume(image, at, frameCostume));
-      for (const [name, entry] of at) if (!wardrobe.has(name) && !accepted.changes.some(c => c.name === name)) completion.set(name, entry);
+      for (const [name, entry] of at)
+        if (!wardrobe.has(name) && !accepted.changes.some((c) => c.name === name))
+          completion.set(name, entry);
       enforceClothing(image, at, profile.nl, profile.naiCharPrompts);
-      frames.push({ tag: serializeImageTag(image), sourceLine: image.sourceLine, charOffset: image.charOffset, entries: [...at.values()], costume: frameCostume });
+      frames.push({
+        tag: serializeImageTag(image),
+        sourceLine: image.sourceLine,
+        charOffset: image.charOffset,
+        entries: [...at.values()].filter((e) => image.characters.some((c) => c.name === e.name)),
+        costume: frameCostume,
+      });
     }
     if (unknownNames.size) {
       // 模型认为这是角色、却没给它建档 —— 该角色在图里将完全没有外貌。
@@ -902,7 +1071,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     }
     // 没有图片、没有角色变化、也没有旧楼层变化要清理时,保持原来的无写入早退。
     if (!plan.images.length) opts.onNoImages?.();
-    if (!plan.images.length && !floorOps.length && !accepted.changes.length && !assessedIdentities.length && !costume.events.length && costume.initial.era === 'unknown' && !previousDelta) {
+    if (
+      !plan.images.length &&
+      !floorOps.length &&
+      !accepted.changes.length &&
+      !assessedIdentities.length &&
+      !costume.events.length &&
+      costume.initial.era === 'unknown' &&
+      !previousDelta
+    ) {
       if (opts.manual) toastr.info('模型认为本楼没有值得插图的画面', '墨影');
       else console.debug(`[墨影] 第 ${floor} 楼无需插图`);
       return;
@@ -942,17 +1119,43 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     for (const [name, entry] of completion) if (!finalWardrobe.has(name)) finalWardrobe.set(name, entry);
     repairCostumeState(finalWardrobe, costume.final, costumeRepairs);
     const previousWardrobe = message.extra?.[BBI_OUTFIT_EXTRA_KEY] as Partial<ClothingFloor> | undefined;
-    const nextWardrobe: ClothingFloor = { v: 2, swipe: swipeId ?? 0, sourceHash: expectedStory, upstreamHash: wardrobeRevision,
-      costume, start: [...wardrobe.values()], entries: [...finalWardrobe.values()], changes: accepted.changes, rejected: visualNotes, frames,
-      legacyBackup: previousWardrobe?.v === 2 ? previousWardrobe.legacyBackup : previousWardrobe };
-    const rewrittenWardrobe = slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
-      ? { ...savedWardrobe, frames: savedWardrobe.frames.map((frame, index) => index === slot.seq && plan.images[0] ? { ...frame, tag: serializeImageTag(plan.images[0]) } : frame) } : null;
+    const nextWardrobe: ClothingFloor = {
+      v: 2,
+      swipe: swipeId ?? 0,
+      sourceHash: expectedStory,
+      upstreamHash: wardrobeRevision,
+      costume,
+      delta: true,
+      start: [],
+      entries: [...finalWardrobe.values()].filter((e) => JSON.stringify(e) !== wardrobeBaseline.get(e.name)),
+      changes: accepted.changes,
+      rejected: visualNotes,
+      frames,
+      legacyBackup: previousWardrobe?.v === 2 ? previousWardrobe.legacyBackup : previousWardrobe,
+    };
+    const rewrittenWardrobe =
+      slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
+        ? {
+            ...savedWardrobe,
+            frames: savedWardrobe.frames.map((frame, index) =>
+              index === slot.seq && plan.images[0]
+                ? { ...frame, tag: serializeImageTag(plan.images[0]) }
+                : frame,
+            ),
+          }
+        : null;
     if (visualNotes.length) diagnostic('continuity:resolved', { floor, notes: visualNotes });
     const result = await applyMessageText(
       floor,
-      currentText => {
-        if (controller.signal.aborted || narrativeHash(currentText) !== expectedStory || clothingRevision(getContext()?.chat ?? [], floor) !== wardrobeRevision
-          || JSON.stringify(charTagsBeforeFloor(slot ? floor + 1 : floor)) !== expectedLibrary || identityManualRevision() !== identityRevision) return null;
+      (currentText) => {
+        if (
+          controller.signal.aborted ||
+          narrativeHash(currentText) !== expectedStory ||
+          clothingRevision(getContext()?.chat ?? [], floor) !== wardrobeRevision ||
+          JSON.stringify(charTagsBeforeFloor(slot ? floor + 1 : floor)) !== expectedLibrary ||
+          identityManualRevision() !== identityRevision
+        )
+          return null;
         // 单槽重写:只替换第 seq 条 tag,正文与其它 tag 一字不动,也不需要位置重定位。
         // 模型返回的 position 在这里刻意不参与——画面钉死在原位,它只负责重写内容。
         // 开跑时快照的原文对不上 = 期间被用户/别的流程改过,放弃覆盖(同提示词编辑弹窗)。
@@ -982,11 +1185,19 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       message,
       // 单槽不写法:本楼角色增量与其它槽位图片都不归它管,不传 extraUpdate 即保持原样。
       slot
-        ? rewrittenWardrobe ? [{ key: BBI_OUTFIT_EXTRA_KEY, value: rewrittenWardrobe }] : undefined
+        ? rewrittenWardrobe
+          ? [{ key: BBI_OUTFIT_EXTRA_KEY, value: rewrittenWardrobe }]
+          : undefined
         : [
             {
               key: IDENTITY_EXTRA_KEY,
-              value: { v: 1, swipe: swipeId ?? 0, sourceHash: identityStoryHash(rawSource), contextHash: identityContextHash(), facts: assessedIdentities },
+              value: {
+                v: 1,
+                swipe: swipeId ?? 0,
+                sourceHash: identityStoryHash(rawSource),
+                contextHash: identityContextHash(),
+                facts: assessedIdentities,
+              },
             },
             {
               key: BBI_CHAR_EXTRA_KEY,
@@ -1137,7 +1348,13 @@ export async function requestFloorTags(floor: number, opts: { replace?: boolean 
  */
 export async function requestNovelFloorTags(floor: number): Promise<{ status: 'tagged' | 'no-images' }> {
   let noImages = false;
-  await runForFloor(floor, { manual: true, headless: true, onNoImages: () => { noImages = true; } });
+  await runForFloor(floor, {
+    manual: true,
+    headless: true,
+    onNoImages: () => {
+      noImages = true;
+    },
+  });
   if (noImages) return { status: 'no-images' };
   if (!parseImageTags(getContext()?.chat[floor]?.mes || '').length) {
     throw new Error('本次没有保存有效 tag，未自动重复提交');
@@ -1188,17 +1405,14 @@ export function bindAutoTagging(): void {
     generationStopped: events.GENERATION_STOPPED ?? null,
     chatChanged: events.CHAT_CHANGED,
   });
-  context.eventSource.on(
-    events.GENERATION_STARTED,
-    (type: unknown, options: unknown, dryRun: unknown) => {
-      const chatId = getContext()?.getCurrentChatId?.() ?? '';
-      const eligible = Boolean(
-        chatId && !dryRun && typeof type === 'string' && type !== 'quiet' && type !== 'impersonate',
-      );
-      diagnostic('GENERATION_STARTED', { chatId, type, dryRun, eligible, options });
-      beginGeneration(chatId, type, dryRun);
-    },
-  );
+  context.eventSource.on(events.GENERATION_STARTED, (type: unknown, options: unknown, dryRun: unknown) => {
+    const chatId = getContext()?.getCurrentChatId?.() ?? '';
+    const eligible = Boolean(
+      chatId && !dryRun && typeof type === 'string' && type !== 'quiet' && type !== 'impersonate',
+    );
+    diagnostic('GENERATION_STARTED', { chatId, type, dryRun, eligible, options });
+    beginGeneration(chatId, type, dryRun);
+  });
   context.eventSource.on(events.CHARACTER_MESSAGE_RENDERED, (messageId: unknown, type: unknown) => {
     const chatId = getContext()?.getCurrentChatId?.() ?? '';
     const matched = consumeGeneration(chatId, type);

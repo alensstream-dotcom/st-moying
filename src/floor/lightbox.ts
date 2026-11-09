@@ -21,6 +21,8 @@ export interface LightboxOptions {
   filename?: string;
   /** 提供了才显示删除按钮;点删除先关灯箱再回调。 */
   onDelete?: () => void;
+  onAdopt?: () => void;
+  onReroll?: () => void;
 }
 
 /** 同一时刻只允许一个灯箱,重复调用先关旧的。 */
@@ -48,6 +50,16 @@ export function openLightbox(options: LightboxOptions): void {
       prompt: options.prompt,
       filename: options.filename,
       deletable: !!options.onDelete,
+      adoptable: !!options.onAdopt,
+      rerollable: !!options.onReroll,
+      onAdopt: () => {
+        close();
+        options.onAdopt?.();
+      },
+      onReroll: () => {
+        close();
+        options.onReroll?.();
+      },
       onClose: close,
       onDelete: () => {
         close();

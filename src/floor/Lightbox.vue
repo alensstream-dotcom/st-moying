@@ -37,9 +37,11 @@ const props = defineProps<{
   filename?: string;
   /** 有值才显示删除按钮。 */
   deletable?: boolean;
+  adoptable?: boolean;
+  rerollable?: boolean;
 }>();
 
-const emit = defineEmits<{ close: []; delete: [] }>();
+const emit = defineEmits<{ close: []; delete: []; adopt: []; reroll: [] }>();
 
 /** 适应屏幕 ↔ 原始尺寸。 */
 const zoomed = ref(false);
@@ -143,16 +145,26 @@ const promptText = computed(() => (props.prompt ?? '').trim());
     <!-- 遮罩自身承接关闭点击;图片与操作栏 stop 掉,避免误关 -->
     <div class="bbi-lightbox" @click="emit('close')">
       <div class="bbi-lightbox__bar" @click.stop>
+        <button
+          v-if="adoptable"
+          class="bbi-lb-btn"
+          @click="emit('adopt')"
+          title="保存图中人物的标签与头像，不训练模型"
+        >
+          保存角色形象
+        </button>
+        <button
+          v-if="rerollable"
+          class="bbi-lb-btn"
+          @click="emit('reroll')"
+          title="沿用当前提示词，换随机种子生成一张（消耗生图额度）"
+        >
+          重 Roll 当前图
+        </button>
         <button class="bbi-lb-btn" type="button" title="保存图片" @click="save">
           <Icon name="download" :size="18" />
         </button>
-        <button
-          v-if="promptText"
-          class="bbi-lb-btn"
-          type="button"
-          title="复制提示词"
-          @click="copyPrompt"
-        >
+        <button v-if="promptText" class="bbi-lb-btn" type="button" title="复制提示词" @click="copyPrompt">
           <Icon name="copy" :size="18" />
         </button>
         <button
