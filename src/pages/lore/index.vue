@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { clothingBefore } from '@/autoTag/outfitTimeline';
+import OnlineLibrary from '@/components/OnlineLibrary.vue';
+import { onlineWardrobeSlot, type OnlineMaterial } from '@/data/onlineLibrary';
 import { getContext } from '@/st/context';
 import { mergeSuitWithCurrent, bindingFromTags, chooseWardrobe, type SuitMode } from '@/state/wardrobeChoice';
 import { appearancePolicy, setAppearancePolicy } from '@/state/appearancePolicy';
@@ -552,6 +554,21 @@ function startApply(card: LoreCard) {
   applyField.value = card.field === 'outfit' ? 'extra' : card.field;
   applyMode.value = card.tags.split(',').length > 3 ? 'replace' : 'append';
   flash.value = '';
+}
+function applyOnline(item: OnlineMaterial) {
+  startApply({
+    id: `online:${item.sourceUrl}`,
+    name: item.name,
+    tags: item.tags,
+    aliases: item.aliases,
+    nsfw: 1,
+    extra: `来源：${item.sourceUrl}`,
+    field: item.kind === 'character' ? 'fandom' : 'outfit',
+    group: item.kind === 'character' ? 'fandom' : guessWardrobeCategory(item.tags),
+    groupLabel: item.kind === 'character' ? '在线同人' : '在线服装',
+    slot: item.kind === 'wardrobe' ? onlineWardrobeSlot(item.tags) : undefined,
+  });
+  if (item.kind === 'character') applyMode.value = 'replace';
 }
 
 function cancelApply() {
@@ -1144,9 +1161,10 @@ function clearCustom() {
     </div>
     <hr class="bbi-rule" />
     <p class="bbi-page-intro">
-      自动 tag
-      时按正文命中挑候选的就是这里的条目。服装与面相可以直接套到角色管理里的人物身上，写进他的固定字段，之后每次出图都带这一串。
+      在线搜索同人和服装标签，收藏后离线使用。同人外貌可锁定到角色；服装通过穿搭保护记录到楼层，按所选模式处理剧情换装与穿脱。
     </p>
+
+    <OnlineLibrary @select="applyOnline" @saved="bumpLore" />
 
     <div class="bbi-lore-bar">
       <div class="bbi-segmented" role="tablist" aria-label="素材类型">

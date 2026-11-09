@@ -10,6 +10,8 @@ import { getContext } from '@/st/context';
 import { putStudioImage } from '@/data/loreThumbs';
 import { openLightbox } from '@/floor/lightbox';
 import type { WardrobeItem } from '@/data/loreTypes';
+import OnlineLibrary from '@/components/OnlineLibrary.vue';
+import { onlineWardrobeSlot, type OnlineMaterial } from '@/data/onlineLibrary';
 const props = defineProps<{ name: string; floor: number }>();
 const emit = defineEmits<{ changed: [] }>();
 const query = ref(''),
@@ -46,6 +48,19 @@ function clearPreview() {
   if (preview.value) URL.revokeObjectURL(preview.value);
   preview.value = '';
   blob = null;
+}
+function selectOnline(item: OnlineMaterial) {
+  select({
+    id: `online:${item.sourceUrl}:${item.tags}`,
+    name: item.name,
+    tags: item.tags,
+    aliases: item.aliases,
+    nsfw: 1,
+    category: guessWardrobeCategory(item.tags),
+    slot: onlineWardrobeSlot(item.tags),
+    note: `在线来源：${item.sourceUrl}`,
+  });
+  feedback.value = '在线素材已加入下方穿搭组合，可继续选部件，再收藏整套或穿给角色';
 }
 function select(item: WardrobeItem) {
   clearPreview();
@@ -99,7 +114,7 @@ async function save() {
       category: guessWardrobeCategory(tags.value, []),
       slot: 'full',
       nsfw: selection.value.reduce<number>((n, e) => Math.max(n, e.nsfw), 0) as 0 | 1 | 2 | 3,
-      note: '用户组合并冻结的套装',
+      note: ['用户组合并冻结的套装', ...selection.value.map((e) => e.note).filter(Boolean)].join('；'),
     });
     if (!result.ok || !result.item) throw new Error(result.error ?? '保存失败');
     let imageNote = '';
@@ -175,6 +190,7 @@ onUnmounted(() => {
 </script>
 <template>
   <section class="wardrobe-panel">
+    <OnlineLibrary kind="wardrobe" @select="selectOnline" @saved="revision++" />
     <h3>挑选、组合并固定一套衣服</h3>
     <p>
       先选部件或直接填写英文标签，再保存收藏或穿给角色。不重新随机选款；穿脱由账本处理，状态型素材不作为固定款式。

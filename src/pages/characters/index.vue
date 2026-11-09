@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import WardrobePanel from '@/components/WardrobePanel.vue';
+import OnlineLibrary from '@/components/OnlineLibrary.vue';
+import type { OnlineMaterial } from '@/data/onlineLibrary';
 import { appearancePolicy, setAppearancePolicy, type AppearanceMode } from '@/state/appearancePolicy';
 
 import { openLightbox } from '@/floor/lightbox';
@@ -157,8 +159,9 @@ const clothing = computed(() => {
       ].find((e) => e.name === selected.value)
     : null;
 });
-const fandoms = computed(() =>
-  fandomQuery.value.trim()
+const fandoms = computed(() => {
+  version.value;
+  return fandomQuery.value.trim()
     ? allFandomItems()
         .filter((e) =>
           (e.name + e.franchise + e.aliases.join(' '))
@@ -166,8 +169,8 @@ const fandoms = computed(() =>
             .includes(fandomQuery.value.toLowerCase()),
         )
         .slice(0, 12)
-    : [],
-);
+    : [];
+});
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
 }
@@ -442,6 +445,18 @@ function useFandom(id: string) {
   candidate.value.source = 'manual';
   candidate.value.nl = '';
   feedback.value = '同人模板已生成候选，采用后锁定完整形象；衣服遵循剧情';
+  tab.value = '定妆';
+}
+function useOnlineFandom(item: OnlineMaterial) {
+  if (!draft.value || busy.value) return;
+  revoke();
+  candidate.value = clone(draft.value);
+  candidate.value.fields.fandom = item.tags;
+  candidate.value.source = 'manual';
+  candidate.value.nl = '';
+  appearanceMode.value = 'fandom';
+  protectedFields.value = [];
+  feedback.value = `已用 ${item.name} 创建同人候选；可先重画预览，点击“采用此候选”后才锁定`;
   tab.value = '定妆';
 }
 function referenceChanged(event: Event) {
@@ -900,6 +915,7 @@ watch(
                 <button class="bbi-btn bbi-btn-primary" @click="adopt">采用此候选</button
                 ><button class="bbi-btn" @click="revoke">丢弃候选</button>
               </div>
+              <OnlineLibrary kind="character" @select="useOnlineFandom" @saved="version++" />
               <details>
                 <summary>将此人换成指定同人形象</summary>
                 <p>
