@@ -1,3 +1,4 @@
+import { WARDROBE_CAPSULES } from './wardrobeCapsules';
 /**
  * 服装库(wardrobe):把正文里的泛词翻成「能照抄的款式指纹」。
  *
@@ -1853,5 +1854,9 @@ const WARDROBE_CORE: WardrobeItem[] = [
  * 同一句「黑丝」能跳到的款式差异就越大——这是解决"永远出那几种"的唯一办法。
  * 合并后的规模与分类分布见 src/data/loreIndex.ts 的注释。
  */
-export const WARDROBE_ITEMS: WardrobeItem[] = [...WARDROBE_CORE, ...WARDROBE_EXTRA, ...WARDROBE_KARAMA];
-
+export const WARDROBE_ITEMS: WardrobeItem[] = [
+  ...WARDROBE_CORE,
+  ...WARDROBE_EXTRA,
+  ...WARDROBE_KARAMA,
+  ...WARDROBE_CAPSULES,
+];

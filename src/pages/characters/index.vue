@@ -1,13 +1,18 @@
 <script setup lang="ts">
+import WardrobePanel from '@/components/WardrobePanel.vue';
+import { appearancePolicy, setAppearancePolicy, type AppearanceMode } from '@/state/appearancePolicy';
+
 import { openLightbox } from '@/floor/lightbox';
 import { genPresetList } from '@/state/genPresets';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import {
+  recomputeCharTags,
   charTagBaseNames,
   charTagLib,
   emptyCharFields,
   upsertCharTag,
   removeCharTag,
+  findCharTag,
   type CharTagEntry,
   CHAR_TAG_FIELDS,
   CHAR_TAG_FIELD_LABELS,
@@ -100,6 +105,30 @@ function zoomPortrait(candidateImage = false) {
       prompt: candidateImage ? candidate.value?.nl : draft.value?.nl,
     });
 }
+const appearanceMode = ref<AppearanceMode>('story'),
+  protectedFields = ref<string[]>([]);
+function pinEdited(field: string) {
+  if (field === 'fandom') {
+    appearanceMode.value = draft.value?.fields.fandom.trim() ? 'fandom' : 'manual';
+    return;
+  }
+  if (appearanceMode.value === 'story') appearanceMode.value = 'manual';
+  if (!protectedFields.value.includes(field)) protectedFields.value.push(field);
+}
+function persistPolicy(entry: CharTagEntry) {
+  const fields: Partial<CharTagEntry['fields']> = {};
+  if (appearanceMode.value !== 'story')
+    for (const f of protectedFields.value) {
+      if (CHAR_TAG_FIELDS.includes(f as any))
+        fields[f as keyof typeof fields] = entry.fields[f as keyof typeof entry.fields];
+    }
+  if (appearanceMode.value === 'fandom') {
+    if (!entry.fields.fandom.trim()) throw new Error('同人锁定需要先填写或选择同人身份');
+    fields.fandom = entry.fields.fandom;
+  }
+  setAppearancePolicy(entry.name, { mode: appearanceMode.value, fields });
+  recomputeCharTags();
+}
 const locks = ref<string[]>(['sex', 'age', 'hair', 'eyes', 'body', 'fandom']);
 const version = ref(0),
   floor = ref(0),
@@ -154,6 +183,9 @@ async function select(name: string) {
   draft.value = clone(charTagLib.entries.find((e) => e.name === name)!);
   revoke();
   locks.value = lookSettings(name).locks ?? ['sex', 'age', 'hair', 'eyes', 'body', 'fandom'];
+  const policy = appearancePolicy(name);
+  appearanceMode.value = policy?.mode ?? (isManualFandom(draft.value) ? 'fandom' : 'story');
+  protectedFields.value = Object.keys(policy?.fields ?? {}).filter((f) => f !== 'fandom');
   await refreshPortrait();
 }
 async function refreshPortrait() {
@@ -170,7 +202,9 @@ function save() {
   const e = clone(draft.value);
   e.source = 'manual';
   e.desc = '';
+  if (appearanceMode.value === 'fandom' && !e.fields.fandom.trim()) throw new Error('请先选择同人身份');
   if (!upsertCharTag(e, selected.value, { recordChanges: true })) throw new Error('名称或外貌不能为空');
+  persistPolicy(e);
   selected.value = e.name;
   feedback.value = '已保存档案；与旧定妆不一致时自动停用图片参考';
   saveLook(e.name, { ...lookSettings(e.name), locks: [...locks.value] });
@@ -188,6 +222,8 @@ function add() {
     history: [],
   };
   selected.value = '';
+  appearanceMode.value = 'story';
+  protectedFields.value = [];
   revoke();
   portrait.value = '';
 }
@@ -353,6 +389,7 @@ async function roll(mode: string) {
 }
 async function adopt() {
   if (!candidate.value || busy.value) return;
+  const beforeEntry = findCharTag(selected.value) ? clone(findCharTag(selected.value)!) : undefined;
   const entry = clone(candidate.value),
     ctx = getContext(),
     chat = ctx?.getCurrentChatId?.();
@@ -371,6 +408,16 @@ async function adopt() {
       })
     )
       throw new Error('保存失败');
+    if (entry.fields.fandom && candidate.value?.source === 'manual') appearanceMode.value = 'fandom';
+    else {
+      const before = beforeEntry;
+      const changed = CHAR_TAG_FIELDS.filter((f) => f !== 'outfit' && entry.fields[f] !== before?.fields[f]);
+      if (changed.length) {
+        appearanceMode.value = 'manual';
+        protectedFields.value = [...new Set([...protectedFields.value, ...changed])];
+      }
+    }
+    persistPolicy(entry);
     adoptLook(entry, key);
     saveLook(entry.name, {
       ...lookSettings(entry.name),
@@ -390,6 +437,8 @@ function useFandom(id: string) {
   if (!item) return;
   candidate.value = clone(draft.value);
   candidate.value.fields.fandom = item.tags;
+  appearanceMode.value = 'fandom';
+  protectedFields.value = [];
   candidate.value.source = 'manual';
   candidate.value.nl = '';
   feedback.value = '同人模板已生成候选，采用后锁定完整形象；衣服遵循剧情';
@@ -419,6 +468,10 @@ async function upload(event: Event) {
 }
 async function restore(v: LookVersion) {
   if (!draft.value) return;
+  if (v.policy) {
+    appearanceMode.value = v.policy.mode;
+    protectedFields.value = Object.keys(v.policy.fields).filter((f) => f !== 'fandom');
+  }
   revoke();
   candidate.value = {
     ...clone(draft.value),
@@ -456,9 +509,20 @@ async function exportStudio() {
         }
     }
     checkTask();
-    const blob = new Blob([JSON.stringify({ version: 1, entries, looks, images })], {
-        type: 'application/json',
-      }),
+    const blob = new Blob(
+        [
+          JSON.stringify({
+            version: 1,
+            entries,
+            looks,
+            images,
+            policies: Object.fromEntries(entries.map((e) => [e.name, appearancePolicy(e.name)])),
+          }),
+        ],
+        {
+          type: 'application/json',
+        },
+      ),
       url = URL.createObjectURL(blob),
       a = document.createElement('a');
     a.href = url;
@@ -500,6 +564,19 @@ async function importStudio(event: Event) {
         history: [],
       };
       if (!upsertCharTag(entry, entry.name, { recordChanges: true })) continue;
+      const importedPolicy = data.policies?.[entry.name];
+      if (importedPolicy && ['story', 'manual', 'fandom'].includes(importedPolicy.mode)) {
+        const pinned: Partial<CharTagEntry['fields']> = {};
+        for (const f of CHAR_TAG_FIELDS)
+          if (
+            f !== 'outfit' &&
+            typeof importedPolicy.fields?.[f] === 'string' &&
+            !/[<>\r\n]/.test(importedPolicy.fields[f])
+          )
+            pinned[f] = importedPolicy.fields[f].slice(0, 4000);
+        setAppearancePolicy(entry.name, { mode: importedPolicy.mode, fields: pinned });
+        recomputeCharTags();
+      }
       const old = data.looks?.[entry.name];
       if (old) {
         const remap = (v: any) =>
@@ -648,7 +725,10 @@ watch(
             </figure>
             <section v-if="tab === '档案'" class="editor">
               <label>姓名<input v-model="draft.name" class="bbi-input" /></label>
-              <p>勾选锁定项：重 Roll 时保留。性别和年龄已有值时保留。没有证据的细节由你决定是否补全。</p>
+              <p>
+                勾选锁定项：重 Roll
+                时保留（仅约束重设计，不等于剧情保护）。性别和年龄已有值时保留。没有证据的细节由你决定是否补全。
+              </p>
               <button
                 class="bbi-btn"
                 @click="
@@ -688,11 +768,31 @@ watch(
                 </button>
                 <p v-if="tagSearch && !tagMatches.length">未找到本地词条，可在下方补充词义。</p>
               </details>
+              <div class="appearance-policy">
+                <label
+                  >外貌优先规则<select v-model="appearanceMode" class="bbi-input">
+                    <option value="story">解除保护：保留当前形象，允许后续有依据的剧情变化</option>
+                    <option value="manual">手动定妆：指定字段高于剧情</option>
+                    <option value="fandom">同人锁定：完整替换角色外貌</option>
+                  </select></label
+                >
+                <p>
+                  手改字段会自动进入手动保护；采用候选时新增/改变的字段也进入保护。选择模式与保护项后点击保存档案。修改小说原文不会被阻止，只覆盖绘图外貌。重
+                  Roll 保留项与剧情保护是两套不同用途。
+                </p>
+                <div v-if="appearanceMode !== 'story'">
+                  <label v-for="f in CHAR_TAG_FIELDS.filter((f) => f !== 'outfit' && f !== 'fandom')" :key="f"
+                    ><input v-model="protectedFields" type="checkbox" :value="f" />{{
+                      CHAR_TAG_FIELD_LABELS[f]
+                    }}高于剧情{{ appearanceMode === 'fandom' ? '，同时覆盖同人默认特征' : '' }}</label
+                  >
+                </div>
+              </div>
               <label v-for="f in CHAR_TAG_FIELDS.filter((f) => f !== 'outfit')" :key="f" class="field"
                 ><span
                   >{{ f === 'extra' ? '面部与标志特征' : CHAR_TAG_FIELD_LABELS[f]
                   }}<input v-model="locks" type="checkbox" :value="f" />锁定</span
-                ><input v-model="draft.fields[f]" class="bbi-input" /><small>{{
+                ><input v-model="draft.fields[f]" class="bbi-input" @input="pinEdited(f)" /><small>{{
                   dictionaryReady ? explainTags(draft.fields[f]) : ''
                 }}</small></label
               >
@@ -852,6 +952,7 @@ watch(
             </section>
             <section v-else-if="tab === '穿搭'" class="editor">
               <h3>剧情衣物账本</h3>
+              <p>选定楼层后，可在下方组合套装；保存套装仅收藏，穿给角色才建立用户覆盖。</p>
               <label
                 >查看楼层<input
                   v-model.number="floor"
@@ -861,6 +962,13 @@ watch(
                   :max="(getContext()?.chat.length ?? 1) - 1"
               /></label>
               <p v-if="!clothing">该位置尚无已分析的穿搭记录，请先分析对应剧情。</p>
+              <p v-if="clothing?.suitMode">
+                {{
+                  clothing.suitMode === 'always'
+                    ? '始终使用用户套装，忽略剧情穿脱'
+                    : '已绑定款式，允许有依据的穿脱；明确换装退出绑定'
+                }}
+              </p>
               <article v-for="p in clothing?.pieces" :key="p.id">
                 <h4>{{ explainTags(p.design) }}</h4>
                 <code>{{ p.design }}</code>
@@ -873,6 +981,13 @@ watch(
                 </p>
               </article>
               <small>当前穿搭不写进永久面部档案，按楼层剧情继承。</small>
+              <WardrobePanel
+                v-if="selected"
+                :key="selected"
+                :name="selected"
+                :floor="floor"
+                @changed="version++"
+              />
             </section>
             <section v-else class="editor">
               <h3>定妆历史</h3>
@@ -1243,5 +1358,28 @@ input[type='file'] {
   .studio .editor {
     width: 100%;
   }
+}
+</style>
+
+<style scoped>
+.appearance-policy {
+  border: 1px solid #7e94ae66;
+  border-radius: 8px;
+  padding: 14px;
+  margin: 16px 0;
+  background: #819abb0b;
+}
+.appearance-policy > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.appearance-policy > div label {
+  font-size: 12px;
+  margin: 4px 0;
+}
+.appearance-policy p {
+  font-size: 12px;
+  color: var(--bbi-ink-muted);
 }
 </style>

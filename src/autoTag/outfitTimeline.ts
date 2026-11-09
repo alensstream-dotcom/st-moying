@@ -1,3 +1,4 @@
+import { applyWardrobeChoices, wardrobeChoiceRevision } from '@/state/wardrobeChoice';
 import type { CostumeContext, CostumeFloor } from './costumeContext';
 import type { TargetSegment } from './clean';
 import type { ImageInsertion } from './protocol';
@@ -16,6 +17,8 @@ export interface ClothingPiece {
   state: Record<string, string>;
 }
 export interface ClothingRecord {
+  suitMode?: 'style' | 'always';
+  boundSuitId?: string;
   manual?: boolean;
   name: string;
   outfitId: string;
@@ -34,6 +37,7 @@ export interface ClothingChange {
 export interface ClothingFloor {
   legacyBackup?: unknown;
   delta?: boolean;
+  manualChoiceRevision?: string;
   costume?: CostumeFloor;
   v: 2;
   swipe: number;
@@ -93,7 +97,8 @@ export function narrativeHash(value: string): string {
 }
 function contribution(message: STMessage): string {
   const raw = message.extra?.[BBI_OUTFIT_EXTRA_KEY] as Partial<ClothingFloor> | undefined;
-  return JSON.stringify([
+  const choice = wardrobeChoiceRevision(message);
+  const base = JSON.stringify([
     narrativeHash(message.mes),
     message.swipe_id ?? 0,
     raw?.v === 2
@@ -104,6 +109,7 @@ function contribution(message: STMessage): string {
           : [raw.changes, raw.entries]
       : (readOutfitState(message)?.entries ?? null),
   ]);
+  return choice === '[]' ? base : JSON.stringify([base, choice]);
 }
 export function clothingRevision(chat: STMessage[], beforeFloor: number): string {
   let hash = '';
@@ -184,6 +190,7 @@ export function clothingBefore(
           }
       }
     }
+    applyWardrobeChoices(state, message, saved?.manualChoiceRevision);
     hash = continuityHash(hash + contribution(message));
   }
   return state;
@@ -243,6 +250,32 @@ export function acceptClothingChanges(
     const c = copy(raw);
     c.name = resolveCanonicalCharName(c.name, entries);
     const old = current.get(c.name);
+    if (old?.suitMode === 'always') {
+      rejected.push(c.name + ': 用户固定套装不接受剧情穿脱或换装');
+      continue;
+    }
+    if (
+      old?.suitMode === 'style' &&
+      c.operation === 'change' &&
+      !/换装|换衣|更衣|换成|换上.{0,16}(?:一套|另一套|新衣|新裙)|change.{0,20}(?:outfit|clothes)|new outfit/i.test(
+        c.evidence,
+      )
+    ) {
+      const mapped = c.pieces.map((p) => {
+        const existing = old.pieces.find(
+          (o) => o.id === p.id || o.design.trim().toLowerCase() === p.design.trim().toLowerCase(),
+        );
+        return existing ? { ...p, id: existing.id, design: '' } : null;
+      });
+      if (mapped.every(Boolean)) {
+        c.operation = 'patch';
+        c.pieces = mapped as ClothingPiece[];
+      } else {
+        rejected.push(c.name + ': 锁定款式需要明确整套换装才能更换；复穿请更新已有部件状态');
+        continue;
+      }
+    }
+
     const line = source.replace(/\r\n?/g, '\n').split('\n');
     const preceding = [
       ...line.slice(0, c.sourceLine),
@@ -459,6 +492,8 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
   }
   return { tag: [...new Set(tags.filter(Boolean))].join(', '), nl: sentences.join(' ') };
 }
+const LOCKED_WEAR_STATE =
+  /\b(?:unbuttoned|unzipped|unfastened|undressing|disrobing|stripping|no panties|no bra|panties aside|pants down|skirt lift|breasts out|clothes down|clothes aside|clothes off|dress lift|shirt lift|slipped off|slipped down|taking off|removing clothes|lifting (?:dress|skirt|shirt)|pulling (?:dress|skirt|shirt|pants|panties))\b/i;
 export function enforceClothing(
   image: ImageInsertion,
   state: ClothingState,
@@ -466,15 +501,19 @@ export function enforceClothing(
   independent: boolean,
 ): void {
   let managed = 0;
+  let fixedSuit = false;
   for (const c of image.characters) {
     const record = state.get(c.name);
     if (!record) continue;
     managed++;
+    fixedSuit ||= record.suitMode === 'always';
     const caption = clothingCaption(record);
     const dynamic = c.tag
       .split(',')
       .map((t) => t.trim())
-      .filter((t) => t && !isClothingDescription(t));
+      .filter(
+        (t) => t && !isClothingDescription(t) && !(record.suitMode === 'always' && LOCKED_WEAR_STATE.test(t)),
+      );
     c.tag = [
       ...new Set([
         ...dynamic,
@@ -499,7 +538,7 @@ export function enforceClothing(
     image.tag = image.tag
       .split(',')
       .map((t) => t.trim())
-      .filter((t) => t && !isClothingDescription(t))
+      .filter((t) => t && !isClothingDescription(t) && !(fixedSuit && LOCKED_WEAR_STATE.test(t)))
       .join(', ');
     if (nl)
       image.nl = image.nl
@@ -512,7 +551,7 @@ export function enforceClothing(
         ...image.tag
           .split(',')
           .map((t) => t.trim())
-          .filter((t) => t && !isClothingDescription(t)),
+          .filter((t) => t && !isClothingDescription(t) && !(fixedSuit && LOCKED_WEAR_STATE.test(t))),
         ...image.characters[0].tag.split(',').map((t) => t.trim()),
       ]),
     ].join(', ');

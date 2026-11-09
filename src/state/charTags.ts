@@ -1,3 +1,4 @@
+import { appearancePolicy, blocksAppearanceChange, applyAppearancePolicies } from './appearancePolicy';
 import { getContext, type STMessage } from '@/st/context';
 import { reactive } from 'vue';
 import { eligibleIdentityEntries } from './characterIdentity';
@@ -14,16 +15,7 @@ import { eligibleIdentityEntries } from './characterIdentity';
  * charTagLib 只是响应式派生缓存:合并基线(本聊天优先,全局补同名空缺) + 按楼层物理顺序重放自动变化。
  */
 
-export type CharTagField =
-  | 'fandom'
-  | 'sex'
-  | 'age'
-  | 'hair'
-  | 'eyes'
-  | 'skin'
-  | 'body'
-  | 'extra'
-  | 'outfit';
+export type CharTagField = 'fandom' | 'sex' | 'age' | 'hair' | 'eyes' | 'skin' | 'body' | 'extra' | 'outfit';
 
 export const CHAR_TAG_FIELDS: readonly CharTagField[] = [
   'fandom',
@@ -114,7 +106,7 @@ export const CHAR_AGE_BANDS: readonly CharAgeBand[] = [
 export function charAgeBuild(tag: string): string {
   const needle = tag.trim().toLowerCase();
   if (!needle) return '';
-  return CHAR_AGE_BANDS.find(band => needle.includes(band.tag))?.build ?? '';
+  return CHAR_AGE_BANDS.find((band) => needle.includes(band.tag))?.build ?? '';
 }
 
 const AGE_NOISE = /[，,、;；/]+/g;
@@ -129,10 +121,17 @@ export function normalizeCharAge(raw: string): string {
   const text = raw.trim();
   if (!text) return '';
   const lower = text.toLowerCase();
-  const band = CHAR_AGE_BANDS.find(item => item.labels.some(label => lower.includes(label)));
+  const band = CHAR_AGE_BANDS.find((item) => item.labels.some((label) => lower.includes(label)));
   // 「岁」不是 \w,后面不能挂 \b(否则永远匹配不上);用前瞻限定数字后不再接数字即可。
-  const years = text.match(/\d{1,3}\s*(?:岁|years?\s*old|yo)(?!\d)/i)?.[0]?.replace(/\s+/g, ' ').trim();
-  if (!band) return text.replace(AGE_NOISE, ', ').replace(/\s*,\s*/g, ', ').trim();
+  const years = text
+    .match(/\d{1,3}\s*(?:岁|years?\s*old|yo)(?!\d)/i)?.[0]
+    ?.replace(/\s+/g, ' ')
+    .trim();
+  if (!band)
+    return text
+      .replace(AGE_NOISE, ', ')
+      .replace(/\s*,\s*/g, ', ')
+      .trim();
   return [band.tag, years].filter(Boolean).join(', ');
 }
 
@@ -220,8 +219,8 @@ export function mergeCharTagSeed(
   globalEntries: CharTagEntry[],
 ): CharTagEntry[] {
   if (!globalEntries.length) return chatBaseEntries;
-  const chatNames = new Set(chatBaseEntries.map(entry => entry.name));
-  return [...chatBaseEntries, ...globalEntries.filter(entry => !chatNames.has(entry.name))];
+  const chatNames = new Set(chatBaseEntries.map((entry) => entry.name));
+  return [...chatBaseEntries, ...globalEntries.filter((entry) => !chatNames.has(entry.name))];
 }
 
 /**
@@ -234,10 +233,8 @@ export function computeLockedCharTagNames(
   globalEntries: CharTagEntry[],
 ): Set<string> {
   if (!globalEntries.length) return new Set();
-  const chatNames = new Set(chatBaseEntries.map(entry => entry.name));
-  return new Set(
-    globalEntries.filter(entry => !chatNames.has(entry.name)).map(entry => entry.name),
-  );
+  const chatNames = new Set(chatBaseEntries.map((entry) => entry.name));
+  return new Set(globalEntries.filter((entry) => !chatNames.has(entry.name)).map((entry) => entry.name));
 }
 
 function mergedSeedEntries(): CharTagEntry[] {
@@ -246,12 +243,18 @@ function mergedSeedEntries(): CharTagEntry[] {
 
 /** 当前生效的锁定名集(全局 ⊖ 本聊天基线)。 */
 export function lockedCharTagNames(): ReadonlySet<string> {
-  return new Set([...computeLockedCharTagNames(baseEntries, globalCharTagSource()),
-    ...mergedSeedEntries().filter(isManualFandom).map(e => e.name)]);
+  return new Set([
+    ...computeLockedCharTagNames(baseEntries, globalCharTagSource()),
+    ...mergedSeedEntries()
+      .filter(isManualFandom)
+      .map((e) => e.name),
+  ]);
 }
 
 /** Manual fandom replacement is an appearance choice, never an AI inference. */
-export function isManualFandom(entry: Pick<CharTagEntry, 'source' | 'fields'>): boolean {
+export function isManualFandom(entry: Pick<CharTagEntry, 'source' | 'fields'> & { name?: string }): boolean {
+  const p = appearancePolicy((entry as CharTagEntry).name);
+  if (p) return p.mode === 'fandom' && !!entry.fields.fandom.trim();
   return entry.source === 'manual' && !!entry.fields.fandom.trim();
 }
 
@@ -260,18 +263,23 @@ export function emptyCharFields(): Record<CharTagField, string> {
 }
 
 export function charFieldsEmpty(fields: Record<CharTagField, string>): boolean {
-  return CHAR_TAG_FIELDS.every(field => !(fields[field] ?? '').trim());
+  return CHAR_TAG_FIELDS.every((field) => !(fields[field] ?? '').trim());
 }
 
 export function buildEntryTag(entry: Pick<CharTagEntry, 'fields' | 'raw'>): string {
   if (entry.raw.trim() && charFieldsEmpty(entry.fields)) return entry.raw.trim();
-  return CHAR_TAG_FIELDS.map(field => (entry.fields[field] ?? '').trim())
+  return CHAR_TAG_FIELDS.map((field) => (entry.fields[field] ?? '').trim())
     .filter(Boolean)
     .join(', ');
 }
 
 function isHistoryField(value: string): value is CharTagHistoryField {
-  return (CHAR_TAG_FIELDS as readonly string[]).includes(value) || value === 'new' || value === 'raw' || value === 'nl';
+  return (
+    (CHAR_TAG_FIELDS as readonly string[]).includes(value) ||
+    value === 'new' ||
+    value === 'raw' ||
+    value === 'nl'
+  );
 }
 
 function isSetField(value: string): value is CharTagSetOp['field'] {
@@ -332,7 +340,7 @@ function cloneEntry(entry: CharTagEntry): CharTagEntry {
   return {
     ...entry,
     fields: { ...entry.fields },
-    history: entry.history.map(record => ({ ...record })),
+    history: entry.history.map((record) => ({ ...record })),
   };
 }
 
@@ -448,9 +456,9 @@ export function applyCharTagOps(
   const out = entries.map(cloneEntry);
   for (const op of ops) {
     // 锁定角色(全局库)不接受 AI changes:无论 new 还是 set 一律丢弃
-    if (locked?.has(op.name)) continue;
+    if (locked?.has(op.name) || ('field' in op && blocksAppearanceChange(op.name, op.field))) continue;
     if (op.kind === 'new') {
-      if (out.some(entry => entry.name === op.name)) continue;
+      if (out.some((entry) => entry.name === op.name)) continue;
       const entry: CharTagEntry = {
         name: op.name,
         fields: { ...op.fields },
@@ -472,9 +480,10 @@ export function applyCharTagOps(
       continue;
     }
 
-    const entry = out.find(candidate => candidate.name === op.name);
+    const entry = out.find((candidate) => candidate.name === op.name);
     if (!entry) continue;
-    if (op.field !== 'raw' && op.field !== 'nl' && entry.raw.trim() && charFieldsEmpty(entry.fields)) continue;
+    if (op.field !== 'raw' && op.field !== 'nl' && entry.raw.trim() && charFieldsEmpty(entry.fields))
+      continue;
     const current = op.field === 'raw' ? entry.raw : op.field === 'nl' ? entry.nl : entry.fields[op.field];
     if (current === op.value) continue;
     if (op.field === 'raw') entry.raw = op.value;
@@ -491,7 +500,7 @@ export function applyCharTagOps(
       at: op.at,
     });
   }
-  return out;
+  return applyAppearancePolicies(out);
 }
 
 export function deriveCharTags(
@@ -509,7 +518,8 @@ export function deriveCharTags(
     if (!delta || delta.swipe !== activeSwipe(message)) continue;
     entries = applyCharTagOps(entries, delta.ops, floor, locked);
   }
-  return includeSuspended ? entries : eligibleIdentityEntries(entries);
+  const resolved = applyAppearancePolicies(entries);
+  return includeSuspended ? resolved : eligibleIdentityEntries(resolved);
 }
 
 /** Review-only access: suspended auto profiles stay in storage and remain recoverable. */
@@ -579,7 +589,7 @@ function stripOpsFromExtra(extra: Record<string, unknown> | undefined, names: Se
  * 并清掉已有消息里的同名操作。之后的新楼层仍可继续由 AI 变更。
  */
 function detachFromExistingFloors(...rawNames: Array<string | undefined>): void {
-  const names = new Set(rawNames.map(name => name?.trim()).filter((name): name is string => !!name));
+  const names = new Set(rawNames.map((name) => name?.trim()).filter((name): name is string => !!name));
   const context = getContext();
   if (!names.size || !context?.chat) return;
   let changed = false;
@@ -590,25 +600,21 @@ function detachFromExistingFloors(...rawNames: Array<string | undefined>): void 
     }
   }
   if (changed) {
-    void context.saveChat?.().catch(error => {
+    void context.saveChat?.().catch((error) => {
       console.warn('[墨影] 手动角色变更已生效,但清理旧楼层角色记录保存失败', error);
     });
   }
 }
 
 export function findCharTag(name: string): CharTagEntry | undefined {
-  return charTagLib.entries.find(entry => entry.name === name);
+  return charTagLib.entries.find((entry) => entry.name === name);
 }
 
 export interface UpsertOptions {
   recordChanges?: boolean;
 }
 
-export function upsertCharTag(
-  entry: CharTagEntry,
-  oldName?: string,
-  opts: UpsertOptions = {},
-): boolean {
+export function upsertCharTag(entry: CharTagEntry, oldName?: string, opts: UpsertOptions = {}): boolean {
   const name = entry.name.trim();
   if (!name || !buildEntryTag(entry)) return false;
   const previous = findCharTag(oldName ?? name);
@@ -620,8 +626,8 @@ export function upsertCharTag(
     source: entry.source,
     desc: entry.desc,
     history: entry.history.length
-      ? entry.history.map(record => ({ ...record }))
-      : (previous?.history.map(record => ({ ...record })) ?? []),
+      ? entry.history.map((record) => ({ ...record }))
+      : (previous?.history.map((record) => ({ ...record })) ?? []),
   };
   if (opts.recordChanges && previous) {
     const at = Date.now();
@@ -638,7 +644,14 @@ export function upsertCharTag(
       }
     }
     if (previous.raw !== next.raw && (previous.raw || next.raw)) {
-      pushHistory(next, { field: 'raw', from: previous.raw, to: next.raw, reason: '手动编辑', floor: -1, at });
+      pushHistory(next, {
+        field: 'raw',
+        from: previous.raw,
+        to: next.raw,
+        reason: '手动编辑',
+        floor: -1,
+        at,
+      });
     }
     if (previous.nl !== next.nl && (previous.nl || next.nl)) {
       pushHistory(next, { field: 'nl', from: previous.nl, to: next.nl, reason: '手动编辑', floor: -1, at });
@@ -647,10 +660,10 @@ export function upsertCharTag(
 
   detachFromExistingFloors(oldName, name);
   if (oldName && oldName !== name) {
-    const oldIndex = baseEntries.findIndex(candidate => candidate.name === oldName);
+    const oldIndex = baseEntries.findIndex((candidate) => candidate.name === oldName);
     if (oldIndex >= 0) baseEntries.splice(oldIndex, 1);
   }
-  const index = baseEntries.findIndex(candidate => candidate.name === name);
+  const index = baseEntries.findIndex((candidate) => candidate.name === name);
   if (index >= 0) baseEntries[index] = next;
   else baseEntries.push(next);
   persistBase();
@@ -662,7 +675,7 @@ export function removeCharTag(name: string): boolean {
   const cleanName = name.trim();
   if (!cleanName || !findCharTag(cleanName)) return false;
   detachFromExistingFloors(cleanName);
-  const index = baseEntries.findIndex(entry => entry.name === cleanName);
+  const index = baseEntries.findIndex((entry) => entry.name === cleanName);
   if (index >= 0) baseEntries.splice(index, 1);
   persistBase();
   recomputeCharTags();

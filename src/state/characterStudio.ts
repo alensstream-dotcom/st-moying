@@ -1,7 +1,9 @@
+import { appearancePolicy, type AppearancePolicy } from './appearancePolicy';
 import { TAG_CHINESE_CORE, TAG_WORDS } from '@/data/tagChineseCore';
 import { getContext } from '@/st/context';
 import type { CharTagEntry, CharTagField } from './charTags';
 export interface LookVersion {
+  policy?: AppearancePolicy;
   id: string;
   at: number;
   fields: CharTagEntry['fields'];
@@ -47,6 +49,9 @@ export function adoptLook(entry: CharTagEntry, image?: string) {
       nl: entry.nl,
       image,
       raw: entry.raw,
+      policy: appearancePolicy(entry.name)
+        ? JSON.parse(JSON.stringify(appearancePolicy(entry.name)))
+        : undefined,
     };
   saveLook(entry.name, {
     ...old,

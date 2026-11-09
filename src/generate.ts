@@ -1,8 +1,15 @@
+import { wardrobeChoiceRevision, suitNote } from '@/state/wardrobeChoice';
+import { renderAppearanceOverrides } from '@/state/appearancePolicy';
 import { lookSettings, fingerprint } from '@/state/characterStudio';
 import { getThumb } from '@/data/loreThumbs';
 import { prepareCharacterReference } from '@/backends/characterReference';
 import { costumeConflicts, removeUnbackedCostume, type CostumeContext } from '@/autoTag/costumeContext';
-import { readClothingFloor, clothingRevision, enforceClothing } from '@/autoTag/outfitTimeline';
+import {
+  readClothingFloor,
+  clothingRevision,
+  enforceClothing,
+  clothingBefore,
+} from '@/autoTag/outfitTimeline';
 import { getContext } from '@/st/context';
 import { currentIdentityFacts, enforceKnownMaleIdentity, isMaleIdentity } from '@/state/characterIdentity';
 /**
@@ -254,9 +261,12 @@ export async function generateImage(
   if (!status.configured) throw new Error(status.reason || '出图后端未配置');
 
   const isNai = status.backend === 'nai';
-  const manualFandoms = charTagLib.entries.filter(
-    (e) => isManualFandom(e) && input.characters?.some((c) => c.name === e.name),
-  );
+  const renderOverrides = renderAppearanceOverrides(charTagLib.entries);
+  const manualFandoms = [
+    ...new Map(
+      [...charTagLib.entries.filter(isManualFandom), ...renderOverrides].map((e) => [e.name, e]),
+    ).values(),
+  ].filter((e) => input.characters?.some((c) => c.name === e.name));
   let appearanceNotes: string[] = [];
   if (manualFandoms.length && input.characters?.length) {
     const image = {
@@ -275,7 +285,12 @@ export async function generateImage(
       !!input.nl || image.characters.some((c) => !!c.nl),
       status.supportsCharacters,
     );
-    appearanceNotes.push(...manualFandoms.map((e) => `锁定同人：${e.name} → ${e.fields.fandom}`));
+    appearanceNotes.push(
+      ...manualFandoms.map(
+        (e) =>
+          `用户外貌覆盖：${e.name} → ${e.fields.fandom || Object.values(e.fields).filter(Boolean).join(', ')}`,
+      ),
+    );
     input = {
       ...input,
       prompt: image.tag,
@@ -337,6 +352,41 @@ export async function generateImage(
         nl: image.nl,
         characters: image.characters,
       };
+    }
+  }
+  if (input.storyFrame && input.characters?.length) {
+    const chat = getContext()?.chat ?? [],
+      floor = input.storyFrame.floor;
+    const saved = readClothingFloor(chat[floor], clothingRevision(chat, floor));
+    const frame =
+      (saved?.manualChoiceRevision ?? '[]') === wardrobeChoiceRevision(chat[floor])
+        ? saved?.frames.find((f) => f.tag === input.storyFrame!.tag)
+        : undefined;
+    const current = clothingBefore(chat, floor + 1, charTagLib.entries),
+      bound = new Map();
+    for (const c of input.characters) {
+      const record = frame?.entries.find((e) => e.name === c.name) ?? current.get(c.name);
+      if (record?.suitMode) bound.set(c.name, record);
+    }
+    if (bound.size) {
+      const image = {
+        position: '',
+        sourceLine: 0,
+        charOffset: 0,
+        tag: input.prompt,
+        nl: input.nl ?? '',
+        negative: input.negative ?? '',
+        size: input.size ?? ('portrait' as const),
+        characters: input.characters.map((c) => ({ ...c })),
+      };
+      enforceClothing(
+        image,
+        bound,
+        !!input.nl || image.characters.some((c) => !!c.nl),
+        status.supportsCharacters,
+      );
+      appearanceNotes.push(...[...bound.values()].map((e) => e.name + '：' + suitNote(e)));
+      input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
     }
   }
   const characters = input.characters ?? [];

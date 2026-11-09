@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { clothingBefore } from '@/autoTag/outfitTimeline';
+import { getContext } from '@/st/context';
+import { mergeSuitWithCurrent, bindingFromTags, chooseWardrobe, type SuitMode } from '@/state/wardrobeChoice';
+import { appearancePolicy, setAppearancePolicy } from '@/state/appearancePolicy';
+
 import Icon from '@/components/Icon.vue';
 import { resolveFandomRoll } from '@/autoTag/fandomRoll';
 import ModalMask from '@/components/ModalMask.vue';
@@ -43,13 +48,7 @@ import {
   type ThumbJobState,
   type ThumbTask,
 } from '@/data/loreThumbJob';
-import {
-  rollPose,
-  rollPoolSize,
-  rollWardrobe,
-  type RollKind,
-  type RollResult,
-} from '@/data/loreRoll';
+import { rollPose, rollPoolSize, rollWardrobe, type RollKind, type RollResult } from '@/data/loreRoll';
 import { backendStatus, decideSeed, generateImage } from '@/generate';
 import { openLightbox } from '@/floor/lightbox';
 import { LORE_THUMB_MODELS, settings, type BackendId } from '@/state/settings';
@@ -60,6 +59,7 @@ import {
   charTagLib,
   findCharTag,
   upsertCharTag,
+  recomputeCharTags,
   type CharTagEntry,
   type CharTagField,
 } from '@/state/charTags';
@@ -108,8 +108,8 @@ interface LoreCard {
   slot?: WardrobeSlot;
 }
 
-const WARDROBE_LABEL = new Map<string, string>(WARDROBE_CATEGORIES.map(c => [c.id, c.label]));
-const POSE_LABEL = new Map<string, string>(POSE_CATEGORIES.map(c => [c.id, c.label]));
+const WARDROBE_LABEL = new Map<string, string>(WARDROBE_CATEGORIES.map((c) => [c.id, c.label]));
+const POSE_LABEL = new Map<string, string>(POSE_CATEGORIES.map((c) => [c.id, c.label]));
 
 /** 自定义条目改动后自增,用来让 computed 重新读 localStorage(它本身不是响应式的)。 */
 const revision = ref(0);
@@ -119,7 +119,7 @@ function bumpLore() {
 
 const wardrobeCards = computed<LoreCard[]>(() => {
   revision.value;
-  return allWardrobeItems().map(item => ({
+  return allWardrobeItems().map((item) => ({
     id: item.id,
     name: item.name,
     tags: item.tags,
@@ -138,7 +138,7 @@ const wardrobeCards = computed<LoreCard[]>(() => {
 
 const poseCards = computed<LoreCard[]>(() => {
   revision.value;
-  return allPoseItems().map(item => ({
+  return allPoseItems().map((item) => ({
     id: item.id,
     name: item.name,
     tags: item.tags,
@@ -162,7 +162,7 @@ const poseCards = computed<LoreCard[]>(() => {
 });
 
 const faceCards: LoreCard[] = [
-  ...[...FACE_PRESETS, ...FACE_EXTRA].map(item => ({
+  ...[...FACE_PRESETS, ...FACE_EXTRA].map((item) => ({
     id: item.id,
     name: item.name,
     tags: item.tags,
@@ -175,7 +175,7 @@ const faceCards: LoreCard[] = [
     group: 'face',
     groupLabel: '脸部指纹',
   })),
-  ...[...BODY_PRESETS, ...BODY_EXTRA].map(item => ({
+  ...[...BODY_PRESETS, ...BODY_EXTRA].map((item) => ({
     id: item.id,
     name: item.name,
     tags: item.tags,
@@ -188,7 +188,7 @@ const faceCards: LoreCard[] = [
     group: 'body',
     groupLabel: '体型',
   })),
-  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2].map(item => ({
+  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2].map((item) => ({
     id: item.id,
     name: item.name,
     tags: item.tags,
@@ -222,19 +222,34 @@ const allCards = computed<LoreCard[]>(() => {
   if (tab.value === 'wardrobe') return wardrobeCards.value;
   if (tab.value === 'pose') return poseCards.value;
   revision.value;
-  return [...faceCards, ...customFandom().map(item => ({ id: item.id, name: item.name, tags: item.tags, aliases: item.aliases,
-    nsfw: item.nsfw, quality: item.quality, note: item.note, extra: [item.franchise, item.hair, item.eyes].filter(Boolean).join(' · '),
-    field: 'fandom' as CharTagField, group: 'fandom', groupLabel: '同人角色', custom: true }))];
+  return [
+    ...faceCards,
+    ...customFandom().map((item) => ({
+      id: item.id,
+      name: item.name,
+      tags: item.tags,
+      aliases: item.aliases,
+      nsfw: item.nsfw,
+      quality: item.quality,
+      note: item.note,
+      extra: [item.franchise, item.hair, item.eyes].filter(Boolean).join(' · '),
+      field: 'fandom' as CharTagField,
+      group: 'fandom',
+      groupLabel: '同人角色',
+      custom: true,
+    })),
+  ];
 });
 
 /** 关键字命中:名字 / tag 串 / 中文触发词,任一含子串即算。 */
 const searched = computed<LoreCard[]>(() => {
   const q = keyword.value.trim().toLowerCase();
-  const pool = maxNsfwFilter.value >= 3
-    ? allCards.value
-    : allCards.value.filter(card => card.nsfw <= maxNsfwFilter.value);
+  const pool =
+    maxNsfwFilter.value >= 3
+      ? allCards.value
+      : allCards.value.filter((card) => card.nsfw <= maxNsfwFilter.value);
   if (!q) return pool;
-  return pool.filter(card => {
+  return pool.filter((card) => {
     const hay = `${card.name}\n${card.tags}\n${card.aliases.join(' ')}\n${card.extra}`.toLowerCase();
     return hay.includes(q);
   });
@@ -253,7 +268,7 @@ const categories = computed<{ id: string; label: string; count: number }[]>(() =
 const shown = computed<LoreCard[]>(() =>
   activeCategory.value === 'all'
     ? searched.value
-    : searched.value.filter(card => card.group === activeCategory.value),
+    : searched.value.filter((card) => card.group === activeCategory.value),
 );
 
 // 换 tab / 改关键字后分类可能整组消失,把选中态收回「全部」,避免停在一个不存在的分类上。
@@ -280,22 +295,22 @@ const THUMB_MODELS = LORE_THUMB_MODELS;
 /** 间隔用秒来填，存的时候换回毫秒；夹在 3–120 秒之间，填错了自动纠正。 */
 const thumbIntervalSec = computed<number>({
   get: () => Math.round(settings.autoTag.lore.thumbIntervalMs / 1000),
-  set: raw => {
+  set: (raw) => {
     const sec = Math.min(120, Math.max(3, Math.round(Number(raw) || 10)));
     settings.autoTag.lore.thumbIntervalMs = sec * 1000;
   },
 });
 
-const stopJobState = onThumbJobState(state => {
+const stopJobState = onThumbJobState((state) => {
   jobState.value = state;
 });
 
-const stopJobTask = onThumbTaskDone(task => {
+const stopJobTask = onThumbTaskDone((task) => {
   const key = thumbKey(task.kind, task.id);
-  void getThumb(key).then(record => {
+  void getThumb(key).then((record) => {
     if (record?.blob) mountThumb(key, record.blob);
   });
-  void countThumbs().then(total => {
+  void countThumbs().then((total) => {
     thumbCount.value = total;
   });
 });
@@ -350,9 +365,13 @@ async function syncThumbs(list: LoreCard[]) {
   }
 }
 
-watch(shown, list => {
-  void syncThumbs(list);
-}, { immediate: true });
+watch(
+  shown,
+  (list) => {
+    void syncThumbs(list);
+  },
+  { immediate: true },
+);
 
 /**
  * 机位/景别词：一条素材的预览要能看全「这套东西」，所以服装强制全身、
@@ -391,13 +410,12 @@ const POSE_DUO_CATEGORIES = new Set<string>([
 ]);
 
 function poseCategoryOf(id: string): string {
-  return allPoseItems().find(item => item.id === id)?.category ?? '';
+  return allPoseItems().find((item) => item.id === id)?.category ?? '';
 }
 
 /** 预览提示词：一条素材要能被单独看懂，所以固定主体与背景，只换它自己的 tag。 */
 function thumbPrompt(card: LoreCard): string {
-  const quality =
-    'masterpiece, best quality, very aesthetic, absurdres, simple background, grey background';
+  const quality = 'masterpiece, best quality, very aesthetic, absurdres, simple background, grey background';
   // 面相:脸必须完整且占满画幅。写 full body 时脸只剩几个像素,模型顺手就裁成半张。
   if (tab.value === 'face') {
     return [
@@ -421,9 +439,7 @@ function thumbPrompt(card: LoreCard): string {
       .filter(Boolean)
       .join(', ');
   }
-  return [quality, '1girl, solo, full body, standing', stripFraming(card.tags)]
-    .filter(Boolean)
-    .join(', ');
+  return [quality, '1girl, solo, full body, standing', stripFraming(card.tags)].filter(Boolean).join(', ');
 }
 
 /**
@@ -460,7 +476,7 @@ async function genThumb(card: LoreCard) {
       size: 'portrait',
       ...(model ? { naiModel: model } : {}),
     });
-    const blob = await fetch(output.result.url).then(response => response.blob());
+    const blob = await fetch(output.result.url).then((response) => response.blob());
     output.result.revoke();
     await putThumb(key, blob, prompt);
     mountThumb(key, blob);
@@ -485,7 +501,7 @@ function startBatchThumbs() {
     toast('当前列表是空的');
     return;
   }
-  const tasks: ThumbTask[] = list.map(card => ({
+  const tasks: ThumbTask[] = list.map((card) => ({
     kind: thumbKindOf(),
     id: card.id,
     name: card.name,
@@ -493,9 +509,7 @@ function startBatchThumbs() {
   }));
   const interval = settings.autoTag.lore.thumbIntervalMs;
   startThumbJob(tasks, interval);
-  toast(
-    `排队 ${tasks.length} 条，每 ${Math.round(interval / 1000)} 秒一条；可以切页，回来还在跑`,
-  );
+  toast(`排队 ${tasks.length} 条，每 ${Math.round(interval / 1000)} 秒一条；可以切页，回来还在跑`);
 }
 
 async function dropThumb(card: LoreCard) {
@@ -512,31 +526,25 @@ async function dropThumb(card: LoreCard) {
 async function clearAllThumbs() {
   if (!window.confirm('清空所有素材预览图？下次点生成会重新消耗 NAI 额度。')) return;
   await clearThumbs();
-  Object.values(thumbSrcMap.value).forEach(url => URL.revokeObjectURL(url));
+  Object.values(thumbSrcMap.value).forEach((url) => URL.revokeObjectURL(url));
   thumbSrcMap.value = {};
   thumbCount.value = 0;
 }
 
 onUnmounted(() => {
-  Object.values(thumbSrcMap.value).forEach(url => URL.revokeObjectURL(url));
+  Object.values(thumbSrcMap.value).forEach((url) => URL.revokeObjectURL(url));
 });
 
 /* —— 套用到角色 —— */
 const applying = ref<LoreCard | null>(null);
 const applyField = ref<CharTagField>('outfit');
 const applyMode = ref<'append' | 'replace'>('append');
-const FIELD_OPTIONS: CharTagField[] = [
-  'outfit',
-  'extra',
-  'hair',
-  'eyes',
-  'body',
-  'skin',
-  'fandom',
-];
+const FIELD_OPTIONS: CharTagField[] = ['outfit', 'extra', 'hair', 'eyes', 'body', 'skin', 'fandom'];
 
 const characters = computed<CharTagEntry[]>(() => charTagLib.entries);
 
+const suitMode = ref<SuitMode>('style'),
+  applyBusy = ref(false);
 function startApply(card: LoreCard) {
   applying.value = card;
   // 默认写 extra 而不是 outfit:outfit 是「招牌着装」，写进去这角色以后每张图都穿它。
@@ -557,16 +565,33 @@ function currentValue(name: string): string {
   return (entry.fields[applyField.value] ?? '').trim();
 }
 
-function applyTo(name: string, card: LoreCard | null) {
+async function applyTo(name: string, card: LoreCard | null) {
+  if (applyBusy.value) return;
   if (!card) return;
   const target = findCharTag(name);
   if (!target) return;
+  if (card.field === 'outfit') {
+    applyBusy.value = true;
+    try {
+      const ctx = getContext();
+      if (!ctx?.chat.length) throw new Error('请先打开有剧情楼层的聊天');
+      const current = clothingBefore(ctx.chat, ctx.chat.length, charTagLib.entries).get(name);
+      const suit = mergeSuitWithCurrent(
+        bindingFromTags(name, card.name, card.tags, suitMode.value, card.slot ?? 'full'),
+        current,
+      );
+      await chooseWardrobe(ctx.chat.length - 1, name, suit);
+      flash.value = '已从最后一楼起绑定套装，未写入永久外貌；重画/重新分析时生效';
+    } catch (error) {
+      flash.value = error instanceof Error ? error.message : String(error);
+    } finally {
+      applyBusy.value = false;
+    }
+    return;
+  }
   const field = applyField.value;
   const before = (target.fields[field] ?? '').trim();
-  const merged =
-    applyMode.value === 'append' && before
-      ? `${before}, ${card.tags}`
-      : card.tags;
+  const merged = applyMode.value === 'append' && before ? `${before}, ${card.tags}` : card.tags;
   const next: CharTagEntry = {
     ...target,
     source: 'manual',
@@ -574,6 +599,17 @@ function applyTo(name: string, card: LoreCard | null) {
     fields: { ...target.fields, [field]: merged },
   };
   const ok = upsertCharTag(next, name, { recordChanges: true });
+  if (ok) {
+    const previous = appearancePolicy(name);
+    if (field === 'fandom' && merged.trim())
+      setAppearancePolicy(name, { mode: 'fandom', fields: { fandom: merged } });
+    else if (['face', 'body', 'fandom'].includes(card.group))
+      setAppearancePolicy(name, {
+        mode: previous?.mode === 'fandom' ? 'fandom' : 'manual',
+        fields: { ...(previous?.fields ?? {}), [field]: merged },
+      });
+    recomputeCharTags();
+  }
   flash.value = ok
     ? `已写入「${name}」的「${CHAR_TAG_FIELD_LABELS[field]}」`
     : `「${name}」还没有任何外貌字段,先在角色管理里填一项再套用`;
@@ -655,12 +691,24 @@ let rollBlob: Blob | null = null;
 let rollController: AbortController | null = null;
 const rollChoices = ref<RollResult[]>([]);
 const rollFeedback = ref('');
-watch(rollKeyword, () => { if (!rollBusy.value) clearRollResult(); });
-watch(rollOpen, open => { if (!open) { rollController?.abort(); rollController = null; rollBusy.value = false; } });
-onUnmounted(() => { rollController?.abort(); clearRollResult(); });
+watch(rollKeyword, () => {
+  if (!rollBusy.value) clearRollResult();
+});
+watch(rollOpen, (open) => {
+  if (!open) {
+    rollController?.abort();
+    rollController = null;
+    rollBusy.value = false;
+  }
+});
+onUnmounted(() => {
+  rollController?.abort();
+  clearRollResult();
+});
 
 const rollPool = computed(() => {
-  revision.value; return rollPoolSize(rollKeyword.value, rollKind.value);
+  revision.value;
+  return rollPoolSize(rollKeyword.value, rollKind.value);
 });
 
 const rollPlaceholder = computed(() => {
@@ -696,8 +744,7 @@ function switchRollKind(next: RollKind) {
 }
 
 function rollPrompt(result: RollResult, kind: RollKind): string {
-  const quality =
-    'masterpiece, best quality, very aesthetic, absurdres, simple background, grey background';
+  const quality = 'masterpiece, best quality, very aesthetic, absurdres, simple background, grey background';
   if (kind === 'wardrobe') {
     return [quality, '1girl, solo, full body, standing', stripFraming(result.tags)]
       .filter(Boolean)
@@ -739,30 +786,52 @@ function zoomRoll() {
 
 async function renderRollPreview(result: RollResult, kind: RollKind, signal: AbortSignal) {
   const model = settings.autoTag.lore.thumbModel.trim();
-  const output = await generateImage({ prompt: rollPrompt(result, kind), backend: loreBackend(), genPresetId: lorePresetId(),
-    seed: decideSeed(loreBackend()), size: 'portrait', ...(model ? { naiModel: model } : {}) }, signal);
+  const output = await generateImage(
+    {
+      prompt: rollPrompt(result, kind),
+      backend: loreBackend(),
+      genPresetId: lorePresetId(),
+      seed: decideSeed(loreBackend()),
+      size: 'portrait',
+      ...(model ? { naiModel: model } : {}),
+    },
+    signal,
+  );
   try {
     const response = await fetch(output.result.url, { signal });
     if (!response.ok) throw new Error(`预览读取失败 (${response.status})`);
     const blob = await response.blob();
     if (signal.aborted) return;
-    rollBlob = blob; rollUrl.value = URL.createObjectURL(blob);
-  } finally { output.result.revoke(); }
+    rollBlob = blob;
+    rollUrl.value = URL.createObjectURL(blob);
+  } finally {
+    output.result.revoke();
+  }
 }
 async function doRoll(selected?: RollResult) {
   if (rollBusy.value) return;
   const status = backendStatus(loreBackend());
-  if (!status.configured) { toast(`素材预览固定走 NAI：${status.reason || '先配置 NAI 接入点'}`); return; }
-  const keyword = rollKeyword.value.trim(), kind = rollKind.value;
-  const controller = new AbortController(); rollController = controller;
-  clearRollResult(); rollBusy.value = true;
+  if (!status.configured) {
+    toast(`素材预览固定走 NAI：${status.reason || '先配置 NAI 接入点'}`);
+    return;
+  }
+  const keyword = rollKeyword.value.trim(),
+    kind = rollKind.value;
+  const controller = new AbortController();
+  rollController = controller;
+  clearRollResult();
+  rollBusy.value = true;
   try {
     let result = selected;
     if (!result && kind === 'fandom') {
       rollFeedback.value = '正在匹配中文名与作品；本地未命中时使用已保存的自动 tag LLM…';
       const candidates = await resolveFandomRoll(keyword, controller.signal);
       if (controller.signal.aborted) return;
-      if (candidates.length > 1) { rollChoices.value = candidates; rollFeedback.value = '找到多个角色/作品，请选择一个后生成预览（尚未提交生图）'; return; }
+      if (candidates.length > 1) {
+        rollChoices.value = candidates;
+        rollFeedback.value = '找到多个角色/作品，请选择一个后生成预览（尚未提交生图）';
+        return;
+      }
       result = candidates[0];
     } else if (!result) result = (kind === 'pose' ? rollPose(keyword) : rollWardrobe(keyword)) ?? undefined;
     if (!result) throw new Error('没有可用候选，请补充角色名和作品');
@@ -771,18 +840,32 @@ async function doRoll(selected?: RollResult) {
     rollFeedback.value = result.resolutionNote || '正在生成预览…';
     await renderRollPreview(result, kind, controller.signal);
   } catch (error) {
-    if (!controller.signal.aborted) { rollFeedback.value = error instanceof Error ? error.message : '解析或生成失败'; toast(rollFeedback.value); }
-  } finally { if (rollController === controller) { rollBusy.value = false; rollController = null; } }
+    if (!controller.signal.aborted) {
+      rollFeedback.value = error instanceof Error ? error.message : '解析或生成失败';
+      toast(rollFeedback.value);
+    }
+  } finally {
+    if (rollController === controller) {
+      rollBusy.value = false;
+      rollController = null;
+    }
+  }
 }
 async function redrawRoll() {
-  const selected = rollResult.value; if (selected) await doRoll(selected);
+  const selected = rollResult.value;
+  if (selected) await doRoll(selected);
 }
 
 async function adoptRoll() {
   if (rollBusy.value) return;
   rollBusy.value = true;
-  try { await saveRoll(); } catch (error) { toast(error instanceof Error ? error.message : '保存失败'); }
-  finally { rollBusy.value = false; }
+  try {
+    await saveRoll();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : '保存失败');
+  } finally {
+    rollBusy.value = false;
+  }
 }
 async function saveRoll() {
   const result = rollResult.value;
@@ -802,13 +885,28 @@ async function saveRoll() {
       clearRollResult();
       return;
     }
-    const saved = addCustomFandom({ name: result.name, tags: result.materialTags ?? result.tags,
-      aliases: [...new Set([...result.aliases, rollKeyword.value.trim()])].filter(Boolean).join(', '), franchise: result.franchise ?? '',
-      hair: result.hair, eyes: result.eyes, nsfw: result.nsfw, note: `${result.source}；${result.resolutionNote ?? ''}` });
-    if (!saved.ok || !saved.item) { toast(saved.error ?? '保存失败'); return; }
+    const saved = addCustomFandom({
+      name: result.name,
+      tags: result.materialTags ?? result.tags,
+      aliases: [...new Set([...result.aliases, rollKeyword.value.trim()])].filter(Boolean).join(', '),
+      franchise: result.franchise ?? '',
+      hair: result.hair,
+      eyes: result.eyes,
+      nsfw: result.nsfw,
+      note: `${result.source}；${result.resolutionNote ?? ''}`,
+    });
+    if (!saved.ok || !saved.item) {
+      toast(saved.error ?? '保存失败');
+      return;
+    }
     const key = thumbKey('face', saved.item.id);
-    await putThumb(key, rollBlob, rollPrompt(result, 'fandom')); mountThumb(key, rollBlob); rollBlob = null;
-    bumpLore(); thumbChecked.clear(); tab.value = 'face'; activeCategory.value = 'all';
+    await putThumb(key, rollBlob, rollPrompt(result, 'fandom'));
+    mountThumb(key, rollBlob);
+    rollBlob = null;
+    bumpLore();
+    thumbChecked.clear();
+    tab.value = 'face';
+    activeCategory.value = 'all';
     toast('已存进同人素材库，中文别名和预览图一并保存');
     rollOpen.value = false;
     clearRollResult();
@@ -859,7 +957,7 @@ function applyRollToChar() {
   startApply({
     id: result.id ?? `roll-${result.seed}`,
     name: result.name,
-    tags: result.kind === 'fandom' ? result.materialTags ?? result.tags : result.tags,
+    tags: result.kind === 'fandom' ? (result.materialTags ?? result.tags) : result.tags,
     aliases: result.aliases,
     nsfw: result.nsfw,
     extra: result.source,
@@ -899,7 +997,7 @@ const editingId = ref<string | null>(null);
  */
 function openEdit(card: LoreCard) {
   const pose = tab.value === 'pose';
-  const fandom = customFandom().find(m => m.id === card.id);
+  const fandom = customFandom().find((m) => m.id === card.id);
   editingId.value = card.id;
   addingKind.value = fandom ? 'fandom' : pose ? 'pose' : 'wardrobe';
   draftName.value = card.name;
@@ -918,9 +1016,21 @@ function submitAdd() {
   const nsfw = Math.min(3, Math.max(0, Math.round(Number(draftNsfw.value) || 0))) as NsfwLevel;
   const editing = editingId.value;
   if (addingKind.value === 'fandom' && editing) {
-    const before = customFandom().find(m => m.id === editing);
-    const result = updateCustomFandom(editing, { name: draftName.value, tags: draftTags.value, aliases: draftAliases.value, franchise: draftCategory.value, nsfw, note: draftNote.value, hair: before?.hair, eyes: before?.eyes });
-    if (!result.ok) { toast(result.error ?? '保存失败'); return; }
+    const before = customFandom().find((m) => m.id === editing);
+    const result = updateCustomFandom(editing, {
+      name: draftName.value,
+      tags: draftTags.value,
+      aliases: draftAliases.value,
+      franchise: draftCategory.value,
+      nsfw,
+      note: draftNote.value,
+      hair: before?.hair,
+      eyes: before?.eyes,
+    });
+    if (!result.ok) {
+      toast(result.error ?? '保存失败');
+      return;
+    }
     tab.value = 'face';
   } else if (addingKind.value === 'pose') {
     const payload = {
@@ -1003,7 +1113,7 @@ function removeCard(card: LoreCard) {
 /** 批量删：只删当前筛出来的自定义条目，内置条目永远不动。 */
 function removeVisibleCustom() {
   const kind = tab.value === 'pose' ? 'pose' : tab.value === 'face' ? 'fandom' : 'wardrobe';
-  const targets = shown.value.filter(card => card.custom);
+  const targets = shown.value.filter((card) => card.custom);
   if (!targets.length) {
     toast('当前列表里没有自定义条目');
     return;
@@ -1034,7 +1144,8 @@ function clearCustom() {
     </div>
     <hr class="bbi-rule" />
     <p class="bbi-page-intro">
-      自动 tag 时按正文命中挑候选的就是这里的条目。服装与面相可以直接套到角色管理里的人物身上，写进他的固定字段，之后每次出图都带这一串。
+      自动 tag
+      时按正文命中挑候选的就是这里的条目。服装与面相可以直接套到角色管理里的人物身上，写进他的固定字段，之后每次出图都带这一串。
     </p>
 
     <div class="bbi-lore-bar">
@@ -1064,9 +1175,7 @@ function clearCustom() {
           <option :value="2">到情趣</option>
           <option :value="3">全部</option>
         </select>
-        <button class="bbi-btn bbi-btn-sm bbi-btn-primary" type="button" @click="openAdd">
-          新增
-        </button>
+        <button class="bbi-btn bbi-btn-sm bbi-btn-primary" type="button" @click="openAdd">新增</button>
         <button class="bbi-btn bbi-btn-sm" type="button" @click="openImport">导入</button>
         <button class="bbi-btn bbi-btn-sm" type="button" @click="copyAllCustom">导出</button>
         <button
@@ -1085,12 +1194,19 @@ function clearCustom() {
         >
           一键配图
         </button>
-        <button class="bbi-btn bbi-btn-sm" type="button" title="配图模型与间隔" @click="thumbSettingsOpen = true">
+        <button
+          class="bbi-btn bbi-btn-sm"
+          type="button"
+          title="配图模型与间隔"
+          @click="thumbSettingsOpen = true"
+        >
           配图设置
         </button>
         <button class="bbi-btn bbi-btn-sm" type="button" @click="clearAllThumbs">清空预览</button>
-        <button class="bbi-btn bbi-btn-sm" type="button" @click="removeVisibleCustom">删当前列表自定义</button>
-          <button class="bbi-btn bbi-btn-sm" type="button" @click="clearCustom">清空自定义</button>
+        <button class="bbi-btn bbi-btn-sm" type="button" @click="removeVisibleCustom">
+          删当前列表自定义
+        </button>
+        <button class="bbi-btn bbi-btn-sm" type="button" @click="clearCustom">清空自定义</button>
       </div>
     </div>
 
@@ -1100,7 +1216,9 @@ function clearCustom() {
         <template v-if="jobState.current"> · {{ jobState.current }}</template>
         <template v-if="jobState.failed"> · 失败 {{ jobState.failed }}</template>
       </span>
-      <span class="bbi-lore-queue-bar"><i :style="{ width: `${jobState.total ? Math.round((jobState.done / jobState.total) * 100) : 0}%` }" /></span>
+      <span class="bbi-lore-queue-bar"
+        ><i :style="{ width: `${jobState.total ? Math.round((jobState.done / jobState.total) * 100) : 0}%` }"
+      /></span>
       <button class="bbi-btn bbi-btn-sm" type="button" @click="stopThumbJob">停止</button>
     </div>
     <p v-if="jobState.lastError && !jobState.running" class="bbi-field-hint bbi-lore-queue-err">
@@ -1145,12 +1263,7 @@ function clearCustom() {
             title="点一下看大图"
             @click="zoomThumb(card)"
           />
-          <button
-            class="bbi-lore-thumb-x"
-            type="button"
-            title="删掉这张预览"
-            @click="dropThumb(card)"
-          >
+          <button class="bbi-lore-thumb-x" type="button" title="删掉这张预览" @click="dropThumb(card)">
             ×
           </button>
         </figure>
@@ -1220,7 +1333,7 @@ function clearCustom() {
 
         <p class="bbi-lore-tags">{{ applying.tags }}</p>
 
-        <label class="bbi-modal-field">
+        <label v-if="applying.field !== 'outfit'" class="bbi-modal-field">
           <span class="bbi-modal-label">写入字段</span>
           <select v-model="applyField" class="bbi-input">
             <option v-for="f in FIELD_OPTIONS" :key="f" :value="f">
@@ -1229,7 +1342,7 @@ function clearCustom() {
           </select>
         </label>
 
-        <label class="bbi-modal-field">
+        <label v-if="applying.field !== 'outfit'" class="bbi-modal-field">
           <span class="bbi-modal-label">写入方式</span>
           <select v-model="applyMode" class="bbi-input">
             <option value="append">追加在原值之后</option>
@@ -1237,6 +1350,15 @@ function clearCustom() {
           </select>
         </label>
 
+        <label v-if="applying.field === 'outfit'" class="bbi-modal-field"
+          ><span class="bbi-modal-label">服装只绑定当前穿搭，不写入脸部档案</span
+          ><select v-model="suitMode" class="bbi-input">
+            <option value="style">固定款式，允许剧情穿脱/明确换装</option>
+            <option value="always">始终穿此套装，忽略剧情穿脱</option></select
+          ><span class="bbi-field-hint"
+            >从当前聊天最后一楼开头起生效。要指定旧章节，请去角色管理 → 穿搭。</span
+          ></label
+        >
         <div class="bbi-modal-field">
           <span class="bbi-modal-label">选择角色</span>
           <div v-if="characters.length" class="bbi-lore-chars">
@@ -1246,6 +1368,7 @@ function clearCustom() {
               class="bbi-lore-char"
               type="button"
               @click="applyTo(c.name, applying)"
+              :disabled="applyBusy"
             >
               <span class="bbi-lore-char-name">{{ c.name }}</span>
               <span class="bbi-lore-char-hint">{{ currentValue(c.name) || '该字段为空' }}</span>
@@ -1261,7 +1384,13 @@ function clearCustom() {
     </ModalMask>
 
     <ModalMask :open="addingOpen" @close="addingOpen = false">
-      <div v-if="addingOpen" class="bbi-modal bbi-lore-modal" role="dialog" aria-modal="true" :aria-label="editingId ? '编辑素材' : '新增素材'">
+      <div
+        v-if="addingOpen"
+        class="bbi-modal bbi-lore-modal"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="editingId ? '编辑素材' : '新增素材'"
+      >
         <header class="bbi-modal-head">
           <span class="bbi-modal-title">{{ editingId ? '编辑素材' : '新增素材' }}</span>
           <button class="bbi-modal-x" type="button" aria-label="关闭" @click="addingOpen = false">
@@ -1297,7 +1426,8 @@ function clearCustom() {
             placeholder="champagne_tulle_gown（香槟色薄纱晚礼服）, halter_neckline（挂脖领口）, sequin_embroidery（亮片刺绣）"
           />
           <span class="bbi-field-hint">
-            从别处复制的一整段「英文 tag（中文说明）」直接贴这里，点下面解析：会自动剥掉括号、把中文说明变触发词、并猜分类与部位。之后还能手动改。
+            从别处复制的一整段「英文
+            tag（中文说明）」直接贴这里，点下面解析：会自动剥掉括号、把中文说明变触发词、并猜分类与部位。之后还能手动改。
           </span>
           <button class="bbi-btn bbi-btn-sm" type="button" @click="applyPaste">解析并填入下方</button>
         </label>
@@ -1322,12 +1452,7 @@ function clearCustom() {
 
         <label class="bbi-modal-field">
           <span class="bbi-modal-label">中文触发词（描述里出现这些词就会召回）</span>
-          <input
-            v-model="draftAliases"
-            class="bbi-input"
-            type="text"
-            placeholder="黑丝, 袜口滑落, 卷边"
-          />
+          <input v-model="draftAliases" class="bbi-input" type="text" placeholder="黑丝, 袜口滑落, 卷边" />
           <span class="bbi-field-hint">逗号或顿号分隔，至少一个，两个汉字以上。</span>
         </label>
 
@@ -1385,7 +1510,13 @@ function clearCustom() {
     </ModalMask>
 
     <ModalMask :open="importOpen" @close="importOpen = false">
-      <div v-if="importOpen" class="bbi-modal bbi-lore-modal" role="dialog" aria-modal="true" aria-label="导入素材">
+      <div
+        v-if="importOpen"
+        class="bbi-modal bbi-lore-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="导入素材"
+      >
         <header class="bbi-modal-head">
           <span class="bbi-modal-title">导入自定义素材</span>
           <button class="bbi-modal-x" type="button" aria-label="关闭" @click="importOpen = false">
@@ -1394,8 +1525,10 @@ function clearCustom() {
         </header>
 
         <p class="bbi-field-hint">
-          两种都能贴：① JSON（<code>{"wardrobe":[…],"poses":[…]}</code>、一个数组、或单条对象，缺字段的条目只跳过不整体失败）；
-          ② 网上分享的 tag 串，形如 <code>champagne_tulle_gown（香槟色薄纱晚礼服）, halter_neckline（挂脖领口）</code>——
+          两种都能贴：①
+          JSON（<code>{"wardrobe":[…],"poses":[…]}</code>、一个数组、或单条对象，缺字段的条目只跳过不整体失败）；
+          ② 网上分享的 tag 串，形如
+          <code>champagne_tulle_gown（香槟色薄纱晚礼服）, halter_neckline（挂脖领口）</code>——
           这类会自动剥括号、把中文说明当触发词、并猜分类与部位，导入后可在卡片上看到。
         </p>
 
@@ -1417,12 +1550,7 @@ function clearCustom() {
     </ModalMask>
 
     <ModalMask :open="thumbSettingsOpen" @close="thumbSettingsOpen = false">
-      <div
-        class="bbi-modal bbi-lore-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="配图设置"
-      >
+      <div class="bbi-modal bbi-lore-modal" role="dialog" aria-modal="true" aria-label="配图设置">
         <header class="bbi-modal-head">
           <span class="bbi-modal-title">配图设置</span>
           <button class="bbi-modal-x" type="button" aria-label="关闭" @click="thumbSettingsOpen = false">
@@ -1457,12 +1585,7 @@ function clearCustom() {
     </ModalMask>
 
     <ModalMask :open="rollOpen" @close="rollOpen = false">
-      <div
-        class="bbi-modal bbi-lore-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Roll 素材"
-      >
+      <div class="bbi-modal bbi-lore-modal" role="dialog" aria-modal="true" aria-label="Roll 素材">
         <header class="bbi-modal-head">
           <span class="bbi-modal-title">Roll 随机灵感</span>
           <button class="bbi-modal-x" type="button" aria-label="关闭" @click="rollOpen = false">
@@ -1524,16 +1647,26 @@ function clearCustom() {
         <p class="bbi-field-hint">
           <template v-if="rollKeyword.trim()">
             <span v-if="rollPool > 0">库里精准匹配到 {{ rollPool }} 条候选。</span>
-            <span v-else>{{ rollKind === 'fandom' ? '本地未命中，将用已保存 LLM 解析中文名和作品；无法确认时不提交生图。' : '库内未命中，将按关键词生成搭配。' }}</span>
+            <span v-else>{{
+              rollKind === 'fandom'
+                ? '本地未命中，将用已保存 LLM 解析中文名和作品；无法确认时不提交生图。'
+                : '库内未命中，将按关键词生成搭配。'
+            }}</span>
           </template>
-          <template v-else>
-            全库共有 {{ rollPool }} 条可选条目，直接点击即可完全随机抽取。
-          </template>
+          <template v-else> 全库共有 {{ rollPool }} 条可选条目，直接点击即可完全随机抽取。 </template>
         </p>
 
         <p v-if="rollFeedback" class="bbi-field-hint" role="status">{{ rollFeedback }}</p>
         <div v-if="rollChoices.length" class="bbi-lore-roll-row">
-          <button v-for="choice in rollChoices" :key="`${choice.name}-${choice.franchise}`" class="bbi-btn" :disabled="rollBusy" @click="doRoll(choice)">{{ choice.name }} · {{ choice.franchise }}</button>
+          <button
+            v-for="choice in rollChoices"
+            :key="`${choice.name}-${choice.franchise}`"
+            class="bbi-btn"
+            :disabled="rollBusy"
+            @click="doRoll(choice)"
+          >
+            {{ choice.name }} · {{ choice.franchise }}
+          </button>
         </div>
         <figure v-if="rollUrl" class="bbi-lore-roll-figure">
           <img :src="rollUrl" alt="roll 预览" title="点一下看大图" @click="zoomRoll" />
@@ -1541,15 +1674,21 @@ function clearCustom() {
         <p v-else-if="rollBusy && rollResult" class="bbi-field-hint">正在出图……</p>
 
         <template v-if="rollResult">
-          <p class="bbi-field-hint"><strong>{{ rollResult.name }}</strong></p>
+          <p class="bbi-field-hint">
+            <strong>{{ rollResult.name }}</strong>
+          </p>
           <p class="bbi-lore-tags">{{ rollResult.materialTags ?? rollResult.tags }}</p>
           <p class="bbi-field-hint">
-            来源「{{ rollResult.source }}」· {{ rollResult.franchise ? `作品 ${rollResult.franchise} · ` : '' }}分类 {{ rollResult.category }} · 尺度 {{ rollResult.nsfw }}
+            来源「{{ rollResult.source }}」·
+            {{ rollResult.franchise ? `作品 ${rollResult.franchise} · ` : '' }}分类
+            {{ rollResult.category }} · 尺度 {{ rollResult.nsfw }}
           </p>
         </template>
 
         <div class="bbi-channel-bar">
-          <button v-if="rollResult" class="bbi-btn" :disabled="rollBusy" @click="redrawRoll">重画这个角色</button>
+          <button v-if="rollResult" class="bbi-btn" :disabled="rollBusy" @click="redrawRoll">
+            重画这个角色
+          </button>
           <button
             class="bbi-btn bbi-btn-primary"
             type="button"
@@ -1562,7 +1701,8 @@ function clearCustom() {
             v-if="rollResult"
             class="bbi-btn"
             type="button"
-            @click="applyRollToChar" :disabled="rollBusy"
+            @click="applyRollToChar"
+            :disabled="rollBusy"
           >
             <Icon name="characters" /> 套用到角色
           </button>

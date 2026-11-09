@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { upsertCharTag, findCharTag } from '@/state/charTags';
+import { setAppearancePolicy } from '@/state/appearancePolicy';
+import { CHAR_TAG_FIELDS, recomputeCharTags, upsertCharTag, findCharTag } from '@/state/charTags';
 import { imageAppearance, adoptLook } from '@/state/characterStudio';
 import { putStudioImage } from '@/data/loreThumbs';
 import { computed, onMounted, ref, watch } from 'vue';
@@ -464,8 +465,19 @@ async function useAsPortrait(photo = shownEntry.value, expectedChat = getContext
       key = 'studio:' + crypto.randomUUID();
     await putStudioImage(key, blob, JSON.stringify(entry.fields));
     if (chat !== getContext()?.getCurrentChatId?.()) return;
+    if (JSON.stringify(findCharTag(name)?.fields) !== JSON.stringify(entry.fields))
+      throw new Error('保存期间角色档案已变化，请重新选择图片');
     const appearance = imageAppearance(entry, cast[0].tag);
     if (!upsertCharTag(appearance, name, { recordChanges: true })) throw new Error('无法保存该图人物标签');
+    setAppearancePolicy(name, {
+      mode: appearance.fields.fandom ? 'fandom' : 'manual',
+      fields: appearance.fields.fandom
+        ? { fandom: appearance.fields.fandom }
+        : Object.fromEntries(
+            CHAR_TAG_FIELDS.filter((f) => f !== 'outfit').map((f) => [f, appearance.fields[f]]),
+          ),
+    });
+    recomputeCharTags();
     adoptLook(appearance, key);
     toastr.success('已保存这张图的人物标签与头像；未训练模型，图片参考默认关闭', '墨影');
   } catch (e) {

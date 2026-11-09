@@ -1,4 +1,10 @@
 import {
+  appearancePolicyRevision,
+  blocksAppearanceChange,
+  appearancePolicyBlock,
+} from '@/state/appearancePolicy';
+import { applyWardrobeChoices, wardrobeChoiceRevision, suitNote } from '@/state/wardrobeChoice';
+import {
   costumeConflicts,
   explicitCostumeEvidence,
   costumeBefore,
@@ -229,6 +235,10 @@ const MALE_SEX_RE = /^(?:1boy|boy|male|man|men|masculine|♂)/i;
 function planChangeOps(plan: ImagePlan, source: string, notes: string[]): PositionedCharOp[] {
   const ops: PositionedCharOp[] = [];
   for (const change of plan.changes) {
+    if (blocksAppearanceChange(change.name, change.field)) {
+      notes.push(change.name + ': 用户绘图覆盖已阻止 ' + change.field + ' 剧情变更');
+      continue;
+    }
     if (change.field !== 'new') {
       const lines = source.replace(/\r\n?/g, '\n').split('\n');
       const preceding = [
@@ -462,19 +472,26 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 账本只记变化,所以还要拿档案里的固定着装垫底——角色第一次出图时账本是空的,
     // 那正是衣服最容易开始乱飘的时候。
     const wardrobe = clothingBefore(context.chat, floor, entriesBefore);
+    const expectedWardrobeChoice = wardrobeChoiceRevision(message),
+      expectedAppearancePolicy = appearancePolicyRevision();
     const wardrobeBaseline = new Map([...wardrobe].map(([name, entry]) => [name, JSON.stringify(entry)]));
+    applyWardrobeChoices(wardrobe, message);
     const wardrobeRevision = clothingRevision(context.chat, floor);
     const expectedStory = narrativeHash(rawSource);
     const savedWardrobe = readClothingFloor(message, wardrobeRevision);
     const slotWardrobe =
-      slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
-        ? new Map(savedWardrobe.frames[slot.seq].entries.map((e) => [e.name, e]))
-        : slot && slotRawTag
-          ? savedImageClothing(
-              { ...parseImageTagContent(slotRawTag), position: '', sourceLine: 0, charOffset: 0 },
-              wardrobe,
-            )
-          : null;
+      slot && expectedWardrobeChoice !== (savedWardrobe?.manualChoiceRevision ?? '[]')
+        ? new Map<string, import('./outfitTimeline').ClothingRecord>(
+            JSON.parse(JSON.stringify([...wardrobe])),
+          )
+        : slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
+          ? new Map(savedWardrobe.frames[slot.seq].entries.map((e) => [e.name, e]))
+          : slot && slotRawTag
+            ? savedImageClothing(
+                { ...parseImageTagContent(slotRawTag), position: '', sourceLine: 0, charOffset: 0 },
+                wardrobe,
+              )
+            : null;
     const outfitBlock = clothingBlock(slotWardrobe ?? wardrobe);
     const costumeRequest: CostumeRequest = { inherited: costumeBefore(context.chat, floor) };
     const messages = await buildAutoTagMessages(
@@ -493,7 +510,14 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     );
     costumeRequest.story = source;
     const channel = getTagGenChannel();
-    messages.push({ role: 'system', content: CLOTHING_PROTOCOL });
+    messages.push({
+      role: 'system',
+      content:
+        CLOTHING_PROTOCOL +
+        '\n' +
+        appearancePolicyBlock() +
+        '\n用户套装的部件 ID 和款式不允许随意重选；style 允许有证据的穿脱，明确整套换装可退出；always 不接受任何自动服装变更。',
+    });
     messages.push({
       role: 'system',
       content:
@@ -893,7 +917,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         );
       }
     const accepted = acceptClothingChanges(
-      slot ? [] : (plan.outfitChanges ?? []),
+      slot ? [] : (plan.outfitChanges ?? []).filter((c) => wardrobe.get(c.name)?.suitMode !== 'always'),
       source,
       wardrobe,
       activeEntries,
@@ -1126,6 +1150,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       upstreamHash: wardrobeRevision,
       costume,
       delta: true,
+      manualChoiceRevision: expectedWardrobeChoice,
       start: [],
       entries: [...finalWardrobe.values()].filter((e) => JSON.stringify(e) !== wardrobeBaseline.get(e.name)),
       changes: accepted.changes,
@@ -1139,7 +1164,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             ...savedWardrobe,
             frames: savedWardrobe.frames.map((frame, index) =>
               index === slot.seq && plan.images[0]
-                ? { ...frame, tag: serializeImageTag(plan.images[0]) }
+                ? {
+                    ...frame,
+                    tag: serializeImageTag(plan.images[0]),
+                    entries: frames[0]?.entries ?? frame.entries,
+                    costume: frames[0]?.costume ?? frame.costume,
+                  }
                 : frame,
             ),
           }
@@ -1148,6 +1178,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const result = await applyMessageText(
       floor,
       (currentText) => {
+        if (
+          appearancePolicyRevision() !== expectedAppearancePolicy ||
+          wardrobeChoiceRevision(getContext()?.chat[floor]) !== expectedWardrobeChoice
+        )
+          return null;
         if (
           controller.signal.aborted ||
           narrativeHash(currentText) !== expectedStory ||
