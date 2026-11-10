@@ -126,6 +126,7 @@ export const BUILTIN_FANDOMS: FandomMaterial[] = works.flatMap(([workTag, franch
     aliases: [name, roleTag, franchise, workTag],
     nsfw: 0,
     note: '仅角色名＋作品名，不附带外貌、画风或衣物。',
+    gender: 'f',
   })),
 );
 interface CatalogState {
@@ -303,6 +304,16 @@ export function loadFandomCatalog(): Promise<void> {
       /* Bundled directory remains readable if storage is unavailable. */
     }
     memo = null;
+    // Retire cached edits of removed identities as well; they must not reappear
+    // in exported backups or undo the female-only policy on the next load.
+    const retained = fandomCatalog().filter((x) => resolvedEditedIds.has(x.id));
+    if (saved.edits.length !== retained.length || saved.edits.some((x, i) => x.id !== retained[i]?.id)) {
+      try {
+        await persist({ ...saved, edits: retained });
+      } catch {
+        /* Shared catalogue still enforces the policy. */
+      }
+    }
   })().catch((error) => {
     loaded = undefined;
     throw error;
@@ -318,6 +329,13 @@ function equivalent(item: FandomMaterial, pool: FandomMaterial[]) {
   );
   return matches.length === 1 ? matches[0] : undefined;
 }
+export function isFemaleFandom(item: Pick<FandomMaterial, 'gender' | 'workTag'>): boolean {
+  return (
+    item.gender === 'f' &&
+    !!item.workTag.trim() &&
+    !/^(original|original character|unknown|none)$/i.test(normal(item.workTag))
+  );
+}
 export function fandomCatalog(): FandomMaterial[] {
   if (memo) return memo;
   const editedIds = new Set<string>();
@@ -331,7 +349,7 @@ export function fandomCatalog(): FandomMaterial[] {
   }
   for (const edit of saved.edits) {
     if (!edit?.roleTag || typeof edit.workTag !== 'string') continue;
-    const oldSlug = edit.id.startsWith('animadex:') ? edit.id.slice('animadex:'.length) : '';
+    const oldSlug = edit.roleTag.trim().replace(/ /g, '_');
     const redirected = catalogRedirects[oldSlug];
     const redirectedItem = redirected ? map.get('animadex:' + redirected) : undefined;
     if (redirectedItem) {
@@ -366,12 +384,15 @@ export function fandomCatalog(): FandomMaterial[] {
       map.get(edit.id) ||
       exactLookup.get(normal(edit.roleTag) + '|' + normal(edit.workTag)) ||
       identityLookup.get(normal(edit.roleTag).split(' (')[0] + '|' + normal(edit.workTag));
+    if (edit.id.startsWith('animadex:') && !old) continue;
+    if (!isFemaleFandom({ gender: old?.gender || edit.gender, workTag: edit.workTag })) continue;
     const id = old?.id || edit.id;
     editedIds.add(id);
     const value = {
       ...old,
       ...edit,
       id,
+      gender: old?.gender || edit.gender,
       name: old && edit.name === edit.roleTag ? old.name : edit.name,
       franchise: old && edit.franchise === edit.workTag ? old.franchise : edit.franchise,
       tags: edit.trigger || edit.tags || edit.roleTag + ', ' + edit.workTag,
@@ -391,7 +412,7 @@ export function fandomCatalog(): FandomMaterial[] {
   }
   const hidden = new Set(saved.hidden);
   resolvedEditedIds = editedIds;
-  return (memo = [...map.values()].filter((x) => !hidden.has(x.id)));
+  return (memo = [...map.values()].filter((x) => !hidden.has(x.id) && isFemaleFandom(x)));
 }
 export function editedFandomIds() {
   fandomCatalog();
@@ -436,7 +457,10 @@ export async function saveFandomIdentity(
       ...new Set([...(old?.aliases || []), ...(input.aliases || []), input.name.trim(), roleTag, workTag]),
     ],
     nsfw: old?.nsfw || 0,
+    gender: old?.gender || input.gender,
   };
+  if (!isFemaleFandom(item))
+    throw new Error('同人库仅收录已确认女性且有关联作品的角色；请补充作品并确认性别');
   await persist({
     ...saved,
     edits: [...saved.edits.filter((x) => x.id !== item.id), item],
@@ -470,7 +494,14 @@ export async function mergeFandomIdentities(from: string, to: string) {
   return merged;
 }
 export function exportFandomCatalog(items?: FandomMaterial[]) {
-  return JSON.stringify(items || saved, null, 2);
+  const allowed = fandomCatalog();
+  return JSON.stringify(
+    items
+      ? items.filter(isFemaleFandom)
+      : { ...saved, edits: allowed.filter((x) => resolvedEditedIds.has(x.id)) },
+    null,
+    2,
+  );
 }
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -579,7 +610,9 @@ export async function importFandomCatalog(text: string): Promise<number> {
         ? x.aliases.filter((a) => typeof a === 'string')
         : [x.name, roleTag, workTag],
       nsfw: 0,
+      gender: old?.gender || x.gender,
     };
+    if (!isFemaleFandom(item)) continue;
     edits.set(item.id, item);
     lookup.set(normal(roleTag) + '|' + normal(workTag), item);
   }

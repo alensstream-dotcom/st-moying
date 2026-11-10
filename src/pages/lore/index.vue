@@ -1,37 +1,15 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import FandomLibrary from '@/components/FandomLibrary.vue';
 import WardrobePanel from '@/components/WardrobePanel.vue';
-import { charTagLib, findCharTag, upsertCharTag, recomputeCharTags } from '@/state/charTags';
-import { setAppearancePolicy } from '@/state/appearancePolicy';
-import { adoptLook } from '@/state/characterStudio';
 import { purgeLegacyMaterials, exportMaterials, importMaterials } from '@/data/materialLibrary';
 import { purgeLegacyMaterialThumbs } from '@/data/loreThumbs';
 import type { FandomMaterial } from '@/data/fandomCatalog';
 const tab = ref('wardrobe'),
-  target = ref(''),
   feedback = ref(''),
   revision = ref(0);
-const names = computed(() => charTagLib.entries.map((x) => x.name));
-function applyFandom(item: FandomMaterial) {
-  try {
-    const old = findCharTag(target.value);
-    if (!old) throw new Error('请先在上方选择要更换形象的剧情人物');
-    const next = {
-      ...old,
-      source: 'manual' as const,
-      fields: { ...old.fields, fandom: item.tags },
-      nl: '',
-      raw: '',
-    };
-    if (!upsertCharTag(next, old.name, { recordChanges: true })) throw new Error('人物保存失败');
-    setAppearancePolicy(old.name, { mode: 'fandom', fields: { fandom: item.tags } });
-    recomputeCharTags();
-    adoptLook(next);
-    feedback.value = `已把 ${old.name} 的绘图身份固定为 ${item.name}；剧情服装另行记录，图片参考已关闭`;
-  } catch (e) {
-    feedback.value = e instanceof Error ? e.message : String(e);
-  }
+function appliedFandom(name: string, item: FandomMaterial) {
+  feedback.value = `已把 ${name} 的绘图身份固定为 ${item.name}；剧情服装另行记录`;
 }
 function download(text: string, name: string) {
   const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
@@ -105,18 +83,7 @@ onMounted(async () => {
         同人角色
       </button>
     </div>
-    <template v-if="tab === 'fandom'"
-      ><details class="optional-apply">
-        <summary>可选：套用到剧情人物</summary>
-        <label class="target"
-          >仅套用时选择人物<select v-model="target" class="bbi-input">
-            <option value="">不套用，独立使用素材</option>
-            <option v-for="name in names" :key="name">{{ name }}</option>
-          </select></label
-        >
-      </details>
-      <FandomLibrary action-label="套用给所选人物（可选）" @select="applyFandom"
-    /></template>
+    <FandomLibrary v-if="tab === 'fandom'" action-label="套用到角色…" @applied="appliedFandom" />
     <WardrobePanel v-else :key="revision" />
     <p role="status">{{ feedback }}</p>
   </section>

@@ -26,13 +26,26 @@ with relation_path.open(encoding='utf-8-sig',newline='') as f:
    rows.append(row);by_slug[slug]=row
    names=[n.strip() for n in item['other_names'].split(',') if n.strip()]
    if names:source_aliases[slug]=names
+# Cross-check gender against the newer appearance table. Any male/conflicting
+# evidence wins exclusion; lack of evidence never becomes female by default.
+appearance_source='https://huggingface.co/datasets/StoryAura/Danbooru-Dataset-csv/resolve/main/danbooru_character_appearance_corrected.csv'
+appearance_path=Path(tempfile.gettempdir())/'moying-character-appearance.csv'
+if not appearance_path.exists(): urllib.request.urlretrieve(appearance_source,appearance_path)
+looks={r['name'].replace(' ','_'):r['looks'] for r in csv.DictReader(appearance_path.open(encoding='utf-8-sig',newline=''))}
+def gender(slug):
+ tags={t.strip() for t in (by_slug[slug].get('core_tags','')+', '+looks.get(slug,'')).split(',')}
+ if any(re.fullmatch(r'\d+boys?', t) or t in ('male','male focus','male_focus','boy','man') for t in tags): return 'm'
+ if any(re.fullmatch(r'1girl', t) or t in ('female','girl','woman') for t in tags): return 'f'
+ return 'u'
+def eligible(slug):
+ r=by_slug[slug]
+ work=r['copyright'].strip()
+ return bool(work and work.lower() not in ('original','unknown','none','original_character') and gender(slug)=='f' and not re.search(r'genderswap|genderbend|male_to_female',slug+' '+r.get('core_tags','')))
 relations={}
 with relation_path.open(encoding='utf-8-sig',newline='') as f:
  for item in csv.DictReader(f):
   child=item['character_tag']; parent=item['base_character']
-  if child in by_slug and parent in by_slug and child!=parent and by_slug[child]['copyright'] and by_slug[child]['copyright']==by_slug[parent]['copyright']:
-   ct=set(by_slug[child].get('core_tags','').split(', ')); pt=set(by_slug[parent].get('core_tags','').split(', '))
-   if not (('1girl' in ct and '1boy' in pt) or ('1boy' in ct and '1girl' in pt)): relations[child]=parent
+  if child in by_slug and parent in by_slug and child!=parent and eligible(child) and eligible(parent) and by_slug[child]['copyright']==by_slug[parent]['copyright']: relations[child]=parent
 
 def root(slug):
  original=by_slug[slug]; current=slug; seen=set()
@@ -42,24 +55,45 @@ def root(slug):
   if target and target not in seen: current=target; continue
   m=re.fullmatch(r'(.*)_\([^()]*\)',current)
   candidate=m.group(1) if m else ''
-  if candidate and candidate not in seen and candidate in by_slug and by_slug[candidate]['copyright']==original['copyright']:
+  if candidate and candidate not in seen and candidate in by_slug and eligible(candidate) and by_slug[candidate]['copyright']==original['copyright']:
    current=candidate; continue
   return current
  return slug
-for r in rows: grouped[root(r['character'])].append(r)
+for r in rows:
+ if eligible(r['character']): grouped[root(r['character'])].append(r)
+# Community primary Chinese names can reveal renamed tags absent from base_character.
+# Only sufficiently long names within the exact same work are considered; machine
+# translations and shared short nicknames cannot merge identities.
+zh=json.loads((Path(__file__).resolve().parents[1]/'src/data/characterZh.json').read_text(encoding='utf-8'))
+parents={key:key for key in grouped}
+def find(key):
+ while parents[key]!=key:
+  parents[key]=parents[parents[key]]; key=parents[key]
+ return key
+seen_names={}
+for family,versions in grouped.items():
+ for r in versions:
+  name=(zh.get(r['character']) or [''])[0].strip()
+  if not re.fullmatch(r'[\u3400-\u9fff·・]{3,24}',name) or any(t in name for t in ('女主','主人公','无名','未知','原创')): continue
+  signature=(r['copyright'],name)
+  if signature in seen_names: parents[find(family)]=find(seen_names[signature])
+  else: seen_names[signature]=family
+families=defaultdict(list)
+for family,versions in grouped.items():families[find(family)].extend(versions)
 works=defaultdict(list); merged=0; redirects={}
-for canonical,versions in grouped.items():
- r=by_slug[canonical]; copyright=r['copyright']; trigger=r['trigger'].strip()
+for versions in families.values():
+ # Keep the most widely used English trigger, independently of translation order.
+ r=max(versions,key=lambda v:(int(v.get('count') or 0),v['character']))
+ canonical=r['character']; copyright=r['copyright']; trigger=r['trigger'].strip()
  inferred=canonical.replace('_',' ')+', '+copyright.replace('_',' ')
- tags={t.strip() for t in r.get('core_tags','').split(',')}
- gender='f' if '1girl' in tags and '1boy' not in tags else 'm' if '1boy' in tags and '1girl' not in tags else 'u'
  variants=[v['trigger'].strip() for v in versions if v['character']!=canonical]
  for v in versions:
   if v['character']!=canonical: redirects[v['character']]=canonical
- row=[canonical,int(r.get('count') or 0),gender]
+ row=[canonical,int(r.get('count') or 0),'f']
  if variants or trigger!=inferred:row.append(variants)
  if trigger!=inferred:row.append(trigger)
  works[copyright].append(row); merged+=len(variants)
-data={'version':1,'source':source,'license':'Apache-2.0','sourceSha256':hashlib.sha256(path.read_bytes()).hexdigest(),'supplementSource':'https://huggingface.co/datasets/StoryAura/Danbooru-Dataset-csv','aliases':source_aliases,'rawCount':len(rows),'characterCount':len(grouped),'mergedVariants':merged,'workCount':len(works),'redirects':redirects,'works':[[work,sorted(entries,key=lambda r:-r[1])] for work,entries in sorted(works.items(),key=lambda kv:-sum(r[1] for r in kv[1]))]}
+source_aliases={k:v for k,v in source_aliases.items() if eligible(k)}
+data={'version':1,'source':source,'license':'Apache-2.0','sourceSha256':hashlib.sha256(path.read_bytes()).hexdigest(),'supplementSource':'https://huggingface.co/datasets/StoryAura/Danbooru-Dataset-csv','appearanceSource':appearance_source,'appearanceSha256':hashlib.sha256(appearance_path.read_bytes()).hexdigest(),'policy':'female-work-linked-v1','aliases':source_aliases,'rawCount':len(rows),'characterCount':len(families),'mergedVariants':merged,'workCount':len(works),'redirects':redirects,'works':[[work,sorted(entries,key=lambda r:-r[1])] for work,entries in sorted(works.items(),key=lambda kv:-sum(r[1] for r in kv[1]))]}
 out=Path(__file__).resolve().parents[1]/'src/data/characterCatalog.json';out.write_text(json.dumps(data,ensure_ascii=False,separators=(',',':'))+'\n',encoding='utf-8')
 print(json.dumps({k:v for k,v in data.items() if k not in ('works','redirects','aliases')},ensure_ascii=True));print('bytes',out.stat().st_size)

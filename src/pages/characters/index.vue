@@ -420,16 +420,9 @@ async function adopt() {
     feedback.value = '已采用定妆，后续默认使用文字档案，无逐图参考费';
   });
 }
-function useOnlineFandom(item: FandomMaterial) {
-  if (!draft.value || busy.value) return;
-  revoke();
-  candidate.value = clone(draft.value);
-  candidate.value.fields.fandom = item.tags;
-  candidate.value.source = 'manual';
-  candidate.value.nl = '';
-  appearanceMode.value = 'fandom';
-  protectedFields.value = [];
-  feedback.value = `已用 ${item.name} 创建同人候选；可先重画预览，点击“采用此候选”后才锁定`;
+async function useOnlineFandom(name: string, item: FandomMaterial) {
+  await select(name);
+  feedback.value = `已将 ${item.name} 套用给 ${name}，同人身份已固定`;
   tab.value = '定妆';
 }
 function referenceChanged(event: Event) {
@@ -888,7 +881,7 @@ watch(
                 <button class="bbi-btn bbi-btn-primary" @click="adopt">采用此候选</button
                 ><button class="bbi-btn" @click="revoke">丢弃候选</button>
               </div>
-              <FandomLibrary @select="useOnlineFandom" @saved="version++" />
+              <FandomLibrary @applied="useOnlineFandom" @saved="version++" />
 
               <div class="reference">
                 <h3>让后续生成参考这张图 · 可选付费</h3>

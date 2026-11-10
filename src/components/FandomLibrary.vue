@@ -12,6 +12,7 @@ import {
   catalogInfo,
   type FandomMaterial,
 } from '@/data/fandomCatalog';
+import FandomApplyPicker from './FandomApplyPicker.vue';
 import MaterialThumbnail from './MaterialThumbnail.vue';
 import PreviewQueueBar from './PreviewQueueBar.vue';
 import { putStudioImage } from '@/data/loreThumbs';
@@ -23,13 +24,13 @@ import { getTagGenChannel, settings } from '@/state/settings';
 import { resolveFandomRoll } from '@/autoTag/fandomRoll';
 import type { RollResult } from '@/data/loreRoll';
 const props = defineProps<{ actionLabel?: string }>();
-const emit = defineEmits<{ select: [item: FandomMaterial]; saved: [] }>();
+const emit = defineEmits<{ applied: [name: string, item: FandomMaterial]; saved: [] }>();
+const applying = shallowRef<FandomMaterial | null>(null);
 const revision = ref(0),
   query = ref(''),
   workQuery = ref(''),
   medium = ref(''),
   work = ref(''),
-  female = ref(true),
   page = ref(0),
   feedback = ref(''),
   busy = ref(true),
@@ -78,7 +79,6 @@ const results = computed(() => {
       (!medium.value || x.medium.split('／').includes(medium.value)) &&
       (!work.value || (x.workTag || '__unknown__') === work.value) &&
       (!mine.value || mineIds.value.has(x.id)) &&
-      (!female.value || x.gender !== 'm') &&
       (q || work.value || workQuery.value.trim() ? true : visibleItem(x)) &&
       (!q || (x.searchText || [x.name, x.tags, ...x.aliases].join(' ').toLowerCase()).includes(q)),
   );
@@ -86,11 +86,7 @@ const results = computed(() => {
 const works = computed(() => {
   const groups = new Map<string, { tag: string; name: string; count: number; aliases: string[] }>();
   for (const item of all.value) {
-    if (
-      (medium.value && !item.medium.split('／').includes(medium.value)) ||
-      (female.value && item.gender === 'm')
-    )
-      continue;
+    if (medium.value && !item.medium.split('／').includes(medium.value)) continue;
     if (!workQuery.value.trim() && !visibleItem(item)) continue;
     const old = groups.get(item.workTag || '__unknown__');
     if (old) old.count++;
@@ -193,7 +189,7 @@ function fromRoll(item: RollResult): FandomMaterial {
     tags: item.tags,
     aliases: item.aliases,
     nsfw: item.nsfw,
-    gender: 'u',
+    gender: 'f',
     source: item.source,
   };
 }
@@ -324,9 +320,8 @@ async function save(use = false) {
     revision.value++;
     pick(item);
     emit('saved');
-    if (use) emit('select', item);
-    feedback.value =
-      (use ? '已提交可选套用；预览生成不需要绑定人物' : '素材已保存；不会修改剧情人物') + imageNote;
+    if (use) applying.value = item;
+    feedback.value = (use ? '请选择要套用的剧情角色' : '素材已保存；不会修改剧情人物') + imageNote;
   } catch (e) {
     feedback.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -459,12 +454,6 @@ onUnmounted(() => {
             <option value="">全部作品类型</option>
             <option v-for="m in media" :key="m">{{ m }}</option></select
           ><label><input v-model="mine" type="checkbox" @change="page = 0" />我的编辑 / 收藏</label
-          ><label
-            ><input
-              v-model="female"
-              type="checkbox"
-              @change="page = 0"
-            />隐藏明确男性（保留性别未标注角色）</label
           ><button class="bbi-btn" :disabled="busy || (!results.length && !query.trim())" @click="roll">
             {{ query.trim() ? '按输入生成' : 'Roll 并生成' }}</button
           ><label><input v-model="showRare" type="checkbox" @change="page = 0" />显示冷门及未归类素材</label
@@ -585,7 +574,7 @@ onUnmounted(() => {
             本地目录来自 Animadex 官方仓库指向的公开同源数据，共
             {{ catalogInfo.characters.toLocaleString() }} 个人物条目、{{ catalogInfo.works.toLocaleString() }}
             部作品。它是该公开快照，不声称等于 Animadex
-            当前实时图库。源数据的性别和别名可能有误，不用来改写剧情人物。
+            当前实时图库。目录仅保留资料标注女性且有关联作品的角色，不用来判断剧情人物性别。
           </p>
           <p>
             本体存在且同作品的括号版本自动并入本体；无法确认的同人可在详情手动合并，避免把不同作品的同名人物合错。默认展示有类型资料的常用作品；搜索可查完整目录，作品人物数量仅代表已收录标签，不等于官方完整名单。
@@ -641,10 +630,8 @@ onUnmounted(() => {
                 <option v-for="m in media" :key="m">{{ m }}</option>
               </select></label
             ><label
-              >目录性别标记（只用于筛选）<select v-model="draft.gender" class="bbi-input">
+              >性别确认<select v-model="draft.gender" class="bbi-input">
                 <option value="f">女性</option>
-                <option value="m">男性</option>
-                <option value="u">未知 / 其他</option>
               </select></label
             ><label
               >生图标签（可自由编辑，保存后生效）<textarea
@@ -658,7 +645,7 @@ onUnmounted(() => {
               <button class="bbi-btn" @click="copyTrigger">复制 trigger</button
               ><button class="bbi-btn bbi-btn-primary" @click="save(false)">保存编辑</button
               ><button class="bbi-btn" @click="save(true)">
-                {{ props.actionLabel || '套用到人物（可选）' }}</button
+                {{ props.actionLabel || '套用到角色…' }}</button
               ><button class="bbi-btn" @click="remove">删除素材</button>
             </div>
           </div>
@@ -685,6 +672,17 @@ onUnmounted(() => {
         </details>
       </template>
     </fieldset>
+    <FandomApplyPicker
+      :item="applying"
+      @close="applying = null"
+      @applied="
+        (name, item) => {
+          applying = null;
+          feedback = `已将 ${item.name} 套用给 ${name}，后续绘图身份已固定`;
+          emit('applied', name, item);
+        }
+      "
+    />
     <p role="status">{{ feedback }}</p>
     <button v-if="busy && resolver" class="bbi-btn" @click="resolver?.abort()">取消名称定位</button>
   </section>
