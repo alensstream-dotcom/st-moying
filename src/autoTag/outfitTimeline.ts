@@ -27,6 +27,8 @@ export interface ClothingRecord {
   source: string;
 }
 export interface ClothingChange {
+  invalidReason?: string;
+  parseNote?: string;
   reportedName?: string;
   subjectEvidence?: string;
   name: string;
@@ -229,29 +231,67 @@ export function parseClothingChanges(
       if (!pieces.length || new Set(pieces.map((p: ClothingPiece) => p.id)).size !== pieces.length) return [];
       let sourceLine = at.sourceLine,
         charOffset = at.charOffset ?? 0;
-      const evidence = text(item.evidence);
+      let evidence = text(item.evidence).replace(/\r\n?/g, '\n');
+      let invalidReason: string | undefined, parseNote: string | undefined;
       if (source !== undefined && evidence) {
-        const normalized = source.replace(/\r\n?/g, '\n'),
-          quote = evidence.replace(/\r\n?/g, '\n');
-        const matches: number[] = [];
-        for (let i = normalized.indexOf(quote); i >= 0; i = normalized.indexOf(quote, i + 1))
-          matches.push(i + quote.length);
-        if (!matches.length)
-          throw new Error(`${text(item.name)} 的穿脱 evidence 不是逐字原文，请引用实际动作句`);
-        const lines = normalized.split('\n');
-        const hint =
-          lines.slice(0, at.sourceLine).reduce((n, line) => n + line.length + 1, 0) + (at.charOffset || 0);
-        const distances = matches
-          .map((end) => ({ end, distance: Math.abs(end - hint) }))
-          .sort((a, b) => a.distance - b.distance);
-        if (distances.length > 1 && distances[0].distance === distances[1].distance)
-          throw new Error('穿脱动作引文有歧义，请加上附近原文以区分事件');
-        const prefix = normalized.slice(0, distances[0].end).split('\n');
-        sourceLine = prefix.length - 1;
-        charOffset = prefix[prefix.length - 1].length;
+        const normalized = source.replace(/\r\n?/g, '\n');
+        // Whitespace and typographic quotes/punctuation do not change event identity.
+        const canonical = (char: string) =>
+          /\s|[“”‘’「」『』"']/.test(char)
+            ? ''
+            : (
+                {
+                  '，': ',',
+                  '。': '.',
+                  '！': '!',
+                  '？': '?',
+                  '：': ':',
+                  '；': ';',
+                  '（': '(',
+                  '）': ')',
+                } as Record<string, string>
+              )[char] || char;
+        let compact = '';
+        const offsets: number[] = [];
+        for (let i = 0; i < normalized.length; i++) {
+          const char = canonical(normalized[i]);
+          if (char) {
+            compact += char;
+            offsets.push(i);
+          }
+        }
+        const quote = [...evidence].map(canonical).join('');
+        const matches: Array<{ start: number; end: number }> = [];
+        if (quote)
+          for (let i = compact.indexOf(quote); i >= 0; i = compact.indexOf(quote, i + 1))
+            matches.push({ start: offsets[i], end: offsets[i + quote.length - 1] + 1 });
+        if (!matches.length) {
+          if (item.operation === 'init') {
+            parseNote = `${text(item.name)}：初次穿搭引文不在本楼，按暂定初态处理，未作为本楼穿脱事实`;
+            evidence = '';
+          } else invalidReason = '穿脱引文无法在本楼定位，已隔离此事件，未将前文或改写当作本楼变化';
+        } else {
+          const lines = normalized.split('\n');
+          const hint =
+            lines.slice(0, at.sourceLine).reduce((n, line) => n + line.length + 1, 0) + (at.charOffset || 0);
+          const ranked = matches
+            .map((match) => ({ ...match, distance: Math.abs(match.end - hint) }))
+            .sort((a, b) => a.distance - b.distance);
+          if (ranked.length > 1 && ranked[0].distance === ranked[1].distance)
+            invalidReason = '穿脱引文存在多个同等落点，已隔离此事件';
+          else {
+            const hit = ranked[0];
+            evidence = normalized.slice(hit.start, hit.end);
+            const prefix = normalized.slice(0, hit.end).split('\n');
+            sourceLine = prefix.length - 1;
+            charOffset = prefix[prefix.length - 1].length;
+          }
+        }
       }
       return [
         {
+          invalidReason,
+          parseNote,
           reportedName: text(item.name),
           subjectEvidence: text(item.subjectEvidence),
           name: text(item.name),
@@ -259,7 +299,7 @@ export function parseClothingChanges(
           sourceLine,
           charOffset,
           operation: item.operation,
-          evidence: text(item.evidence),
+          evidence,
           pieces,
         },
       ];
@@ -327,6 +367,11 @@ export function acceptClothingChanges(
   const current: ClothingState = new Map(state.map((e) => [e.name, e]));
   for (const raw of changes) {
     const c = copy(raw);
+    if (c.invalidReason) {
+      rejected.push(c.name + ': ' + c.invalidReason);
+      continue;
+    }
+    if (c.parseNote) rejected.push(c.parseNote);
     c.name = resolveCanonicalCharName(c.name, entries);
     const old = current.get(c.name);
     if (old && c.operation === 'patch')

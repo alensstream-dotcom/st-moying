@@ -758,34 +758,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             if (!isMaleIdentity(change.name, candidateFacts))
               change.name = resolveCanonicalCharName(change.name, candidateEntries, candidateFacts);
           }
-          if (!slot) {
-            const check = acceptClothingChanges(
-              (candidate.outfitChanges || []).filter((c) => wardrobe.get(c.name)?.suitMode !== 'always'),
-              source,
-              wardrobe,
-              candidateEntries,
-            );
-            const missingActions = unreportedClothingActions(
-              source,
-              candidate.outfitChanges || [],
-              candidateEntries,
-              wardrobe,
-            );
-            if (missingActions.length) {
-              retryNote =
-                '原文存在未覆盖的实际穿脱动作：' +
-                missingActions.join('；') +
-                '。请逐字引用动作句并补全对应衣物事件，不能只给楼层末态或删除这段动作。';
-              throw new Error(retryNote);
-            }
-            if (check.rejected.length) {
-              retryNote =
-                '服装事件无法写入：' +
-                check.rejected.join('；') +
-                '。请修正事件引用、衣物ID和初始穿搭，不得删掉真实穿脱动作或改成全穿着；只报告发生变化的字段。';
-              throw new Error(retryNote);
-            }
-          }
+          // Clothing verification is per-event. It must never reject an otherwise
+          // valid floor image plan or force repeated paid analysis of a random jump.
           // 单槽重写忽略本次 changes,不校验建档 nl —— 校验它会为一份会被丢弃的
           // changes 白白消耗重试次数。NAI 关了自然语言时协议不要 nl,也就不验。
           if (
@@ -1093,6 +1067,17 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       wardrobe,
       activeEntries,
     );
+    if (!slot)
+      accepted.rejected.push(
+        ...unreportedClothingActions(source, accepted.changes, activeEntries, wardrobe).map(
+          (note) => '待核对的穿脱动作：' + note,
+        ),
+      );
+    if (accepted.rejected.length)
+      toastr.warning(
+        '部分服装变化无法确认，已记录原因并保留既有状态；本楼继续生成图片。可在图片说明中核对。',
+        '墨影',
+      );
     const costumeRepairs = await prepareCostumeRepairs(
       slotWardrobe ?? wardrobe,
       accepted.changes,
