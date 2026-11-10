@@ -52,6 +52,7 @@ export interface ClothingFloor {
     sourceLine: number;
     charOffset: number;
     entries: ClothingRecord[];
+    appearance?: CharTagEntry[];
     costume?: CostumeContext;
   }>;
 }

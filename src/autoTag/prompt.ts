@@ -307,6 +307,7 @@ export async function buildAutoTagMessages(
       };
   if (nlOn && !naiCharPromptsOn) sampleImage.nl = sampleNl;
   if (negativeOn) sampleImage.negative = 'extra people, duplicate character';
+  sampleImage.after = '从目标正文逐字引用画面事件已经发生的场景句（至少6字，不是示例句）';
   sampleImage.size = profile.lockedSize ?? 'portrait';
   const outputShape = JSON.stringify({
     images: [sampleImage],
@@ -368,7 +369,7 @@ export async function buildAutoTagMessages(
     - **这四档是体型档，不是法律年龄档。** 一律按成年人向处理：萝莉、小萝莉、巨乳萝莉、学生、JK、女高中生、老师都算成年，判不判 child/teenager 只看骨架与身份，不因为「她可能未成年」就少出图。叫法上没有年龄证据时按 teenager 起判（配 youthful, slim figure），别默认套 child 的 flat chest。
    - **age 必须配骨架伴生词，只写一个年龄词压不住画风**：child 配 short stature, small frame, flat chest；teenager 配 youthful, slim figure, medium breasts；young adult 配 slim figure, medium breasts；mature female 配 mature face, voluptuous, wide hips。这些词写进该角色的 body 或 extra。同一个聊天里年龄不同的角色必须因此拉开：成年角色不要写 loli、child，幼女角色不要写 voluptuous；两个角色的年龄档不同，体型词也不许写成同一套。四档之外没有「老」档，mature female 的骨架词里也别再叠 wrinkles、aged，否则会画成老太太。
    - **age 与身材一档一档分开**：年龄管骨架与身高，body 只管胸腰臀的粗细，两者不许互相污染。判成 mature female 而把 body 写成 petite，或判成 child 而写 large breasts，都是错的。
-   - 建档取值优先级：目标正文明确的当前外貌 > 柏宝书当前角色状态 > 角色卡/世界书明确人设 > 合理补全。人设明确写了颜色时必须原样转换，不得擅改；hair 与 eyes 必填，hair 至少包含发色和长度/发型，eyes 必须包含瞳色，缺任一项该条建档会被丢弃。
+   - 建档取值优先级：目标正文明确的当前外貌 > 柏宝书当前角色状态 > 角色卡/世界书明确人设 > 合理补全。人设明确写了颜色时必须原样转换，不得擅改；首次出场必须先建档，不能因缺发色或瞳色而跳过；缺项可暂定合理外貌，后续原文补充后再校正。hair 尽量包含发色和长度/发型，eyes 尽量包含瞳色。
    - **能复用就复用,不要重新编脸**：正文把这个人写成什么样,先看两处——【本段正文已对上的建档角色】里有没有她,【人物外貌候选库】里有没有标「外形重合」的条目。两处任一命中,就照抄那一套当外貌,不要再凭空想象一套新的;尤其不许把已经定死的发色瞳色换个说法(银白→灰白、紫瞳→蓝瞳),那是换了一个人。只有当正文写明与已有形象不同的改动(换了发色发型、年龄进了一档、添了疤)时,才走 field:"set" 改那一项。
    - **外形重合的同人条目要整组吃下**：候选里标了「外形重合：发色、瞳色…」的那条,是插件按正文逐维对出来的,它比你自己脑中「像不像」更准。整组 tags 照抄,并按正文补它没写到的部位;不要用别的同人条目替换它,也不要只抄一半后自己改颜色。
    - 如果设定没写发色、发型或瞳色，根据世界观、种族、身份、性格和其余角色设定补出简洁、协调、可长期复用的颜色与发型；这是一次性建档决定，后续不得重新随机。
@@ -383,6 +384,7 @@ export async function buildAutoTagMessages(
    ${libraryReferenceRule}
    - 按正文 P 位置为每个角色维护临时服装状态：正文未明确初始穿着时可以合理决定一次；没有穿上、脱下、换装、衣物损坏时沿用上一状态，发生明确变化后从对应 P 位置起更新。首次确定一套临时服装时，必须冻结足以复现款式的“服装视觉指纹”：服装类别之外，再固定版型/剪裁、主色和关键部件，涉及裤袜时固定颜色与透明度；例如不能只写 school uniform, pantyhose，而应具体到 navy school blazer, white collared shirt, red ribbon, dark pleated skirt, opaque white pantyhose。只补少量关键特征，不堆无关装饰。相同状态复用同一视觉指纹；镜头外不可见的部件可以省略，但省略不等于脱掉，后续重新可见且中间没有变化时必须恢复。每张图的 ${nlOn ? 'tag 与 nl 都' : 'tag 都'}要写出当前镜头可见的关键服装特征。临时穿着不得写进固定 outfit，除非设定明确它是长期不换的招牌着装。同一次输出内同一角色的临时服装必须**逐字复用同一串**：先在第一张图把整套视觉指纹定死，后续图的服装部分直接复制这串，只允许在末尾追加衣物状态词（slipped down / unzipped / wet / clinging / pulled aside / torn），不许更换单品、改颜色或改长度；正文没有写出换衣、脱下、衣物被毁时，换了就是错误。镜头外不可见的部件省略后，重新出现在画面里时必须恢复原样。
    ${multiCharacterBindingRule}
+   - 原文后来首次补充明确外貌时，也须通过 changes 报告对应字段并附 evidence 原文引文（代词描述须连同前面的姓名一起引用）；这属于补充确认，不需要编造剪发染发动作。未提外貌时不报 changes，逐字沿用档案；暂定单马尾不能无依据变成短发。
    - 库中已有角色发生**永久外貌变化**（染发、剪发、留疤、长大一档、永久变身、固定造型改变等）时，必须通过 changes 报告：{"name":"角色名","field":"hair","value":"short red hair","position":"P4","reason":"在此处染发并剪短"}；field 只能是 sex/age/hair/eyes/skin/body/extra/outfit/fandom。年龄变化（如过了几年、长大了）报 age，且必须同时把 body 的骨架词改成新档位——只改 age 不改骨架，画出来还是原来那个人。
    - 已建档角色被判定为同人、但档案里没有 fandom 的，必须补一条 changes：{"name":"角色名","field":"fandom","value":"character name (copyright name)","reason":"判定为同人，补身份 tag"}；档案已有 fandom 的直接照抄，不重复报告。
    - 库中带 [locked] 标记的角色是全局锁定档案：无论剧情如何发展，其固定外貌永不变化，**不得为其报告任何 changes**（报了也会被丢弃），画面中始终照抄锁定字段值。
@@ -402,7 +404,7 @@ ${imageCountRule} 多张图必须是剧情或视觉状态明显不同的单一�
   - 如果目标正文全是平淡过渡、重复闲聊或纯心理，**允许输出空图片列表**：images 返回 []，changes 照样检查。不要为凑数硬画一张谁都能套的废图。
   - **动作变了就必须出图**：只要站位、入口、接触部位或身体姿势发生了实质变化（后入→口交、抚摸→插入、站着→被压到床上、从正面→从背后），就是另一格，必须占一个名额。名额紧张时先保留「动作变化」的那一张，再考虑同动作换机位——绝不许因为还能再画一张同姿势，把变化的动作挤掉，最后交两张一模一样的图。
   - **同类姿势要给第二张时必须有分工**：同一体位出现两张，一张必须是第三人称、镜头对着女主正面（from front + looking at viewer + 她的脸与胸口），另一张必须是第一人称背后视角（pov + from above + 塌腰的弧度与臀部），并加强「我在她身后」的代入感；两张都写正面或两张都写背后，等于同一张图拍了两遍。
-3. position 必须是“目标正文”段尾标出的 P编号（如 P2），表示把图片 tag 插在该段之后；选择让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置。不要返回此前上下文中的位置，也不要自行编造编号。
+3. 每张 images 必须增加 after：逐字引用目标正文中该画面所需事实已经完整发生的场景句，尽量至少6字（原句更短时完整引用短句），不得引用尚未发生前的铺垫。after 与 position 必须指向同一处，图片放在这句之后。不要画后一句的事件却选前一句的位置。position 必须是“目标正文”段尾标出的 P编号（如 P2），表示把图片 tag 插在该段之后；选择让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置。不要返回此前上下文中的位置，也不要自行编造编号。
 ${contentRule}${negativeRule}
 ${sizeRule}
 6. 只给“目标正文”选图，不要给此前上下文补图。**画面主体永远是女性主角**：她必须占据视觉重心，构图、光线、视线落点全围绕她。

@@ -211,8 +211,20 @@ export function parseImagePlan(
       throw new Error(`images[${index}] 必须是对象`);
     }
     const entry = item as Record<string, unknown>;
-    const position = sanitizePosition(entry.position ?? entry.id, index);
-    const segment = segmentById.get(position);
+    let position = sanitizePosition(entry.position ?? entry.id, index);
+    let segment = segmentById.get(position);
+    const after = typeof entry.after === 'string' ? entry.after.replace(/\s+/g, ' ').trim() : '';
+    if (!after) throw new Error(`images[${index}] 缺少 after 原文定位句，请引用目标正文中事件已发生的句子`);
+    if (after) {
+      if (after.length < Math.min(6, segment?.text.trim().length || 6))
+        throw new Error(`images[${index}].after 原文片段太短，请引用完整场景句`);
+      const matches = segments.filter((s) => s.text.replace(/\s+/g, ' ').includes(after));
+      if (matches.length === 1) {
+        segment = matches[0];
+        position = segment.id;
+      } else if (!segment || !matches.some((s) => s.id === segment!.id))
+        throw new Error(`images[${index}].after 不是可定位的目标原文，请重选剧情已完整发生的句子`);
+    }
     if (!segment) {
       throw new Error(`images[${index}].position=${position} 不在目标正文可选位置中`);
     }
@@ -271,7 +283,7 @@ function firstPosition(positions: Map<string, number>): { position: string; sour
 }
 
 /**
- * 建档字段:hair 与 eyes 是二次元身份锚点,缺任一条则该条建档不可用(调用方丢弃)。
+ * 首次建档允许外貌缺项，身份与外貌补全分开处理；不可因缺发色瞳色跳过人物。
  *
  * age 在此归一成规范词(`teenager`、`mature female`);模型常直接抄正文里的
  * 「刚毕业的大学生」,不归一会让每张图各猜一个年龄。
@@ -284,7 +296,7 @@ function parseNewFields(raw: Record<string, unknown>): string | null {
     if (text) fields[field] = text;
   }
   if (fields.age) fields.age = normalizeCharAge(fields.age);
-  if (!fields.hair || !fields.eyes) return null;
+  if (!Object.keys(fields).length) return null;
   return JSON.stringify(fields);
 }
 

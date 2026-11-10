@@ -149,6 +149,7 @@ export interface CharTagChangeRecord {
 }
 
 export interface CharTagEntry {
+  fieldEvidence?: Partial<Record<CharTagField, string>>;
   name: string;
   fields: Record<CharTagField, string>;
   raw: string;
@@ -159,6 +160,7 @@ export interface CharTagEntry {
 }
 
 export interface CharTagNewOp {
+  fieldEvidence?: Partial<Record<CharTagField, string>>;
   kind: 'new';
   name: string;
   fields: Record<CharTagField, string>;
@@ -171,6 +173,7 @@ export interface CharTagNewOp {
 }
 
 export interface CharTagSetOp {
+  evidence?: string;
   kind: 'set';
   name: string;
   field: CharTagField | 'raw' | 'nl';
@@ -328,6 +331,7 @@ function normalizeEntry(raw: unknown): CharTagEntry | null {
   return {
     name,
     fields,
+    fieldEvidence: normalizeFields(value.fieldEvidence),
     raw: rawTag,
     nl: typeof value.nl === 'string' ? value.nl.trim() : '',
     source: value.source === 'book' || value.source === 'ai' ? value.source : 'manual',
@@ -340,6 +344,7 @@ function cloneEntry(entry: CharTagEntry): CharTagEntry {
   return {
     ...entry,
     fields: { ...entry.fields },
+    fieldEvidence: { ...entry.fieldEvidence },
     history: entry.history.map((record) => ({ ...record })),
   };
 }
@@ -374,6 +379,7 @@ function normalizeAutoOp(raw: unknown): CharTagAutoOp | null {
       kind: 'new',
       name,
       fields,
+      fieldEvidence: normalizeFields(value.fieldEvidence),
       raw: rawTag,
       nl: typeof value.nl === 'string' ? value.nl.trim() : '',
       source: value.source === 'book' ? 'book' : 'ai',
@@ -389,6 +395,7 @@ function normalizeAutoOp(raw: unknown): CharTagAutoOp | null {
     kind: 'set',
     name,
     field,
+    evidence: typeof value.evidence === 'string' ? value.evidence : undefined,
     value: next,
     reason: typeof value.reason === 'string' ? value.reason : '',
     at,
@@ -462,6 +469,7 @@ export function applyCharTagOps(
       const entry: CharTagEntry = {
         name: op.name,
         fields: { ...op.fields },
+        fieldEvidence: { ...op.fieldEvidence },
         raw: op.raw,
         nl: op.nl,
         source: op.source,
@@ -489,6 +497,8 @@ export function applyCharTagOps(
     if (op.field === 'raw') entry.raw = op.value;
     else if (op.field === 'nl') entry.nl = op.value;
     else entry.fields[op.field] = op.value;
+    if (op.field !== 'raw' && op.field !== 'nl' && op.evidence)
+      entry.fieldEvidence = { ...entry.fieldEvidence, [op.field]: op.evidence };
     entry.source = 'ai';
     entry.desc = '';
     pushHistory(entry, {

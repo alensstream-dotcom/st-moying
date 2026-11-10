@@ -101,6 +101,7 @@ import {
   readCharTagFloorDelta,
   recomputeCharTags,
   type CharTagAutoOp,
+  type CharTagEntry,
   type CharTagField,
 } from '@/state/charTags';
 import { injectImageTags, parseImagePlan, type ImageInsertion, type ImagePlan } from '@/autoTag/protocol';
@@ -233,7 +234,12 @@ const FANDOM_GUARD_FIELDS: ReadonlySet<string> = new Set(['hair', 'eyes', 'skin'
  */
 const MALE_SEX_RE = /^(?:1boy|boy|male|man|men|masculine|♂)/i;
 
-function planChangeOps(plan: ImagePlan, source: string, notes: string[]): PositionedCharOp[] {
+function planChangeOps(
+  plan: ImagePlan,
+  source: string,
+  notes: string[],
+  entries: CharTagEntry[] = [],
+): PositionedCharOp[] {
   const ops: PositionedCharOp[] = [];
   for (const change of plan.changes) {
     if (blocksAppearanceChange(change.name, change.field)) {
@@ -254,10 +260,32 @@ function planChangeOps(plan: ImagePlan, source: string, notes: string[]): Positi
         notes.push(`${change.name}: 未采纳 ${change.field} 变更，缺少有效原文证据`);
         continue;
       }
+      const existing = entries.find((e) => e.name === change.name);
+      const description: Record<string, RegExp> = {
+        hair: /头发|发丝|发型|长发|短发|马尾|辫|披发|刘海|秀发|hair|ponytail|braid/i,
+        eyes: /眼|瞳|眸|eyes|iris/i,
+        skin: /肤|skin/i,
+        body: /身材|体型|身高|胸|纤细|苗条|高挑|娇小|figure|body|stature/i,
+        extra: /脸|眉|鼻|唇|耳|痣|疤|轮廓|face|eyebrow|lips|jaw|ears/i,
+        age: /岁|年龄|年纪|years old|age/i,
+      };
+      const tokens = (v: string) =>
+        v
+          .split(',')
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean);
+      const oldTokens = tokens(existing?.fields[change.field as CharTagField] || '');
+      const nextTokens = new Set(tokens(change.value));
+      const supplement =
+        existing &&
+        existing.source !== 'manual' &&
+        description[change.field]?.test(change.evidence) &&
+        (!existing.fieldEvidence?.[change.field as CharTagField] ||
+          oldTokens.every((t) => nextTokens.has(t)));
       const action =
         /染|剪|剃|长大|长高|成长|变身|变成|变为|留下.{0,6}疤|受伤|恢复|治愈|永久|dye|cut|shav|grow|transform|scar|heal|permanent/i;
       if (
-        !action.test(change.evidence) ||
+        (!action.test(change.evidence) && !supplement) ||
         change.field === 'fandom' ||
         change.field === 'sex' ||
         change.field === 'outfit'
@@ -305,6 +333,29 @@ function planChangeOps(plan: ImagePlan, source: string, notes: string[]): Positi
     } else {
       const next = change.field === 'age' ? normalizeCharAge(change.value) : change.value;
       op = createCharTagSetOp(change.name, change.field, next, change.reason);
+    }
+    if (op?.kind === 'set') op.evidence = change.evidence;
+    if (
+      op?.kind === 'new' &&
+      change.evidence &&
+      source.includes(change.evidence) &&
+      change.evidence.includes(change.name)
+    ) {
+      const hints: Partial<Record<CharTagField, RegExp>> = {
+        hair: /发|辫|马尾|hair|braid|ponytail/i,
+        eyes: /眼|瞳|眸|eyes/i,
+        skin: /肤|skin/i,
+        body: /体型|身材|胸|身高|figure|body/i,
+        extra: /脸|眉|鼻|唇|痣|疤|face|eyebrow|lips/i,
+        age: /岁|年龄|age/i,
+      };
+      op.fieldEvidence = Object.fromEntries(
+        Object.entries(hints)
+          .filter(
+            ([key, re]) => op.kind === 'new' && op.fields[key as CharTagField] && re.test(change.evidence!),
+          )
+          .map(([key]) => [key, change.evidence!]),
+      );
     }
     if (op) ops.push({ op, sourceLine: change.sourceLine, charOffset: change.charOffset });
   }
@@ -608,7 +659,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 并在因换称呼漏抄固定外貌时把档案核心外貌字段补进 character.tag。
           const candidateFacts = mergeIdentityFacts([
             ...knownIdentities,
-            ...assessIdentityClaims(candidate.identities ?? [], identitySources),
+            ...assessIdentityClaims(candidate.identities ?? [], identitySources, knownIdentities),
           ]);
           for (const change of candidate.changes)
             if (change.field === 'new' && !candidate.identities?.some((c) => c.name === change.name)) {
@@ -900,11 +951,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
 
     // 单槽重写不落 changes:首次全量分析已为整楼建过档,这里再应用一次只会产生
     // 重复的建档/变更记录;库文本已含本楼增量(见上面 entriesBefore),AI 照抄即可。
-    const assessedIdentities = assessIdentityClaims(plan.identities ?? [], identitySources);
+    const assessedIdentities = assessIdentityClaims(plan.identities ?? [], identitySources, knownIdentities);
     const planIdentities = mergeIdentityFacts([...knownIdentities, ...assessedIdentities]);
     const safeEntries = eligibleIdentityEntries(entriesBefore, planIdentities);
     const appearanceChangeNotes: string[] = [];
-    const planOps = slot ? [] : planChangeOps(plan, source, appearanceChangeNotes);
+    const planOps = slot ? [] : planChangeOps(plan, source, appearanceChangeNotes, safeEntries);
     // 锁定角色(全局库)不接受 AI changes:丢弃,不写入楼层、不参与 @替换。
     // 重放侧 applyCharTagOps 也会按锁定名再拦一次(旧消息里可能已存这类 ops)。
     const effectiveOps = lockedNames.size
@@ -1166,6 +1217,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         tag: serializeImageTag(image),
         sourceLine: image.sourceLine,
         charOffset: image.charOffset,
+        appearance: entriesAt
+          .filter((e) => image.characters.some((c) => c.name === e.name))
+          .map((e) => ({ ...e, history: [] })),
         entries: [...at.values()].filter((e) => image.characters.some((c) => c.name === e.name)),
         costume: frameCostume,
       });

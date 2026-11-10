@@ -11,7 +11,7 @@ const split = (s: string) =>
     .filter(Boolean);
 const unique = (parts: string[]) => [...new Map(parts.map((t) => [t.toLowerCase(), t])).values()].join(', ');
 const TRAIT =
-  /\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|ahoge|bob cut|breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall|short woman|pointy ears|elf ears|tsurime|tareme|twintails|hairbun|hair bun|twin tails|fangs|lips|heterochromia|mole|scar|freckles|young adult|mature female|teenager|child)\b/i;
+  /\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|ahoge|bob|pixie cut|updo|hair buns?|breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall|short woman|pointy ears|elf ears|tsurime|tareme|twintails|hairbun|hair bun|twin tails|fangs|lips|heterochromia|mole|scar|freckles|young adult|mature female|teenager|child)\b/i;
 const EXPRESSION =
   /\b(?:closed eyes|half.closed eyes|looking|gaze|eye contact|tears|crying|smiling|smile|blush|expression|breasts out|grabbing|holding|pulling|touching|stroking)\b/i;
 const FANDOM = /^[^:]*\s+\\?\([^()]+\\?\)\s*(?:::\s*)?$/;
@@ -61,7 +61,8 @@ function ownsTrait(entry: CharTagEntry, token: string): boolean {
   if (isManualFandom(entry) || entry.fields.fandom) return true;
   const f = entry.fields;
   return !!(
-    (f.hair && /\b(?:hair|bangs|ponytail|braid|ahoge|bob cut)\b/i.test(token)) ||
+    (f.hair &&
+      /\b(?:hair|bangs|ponytail|twintails|braid|ahoge|bob|pixie cut|updo|hair bun)\b/i.test(token)) ||
     (f.eyes && /\b(?:eyes?|heterochromia)\b/i.test(token)) ||
     (f.skin && /\bskin\b/i.test(token)) ||
     (f.body &&
@@ -132,6 +133,13 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
         /\b(?:slim|slender|voluptuous|petite|muscular|tall|short|curvy)\s+(?:figure|body|woman|girl)\b/gi,
         'person',
       );
+  }
+  if (!locked && entry.fields.hair) {
+    result = result.replace(
+      /\b(?:(?:short|long|straight|curly|wavy|high|low|single|twin|side|black|blonde?|brown|silver|white|red|blue|pink)\s+){0,5}(?:ponytails?|twintails|twin tails|braids?|bob(?: cut)?|pixie cut|updo|hair buns?)\b/gi,
+      'hairstyle',
+    );
+    result += ` Fixed hairstyle: ${entry.fields.hair}.`;
   }
   // Tags carry every fixed field. Keep the scene/action prose rather than replacing it with a profile dump.
   return result;

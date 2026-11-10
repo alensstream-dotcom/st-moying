@@ -270,6 +270,36 @@ export async function generateImage(
     ).values(),
   ].filter((e) => input.characters?.some((c) => c.name === e.name));
   let appearanceNotes: string[] = [];
+  if (input.storyFrame && input.characters?.length) {
+    const chat = getContext()?.chat ?? [];
+    const saved = readClothingFloor(
+      chat[input.storyFrame.floor],
+      clothingRevision(chat, input.storyFrame.floor),
+    );
+    const frame = saved?.frames.find((f) => f.tag === input.storyFrame!.tag);
+    if (frame?.appearance?.length) {
+      const image = {
+        position: '',
+        sourceLine: frame.sourceLine,
+        charOffset: frame.charOffset,
+        tag: input.prompt,
+        nl: input.nl || '',
+        negative: input.negative || '',
+        size: input.size || ('portrait' as const),
+        characters: input.characters.map((c) => ({ ...c })),
+      };
+      appearanceNotes.push(
+        ...enforceAppearance(
+          image,
+          frame.appearance,
+          !!input.nl || image.characters.some((c) => !!c.nl),
+          status.supportsCharacters,
+        ),
+      );
+      input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
+    }
+  }
+
   if (manualFandoms.length && input.characters?.length) {
     const image = {
       position: '',
@@ -281,11 +311,13 @@ export async function generateImage(
       size: input.size ?? ('portrait' as const),
       characters: input.characters.map((c) => ({ ...c })),
     };
-    appearanceNotes = enforceAppearance(
-      image,
-      manualFandoms,
-      !!input.nl || image.characters.some((c) => !!c.nl),
-      status.supportsCharacters,
+    appearanceNotes.push(
+      ...enforceAppearance(
+        image,
+        manualFandoms,
+        !!input.nl || image.characters.some((c) => !!c.nl),
+        status.supportsCharacters,
+      ),
     );
     appearanceNotes.push(
       ...manualFandoms.map(
