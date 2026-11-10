@@ -481,7 +481,11 @@ onUnmounted(() => {
             >本批上限<input v-model.number="limit" class="bbi-input number" type="number" min="1" max="1000"
           /></label>
         </div>
-        <PreviewQueueBar :tasks="tasks" @changed="revision++" />
+        <PreviewQueueBar
+          scene="solo, cowboy shot, looking at viewer, centered composition, simple background"
+          :tasks="tasks"
+          @changed="revision++"
+        />
         <details>
           <summary>目录来源、导入导出</summary>
           <p>
@@ -557,7 +561,11 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
-        <PreviewQueueBar :tasks="single" @changed="revision++" />
+        <PreviewQueueBar
+          scene="solo, cowboy shot, looking at viewer, centered composition, simple background"
+          :tasks="single"
+          @changed="revision++"
+        />
         <details>
           <summary>同一人物的重复条目合并</summary>
           <p>

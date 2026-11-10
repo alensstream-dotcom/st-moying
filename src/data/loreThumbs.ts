@@ -1,3 +1,4 @@
+import type { GenerationMeta } from '@/generationMeta';
 /**
  * 素材库预览图缓存。
  *
@@ -18,6 +19,7 @@ export type ThumbKind = 'wardrobe' | 'pose' | 'face';
 
 export interface ThumbRecord {
   blob: Blob;
+  meta?: GenerationMeta;
   /** 生成时用的提示词，用来判断缓存是否过期（换了 tag 就该重画）。 */
   prompt: string;
   at: number;
@@ -157,10 +159,15 @@ export function resetThumbCache(): void {
 }
 
 /** Studio adopts only after durable storage succeeds; never silently lose a paid portrait. */
-export async function putStudioImage(key: string, blob: Blob, prompt: string): Promise<void> {
+export async function putStudioImage(
+  key: string,
+  blob: Blob,
+  prompt: string,
+  meta?: GenerationMeta,
+): Promise<void> {
   const db = await openDb();
   if (!db) throw new Error('立绘未能持久保存，请下载图片备份并检查浏览器存储');
-  const record = { blob, prompt, at: Date.now() };
+  const record = { blob, prompt, at: Date.now(), ...(meta ? { meta } : {}) };
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
     tx.objectStore(STORE).put(record, key);

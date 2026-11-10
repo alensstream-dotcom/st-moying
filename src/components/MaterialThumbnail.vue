@@ -30,7 +30,9 @@ async function load() {
     if (ticket === epoch && record) {
       url.value = URL.createObjectURL(record.blob);
       stale.value = record.prompt !== props.tags;
-      picturePrompt.value = record.prompt;
+      picturePrompt.value = record.meta
+        ? `${record.meta.model} · ${record.meta.width}×${record.meta.height}\n正向：${record.meta.positive}\n负向：${record.meta.negative}`
+        : record.prompt;
     }
   } catch {}
 }

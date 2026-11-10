@@ -1,7 +1,7 @@
 import { getThumb, putStudioImage, thumbKey, type ThumbKind } from '@/data/loreThumbs';
 import { decideSeed, generateImage } from '@/generate';
 import { settings, type BackendId } from '@/state/settings';
-import { loreGenPreset } from '@/state/genPresets';
+import type { GenerationMeta } from '@/generationMeta';
 export interface ThumbTask {
   kind: ThumbKind;
   id: string;
@@ -20,6 +20,7 @@ export interface ThumbJobState {
   skipped: number;
   current: string;
   lastError: string;
+  lastGeneration?: GenerationMeta;
 }
 const state: ThumbJobState = {
   running: false,
@@ -98,7 +99,6 @@ export function startThumbJob(tasks: ThumbTask[], intervalMs: number, force = fa
   if (!tasks.length) return 0;
   const existing = new Set(queue.map((t) => t.kind + ':' + t.id + ':' + t.prompt));
   if (activeKey) existing.add(activeKey);
-  const preset = loreGenPreset();
   const pending = tasks
     .filter((t) => t.prompt.trim())
     .filter((t) => {
@@ -110,10 +110,14 @@ export function startThumbJob(tasks: ThumbTask[], intervalMs: number, force = fa
     .map((t) => ({
       ...t,
       force,
-      backend: t.backend ?? preset?.backend ?? settings.defaultBackend,
-      genPresetId: t.genPresetId ?? preset?.id ?? settings.activeGenPreset,
-      naiModel: t.naiModel ?? settings.autoTag.lore.thumbModel,
-      scene: t.scene ?? 'solo, full body, standing, facing viewer, centered composition, simple background',
+      backend: t.backend ?? settings.defaultBackend,
+      genPresetId: t.genPresetId ?? '',
+      naiModel: t.naiModel ?? '',
+      scene:
+        t.scene ??
+        (t.kind === 'face'
+          ? 'solo, cowboy shot, looking at viewer, centered composition, simple background'
+          : 'solo, full body, standing, looking at viewer, centered composition, simple background'),
     }));
   if (!pending.length) return 0;
   if (state.running) {
@@ -182,15 +186,16 @@ async function runNext(ticket: number, interval: number): Promise<void> {
         signal,
       );
       revoke = () => out.result.revoke();
+      if (ticket === epoch) state.lastGeneration = out.meta;
       if (ticket !== epoch) return;
       const response = await fetch(out.result.url, { signal });
       if (!response.ok) throw new Error('预览图片读取失败 HTTP ' + response.status);
       const blob = await response.blob();
       if (ticket !== epoch) return;
       const storedKey = thumbKey(task.kind, task.id);
-      await putStudioImage(storedKey, blob, task.prompt);
+      await putStudioImage(storedKey, blob, task.prompt, out.meta);
       if (storedKey !== thumbKey(task.kind, task.id))
-        await putStudioImage(thumbKey(task.kind, task.id), blob, task.prompt);
+        await putStudioImage(thumbKey(task.kind, task.id), blob, task.prompt, out.meta);
       if (ticket !== epoch) return;
       state.done++;
       failures = 0;
