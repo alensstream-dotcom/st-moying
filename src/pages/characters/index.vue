@@ -127,8 +127,34 @@ function persistPolicy(entry: CharTagEntry) {
     if (!entry.fields.fandom.trim()) throw new Error('同人锁定需要先填写或选择同人身份');
     fields.fandom = entry.fields.fandom;
   }
-  setAppearancePolicy(entry.name, { mode: appearanceMode.value, fields });
+  setAppearancePolicy(entry.name, { mode: appearanceMode.value, fields }, entry);
   recomputeCharTags();
+}
+function restoreOriginalAppearance() {
+  if (!draft.value) return;
+  const backup = appearancePolicy(draft.value.name)?.backup;
+  if (!backup) {
+    feedback.value = '没有套用前的外貌备份';
+    return;
+  }
+  const entry = {
+    ...draft.value,
+    ...JSON.parse(JSON.stringify(backup)),
+    fields: { ...backup.fields, outfit: draft.value.fields.outfit },
+    source: 'manual' as const,
+  };
+  if (!upsertCharTag(entry, selected.value, { recordChanges: true })) {
+    feedback.value = '恢复失败，未解除锁定';
+    return;
+  }
+  setAppearancePolicy(entry.name, { mode: 'story', fields: {} });
+  recomputeCharTags();
+  draft.value = clone(entry);
+  appearanceMode.value = 'story';
+  protectedFields.value = [];
+  adoptLook(entry);
+  feedback.value = '已恢复套用前外貌并解除同人锁定，服装记录保留';
+  version.value++;
 }
 const locks = ref<string[]>(['sex', 'age', 'hair', 'eyes', 'body', 'fandom']);
 const version = ref(0),
@@ -760,6 +786,17 @@ watch(
                 <p>
                   手改字段会自动进入手动保护；采用候选时新增/改变的字段也进入保护。选择模式与保护项后点击保存档案。修改小说原文不会被阻止，只覆盖绘图外貌。重
                   Roll 保留项与剧情保护是两套不同用途。
+                </p>
+                <button
+                  v-if="appearancePolicy(selected)?.backup"
+                  class="bbi-btn"
+                  @click="restoreOriginalAppearance"
+                >
+                  恢复套用前外貌并解除锁定
+                </button>
+                <p v-if="appearanceMode === 'fandom'">
+                  同人模式只使用 trigger
+                  和下方显式保护的修正词；旧外貌隔离，剧情不再更新固定外貌，服装和临时状态继续记录。
                 </p>
                 <div v-if="appearanceMode !== 'story'">
                   <label v-for="f in CHAR_TAG_FIELDS.filter((f) => f !== 'outfit' && f !== 'fandom')" :key="f"

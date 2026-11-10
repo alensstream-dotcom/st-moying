@@ -3,7 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import ModalMask from './ModalMask.vue';
 import type { FandomMaterial } from '@/data/fandomCatalog';
 import { charTagLib, findCharTag, upsertCharTag, recomputeCharTags } from '@/state/charTags';
-import { setAppearancePolicy } from '@/state/appearancePolicy';
+import { setAppearancePolicy, fandomOnly } from '@/state/appearancePolicy';
 import { adoptLook } from '@/state/characterStudio';
 import { getContext } from '@/st/context';
 const props = defineProps<{ item: FandomMaterial | null }>();
@@ -35,15 +35,9 @@ function apply() {
     if (chat !== getContext()?.getCurrentChatId?.()) throw new Error('聊天已切换，请关闭后重新选择角色');
     const old = findCharTag(target.value);
     if (!old) throw new Error('请选择角色库中要套用的角色');
-    const next = {
-      ...old,
-      source: 'manual' as const,
-      fields: { ...old.fields, fandom: item.tags },
-      nl: '',
-      raw: '',
-    };
+    const next = fandomOnly(old, { fandom: item.tags });
     if (!upsertCharTag(next, old.name, { recordChanges: true })) throw new Error('角色档案保存失败');
-    setAppearancePolicy(old.name, { mode: 'fandom', fields: { fandom: item.tags } });
+    setAppearancePolicy(old.name, { mode: 'fandom', fields: { fandom: item.tags } }, old);
     recomputeCharTags();
     adoptLook(next);
     emit('applied', old.name, item);

@@ -11,18 +11,28 @@ const split = (s: string) =>
     .filter(Boolean);
 const unique = (parts: string[]) => [...new Map(parts.map((t) => [t.toLowerCase(), t])).values()].join(', ');
 const TRAIT =
-  /\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|ahoge|bob cut|breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall|short woman|pointy ears|elf ears|heterochromia|mole|scar|freckles|young adult|mature female|teenager|child)\b/i;
+  /\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|ahoge|bob cut|breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall|short woman|pointy ears|elf ears|tsurime|tareme|twintails|hairbun|hair bun|twin tails|fangs|lips|heterochromia|mole|scar|freckles|young adult|mature female|teenager|child)\b/i;
 const EXPRESSION =
   /\b(?:closed eyes|half.closed eyes|looking|gaze|eye contact|tears|crying|smiling|smile|blush|expression|breasts out|grabbing|holding|pulling|touching|stroking)\b/i;
 const FANDOM = /^[^:]*\s+\\?\([^()]+\\?\)\s*(?:::\s*)?$/;
 export function isAppearanceDescription(token: string): boolean {
-  return !EXPRESSION.test(token) && (TRAIT.test(token) || FANDOM.test(token.replace(/^[-+\d.]+::/, '')));
+  token = token.replace(/_/g, ' ');
+  if (
+    /^(?:wet hair|messy hair|windswept hair|closed eyes|half.closed eyes|blush|smile|smiling|crying|tears|breasts out)$/i.test(
+      token,
+    )
+  )
+    return false;
+  return (
+    !/^(?:looking|holding|grabbing|pulling|touching|stroking)\b/i.test(token) &&
+    (TRAIT.test(token) || FANDOM.test(token.replace(/^[-+\d.]+::/, '')))
+  );
 }
 function appearanceParts(entry: CharTagEntry): string[] {
   // A manual fandom swap must not mix the previous character's physical traits into the new face.
   const p = appearancePolicy(entry.name);
   const fields = isManualFandom(entry)
-    ? ([...new Set(['fandom', 'sex', ...Object.keys(p?.fields ?? {})])] as (keyof typeof entry.fields)[])
+    ? ([...new Set(['fandom', ...Object.keys(p?.fields ?? {})])] as (keyof typeof entry.fields)[])
     : CHAR_TAG_FIELDS.filter((k) => k !== 'outfit');
   const pinned = p && p.mode !== 'story' ? p.fields : {};
   return fields.flatMap((k) =>
@@ -111,6 +121,17 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
       ),
       'hairstyle',
     );
+    result = result
+      .replace(/\b(?:tsurime|tareme|almond.shaped|narrow|wide|round|upturned|downturned)\s+eyes\b/gi, 'eyes')
+      .replace(
+        /\b(?:round|oval|angular|small|sharp|delicate|beautiful|pretty)\s+(?:face|jaw|chin)\b/gi,
+        'face',
+      )
+      .replace(/\b(?:thin|thick|arched|straight)\s+eyebrows\b/gi, 'eyebrows')
+      .replace(
+        /\b(?:slim|slender|voluptuous|petite|muscular|tall|short|curvy)\s+(?:figure|body|woman|girl)\b/gi,
+        'person',
+      );
   }
   // Tags carry every fixed field. Keep the scene/action prose rather than replacing it with a profile dump.
   return result;

@@ -51,6 +51,7 @@ import {
   naiSupportsCharacterPrompts,
   naiArtistPrompt,
   naiQualityTags,
+  fullNegativePrompt,
 } from '@/backends/nai';
 import { effectiveOrientation, parseSize, pickSize, type Orientation } from '@/backends/size';
 import { acquireNaiSlot } from '@/floor/genQueue';
@@ -66,7 +67,7 @@ import {
 } from '@/state/settings';
 import { applyPresetToNaiConn, genPresetById } from '@/state/genPresets';
 import { allCharacterRecords, charTagLib, isManualFandom } from '@/state/charTags';
-import { enforceAppearance } from '@/autoTag/appearanceLock';
+import { enforceAppearance, isAppearanceDescription } from '@/autoTag/appearanceLock';
 
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
@@ -249,6 +250,7 @@ export function decideSeed(backend: BackendId, override?: number, fresh = false)
  * 闸门纪律(见 floor/genQueue.ts):NAI 路径必须持槽发请求,release 放在 finally,
  * 漏一格就永久少一格并发。
  */
+let lastFandomConfigWarning = '';
 export async function generateImage(
   input: GenerateInput,
   signal?: AbortSignal,
@@ -427,6 +429,26 @@ export async function generateImage(
         naiConn.landscapeSize = input.naiPortraitResolution;
       }
       if (input.naiModel) naiConn.model = input.naiModel as typeof naiConn.model;
+      if (manualFandoms.some(isManualFandom)) {
+        const fixed = [naiArtistPrompt(naiConn), naiQualityTags(naiConn), fullNegativePrompt(naiConn)].join(
+          ', ',
+        );
+        const conflicts = fixed
+          .split(',')
+          .map((t) => t.trim())
+          .filter(isAppearanceDescription);
+        if (conflicts.length) {
+          const warning =
+            '同人锁定：公共正负面配置包含外貌词，可能影响 trigger（' +
+            conflicts.join(', ') +
+            '）；请自行核对，插件保留你的配置';
+          appearanceNotes.push(warning);
+          if (fixed !== lastFandomConfigWarning) {
+            toastr.warning(warning, '墨影');
+            lastFandomConfigWarning = fixed;
+          }
+        } else lastFandomConfigWarning = '';
+      }
       const configConflicts = costumeConflicts(
         [naiArtistPrompt(naiConn), naiQualityTags(naiConn)].join(', '),
         costumeContext,
