@@ -1,3 +1,5 @@
+import { suitLibrary } from './materialLibrary';
+import { fandomCatalog } from './fandomCatalog';
 import { compatibleCostumeMaterial, type CostumeContext } from '@/autoTag/costumeContext';
 /**
  * 素材库召回层(loreIndex):把「正文 + 设置」压成一段能直接塞进 prompt 的候选清单。
@@ -400,7 +402,13 @@ export function collectLoreCandidates(text: string, options: LoreOptions = {}): 
   if (!body) return { wardrobe: [], poses: [], faces: [] };
   return {
     wardrobe: pickDiverse(
-      allWardrobeItems().filter((item) => compatibleCostumeMaterial(item, options.costume)),
+      suitLibrary().filter(
+        (item) =>
+          item.automatic &&
+          !(options.costume?.era === 'ancient' && item.era === 'modern') &&
+          !(options.costume?.era === 'modern' && ['ancient', 'fantasy'].includes(item.era)) &&
+          compatibleCostumeMaterial(item, options.costume),
+      ),
       body,
       (item) => item.category,
       {
@@ -410,13 +418,8 @@ export function collectLoreCandidates(text: string, options: LoreOptions = {}): 
         rollSeed: options.rollSeed,
       },
     ),
-    poses: pickDiverse(allPoseItems(), body, (item) => item.category, {
-      limit: options.poseLimit ?? 6,
-      maxNsfw: options.maxNsfw,
-      vibes: options.vibes,
-      rollSeed: options.rollSeed,
-    }),
-    faces: options.faces ? collectFaceCandidates(body, options) : [],
+    poses: [],
+    faces: [],
   };
 }
 
@@ -436,114 +439,19 @@ function renderLine<T extends LoreItemBase>(hit: LoreHit<T>, categoryLabel: stri
  * tag 是字段值,不是创作。候选行自带命中词,模型能自己核对是哪句正文触发的。
  */
 export function buildLoreBlock(text: string, options: LoreOptions = {}): string {
-  const { wardrobe, poses, faces } = collectLoreCandidates(text, options);
-  if (!wardrobe.length && !poses.length && !faces.length) return '';
-  const parts: string[] = [];
-
-  if (wardrobe.length) {
-    const lines = wardrobe.map((hit) =>
+  const { wardrobe } = collectLoreCandidates(text, options);
+  if (!wardrobe.length) return '';
+  return [
+    '【新版衣橱候选】仅在首次没有穿搭，或原文明示换装时使用。不是每张图重新挑款。',
+    '已有楼层衣物与人工绑定最高优先；没换装就逐字继承 design，穿脱只改 state。',
+    '正文明确款式优先于候选，不匹配就跳过候选。只有脱衣/解扣/掀裙不等于换装，不得因此选新衣服。',
+    '只复制候选中逗号分隔的独立英文标签。不补写形容词长句、人物外貌、画师、画风或状态。',
+    '候选中的长袖、领型等属于对应衣物；部件与状态应一起继承。',
+    ...wardrobe.map((hit) =>
       renderLine(hit, WARDROBE_CATEGORY_LABEL.get(hit.category) ?? hit.category, hit.item.slot),
-    );
-    parts.push(
-      [
-        '【服装候选库】[candidate-only; copy one tag set verbatim]',
-        '正文里的衣着词已经命中下列款式指纹。用法:',
-        '- **【服装现状】优先于本候选库**:若某个角色在【服装现状】或【近期已出图的实拍 tag】里已经有穿着/半脱的衣服,且本楼正文没有明确写她换装,必须直接照抄【服装现状】里那一套,**严禁从下面候选里重新挑一套换掉她身上的衣服**!本候选库只供首次出场、尚无服装记录的角色,或正文明确写了换装的角色使用。',
-        '- 同一角色同一部位只挑一条,挑中的 `tags` 原样照抄进角色的 tag 串(允许按正文删掉明显不符的部件,但不许换成更泛的词,例如不许把 `lace-trimmed sheer black pantyhose` 简化成 `pantyhose`)。',
-        '- 正文明确写了款式而库里有对应条目时,用库里的版本,不要凭印象另写一套。',
-        '- **上了身就锁死**:一个角色一旦选定一套之后,本楼与后续楼层**所有图**都必须逐字复用同一串服装 tag。候选有多条是为了让你挑最贴正文的那一条,不是让每张图或每层楼各挑一条。多张图之间的差异用姿势、机位、景别和衣物状态词(`unzipped`/`slipped down`/`wet`/`pulled aside`/`torn`)表现,不靠换衣服。',
-        '- 只有正文明确写了换装、脱下或衣物被毁,才允许换成另一条候选,并从那一张起生效;正文没写就换,读者会看见同一段剧情里她在莫名其妙地换衣服。',
-        '- **但不同的人不许穿同一件**:同框或前后楼的两个角色职业相同(两个事业女、两个学生)时,身份词会把同一批候选递给所有人,这时按候选的类别标签挑不同廓形——一个裤装一个裙装、一个长外搭一个短上衣、一个硬挺一个垂坠。已在场的同职业角色穿了什么就避开那条,共用一个条目的后果是两个人看着像同一个人的两套衣服。',
-        '',
-        ...lines,
-      ].join('\n'),
-    );
-  }
-
-  if (poses.length) {
-    const lines = poses.map((hit) => {
-      const meta = [hit.item.camera ? `机位 ${hit.item.camera}` : '', hit.item.direction ?? '']
-        .filter(Boolean)
-        .join(' / ');
-      return renderLine(hit, POSE_CATEGORY_LABEL.get(hit.category) ?? hit.category, meta);
-    });
-    parts.push(
-      [
-        '【姿势与机位候选库】[candidate-only; copy one tag set verbatim]',
-        '正文的亲密动作已经命中下列姿势指纹。用法:',
-        '- 每条都包含「体位 + 肢体关系 + 机位」;照抄整组才能保住构图,只抄体位名会退回最普通的画面。',
-        '- 机位一栏是该体位最不容易画崩人体的机位;正文没写机位时优先采用它。',
-        '- 同一张图只用一条候选;多张图之间应体现姿势推进(前戏 → 正体位 → 高潮 → 事后),不要并列堆叠。',
-        '',
-        ...lines,
-      ].join('\n'),
-    );
-  }
-
-  if (faces.length) {
-    const lines = faces.map((hit) => {
-      const extra =
-        hit.item.kind === 'fandom'
-          ? ((hit.item as FandomPreset).franchise ?? '')
-          : hit.item.kind === 'body'
-            ? ((hit.item as BodyPreset).archetype ?? '')
-            : '';
-      const tail = hit.pinned
-        ? `外形重合：${hit.lookNote ?? ''}｜照抄`
-        : hit.direct && hit.item.kind === 'fandom'
-          ? '正文点名'
-          : extra;
-      const tags = hit.item.tags
-        .split(',')
-        .filter(
-          (t) =>
-            !/gorgeous face|delicate facial features|beautiful detailed eyes|glossy lips|lustrous hair|gentle smile|warm smile|faint blush|parted lips/i.test(
-              t,
-            ),
-        )
-        .join(',');
-      return renderLine({ ...hit, item: { ...hit.item, tags } }, FACE_KIND_LABEL[hit.item.kind], tail);
-    });
-    const hasFandom = faces.some((hit) => hit.item.kind === 'fandom');
-    const hasDirect = faces.some((hit) => hit.direct);
-    const hasPinned = faces.some((hit) => hit.pinned);
-    // 全是兜底条目(正文里连一个可比对的词都没有):说清它们不是「命中」,
-    // 否则模型会以为正文点名了,把它们当成铁定要照抄的答案。
-    const allLoose = faces.every((hit) => !hit.hits.length && !hit.direct && !hit.pinned);
-    parts.push(
-      [
-        '【人物外貌候选库】[candidate-only; copy one tag set verbatim, fandom entries carry their own weight syntax]',
-        '正文的外形与身份线索已经命中下列指纹。用法:',
-        '- 每条是一整套「脸型 + 眼型 + 睫毛 + 唇形 + 关键痣/颊色」,或一整套「胸腰臀腿比 + 肉感反馈」。整组照抄,不要只抽一两个词,单抽必然退回大众脸。',
-        hasPinned
-          ? '- **标了「外形重合」的条目就是正文写的这个人**:正文的发色、瞳色、种族、体形已经逐维对上,不要再自己编脸。把这一条的 tags 整组照抄进该角色的外貌(发色瞳色完全一致,只按正文补它没写的部位),也不要再拿别的同人条目替换它。'
-          : '',
-        hasFandom
-          ? hasDirect
-            ? '- `同人角色` 条目的 tags 自带 `0.6::角色 (作品)::` 权重语法,原样照抄即可。**正文点名了作品或角色时,优先用对应的同人条目当骨相**,它是这张脸的底子,比 `脸型` / `体型` 条更能定住长相;再按需配一条脸型或体型条补气质。'
-            : '- `同人角色` 条目即使正文没有点名作品也可以用:它的 tags 自带 `0.6::角色 (作品)::` 权重语法,原样照抄就只是「借这张脸的骨相」,不会把原作剧情一起带进来。角色的发色瞳色与条目的 hair/eyes 冲突时,以角色的固定外貌为准,把冲突的发色瞳色词删掉。'
-          : '',
-        '- 同人条目的权重已经写死在 tags 里,照抄,不要再自己加括号权重。',
-        allLoose
-          ? '- 这一批没有命中正文的任何外形词(正文没写发色/瞳色/气质),只是按摇号给的底子:挑最接近正文身份的那一条当起点,再按正文补发色、发型与瞳色。'
-          : '',
-        '- 已建档角色仍以【角色固定外貌库】为准;候选只用于新建档、或补该角色库里缺的字段。同一角色只挑一条同人条目,不要叠两条。',
-        '',
-        ...lines,
-      ]
-        .filter((line, index, all) => line || all[index - 1] !== '')
-        .join('\n'),
-    );
-  }
-
-  return parts.join('\n\n');
+    ),
+  ].join('\n');
 }
-
-const FACE_KIND_LABEL: Record<FaceCardKind, string> = {
-  face: '脸型',
-  body: '体型',
-  fandom: '同人角色',
-};
 
 /** UI 用:按分类分组(服装)。 */
 export function wardrobeByCategory(): Map<string, WardrobeItem[]> {
@@ -583,7 +491,7 @@ export function poseCategoryLabel(id: string): string {
  * 常量快照会让「刚导入的款式这一轮还用不上」。
  */
 export function allWardrobeItems(): WardrobeItem[] {
-  return [...WARDROBE_ITEMS, ...customWardrobe()];
+  return suitLibrary().filter((item) => item.automatic);
 }
 
 export function allPoseItems(): PoseEntry[] {
@@ -591,5 +499,5 @@ export function allPoseItems(): PoseEntry[] {
 }
 
 export function allFandomItems(): FandomPreset[] {
-  return [...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2, ...customFandom()];
+  return [...fandomCatalog(), ...customFandom()];
 }

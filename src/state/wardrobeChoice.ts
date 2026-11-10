@@ -63,8 +63,8 @@ const SLOT_PATTERNS: Record<string, RegExp> = {
   bottom: /\b(?:skirt|pants|trousers|shorts|jeans|hakama)\b/i,
   underwear: /\b(?:bra|panties|underpants|lingerie|dudou|undergarment)\b/i,
   hosiery: /sock|hose|thighhigh|tights/i,
-  shoes: /shoes|boots|heels|sandals|sneakers/i,
-  accessory: /belt|sash|ribbon|bow|collar|gloves|hat|cap|scarf|accessor/i,
+  shoes: /shoes|boots|heels|sandals|sneakers|loafers|footwear|mary janes/i,
+  accessory: /belt|sash|ribbon|bow|gloves|hat|cap|scarf|accessor|necktie|neckerchief|obi/i,
 };
 export function mergeSuitWithCurrent(suit: SuitBinding, old?: ClothingRecord): SuitBinding {
   if (!suit.slot || suit.slot === 'full') return suit;
@@ -124,6 +124,8 @@ export function bindingFromTags(
   if (!tags.trim()) throw new Error('套装标签不能为空');
   // Local slot classification preserves coherent garment tokens without asking an LLM.
   const groups = new Map<string, string[]>();
+  const qualifiers: string[] = [];
+  let garment = slot;
   for (const token of tags
     .split(',')
     .map((t) => t.trim())
@@ -135,12 +137,20 @@ export function bindingFromTags(
     )
       continue;
     if (
+      /^(?:school uniform|serafuku|chinese clothes|japanese clothes)$|sleeves|collar|^(?:sleeveless|frills|lace|lace trim|fur trim|gold trim|embroidery|floral print|buttons|double-breasted|hood)$/i.test(
+        token,
+      )
+    ) {
+      qualifiers.push(token);
+      continue;
+    }
+    if (
       /\b(?:hair|eyes|skin|breasts|1girl|1boy|masterpiece|quality|artist:|lighting|background)\b/i.test(token)
     )
       continue;
     const k = /sock|hose|thighhigh|tights/i.test(token)
       ? 'hosiery'
-      : /shoes|boots|heels|sandals|sneakers/i.test(token)
+      : /shoes|boots|heels|sandals|sneakers|loafers|footwear|mary janes/i.test(token)
         ? 'shoes'
         : /panties|underpants/i.test(token)
           ? 'underpants'
@@ -150,13 +160,28 @@ export function bindingFromTags(
               ? 'bottom'
               : /\b(?:shirt|blouse|jacket|coat|blazer|hoodie|sweater|tunic|top)\b/i.test(token)
                 ? 'top'
-                : /\b(?:dress|robe|hanfu|kimono|yukata|uniform|suit)\b/i.test(token)
+                : /\b(?:dress|robe|hanfu|kimono|yukata|uniform|suit|chinese clothes|japanese clothes|swimsuit|bikini|leotard|bodysuit|pajamas|nightgown|serafuku|armor|apron)\b/i.test(
+                      token,
+                    )
                   ? 'full'
-                  : /belt|sash|ribbon|bow|collar|gloves|hat|cap|scarf|accessor/i.test(token)
+                  : /belt|sash|ribbon|bow|gloves|hat|cap|scarf|accessor|necktie|neckerchief|obi/i.test(token)
                     ? 'accessory'
-                    : slot;
+                    : /sleeves|collar/i.test(token) && groups.has('top')
+                      ? 'top'
+                      : garment;
+    if (['top', 'bottom', 'full', 'hosiery', 'shoes', 'under-top', 'underpants'].includes(k)) garment = k;
     groups.set(k, [...(groups.get(k) ?? []), token]);
   }
+  // Sleeves/collars and ensemble labels describe a real garment, not separate items that can
+  // remain "worn" after the shirt/dress has been removed.
+  const primary = groups.has('full')
+    ? 'full'
+    : groups.has('top')
+      ? 'top'
+      : groups.has('bottom')
+        ? 'bottom'
+        : (groups.keys().next().value ?? slot);
+  if (qualifiers.length) groups.set(primary, [...(groups.get(primary) ?? []), ...qualifiers]);
   const id = 'suit-' + crypto.randomUUID();
   const pieces = [...groups].map(([part, tokens]) => ({
     id: id + '-' + part,

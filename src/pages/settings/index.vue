@@ -857,84 +857,11 @@ async function confirmUpdate() {
       </Collapsible>
 
       <!-- 素材库召回:服装 / 姿势候选按正文命中后注入,见 data/loreIndex.ts 与 autoTag/prompt.ts -->
-      <Collapsible title="素材库召回" :open="false">
-        <label class="bbi-switch-row">
-          <span class="bbi-field-label">注入候选库</span>
-          <input v-model="settings.autoTag.lore.enabled" type="checkbox" class="bbi-checkbox" />
-        </label>
-        <p class="bbi-field-hint">
-          按正文里出现的衣着词与亲密动作,从内置库挑出具体 tag 串交给模型照抄。这是「写黑丝永远只出那几种」和「姿势构图总是太平」的主要解法:模型不再自己回忆款式,而是从候选里挑一条整组照抄。
-        </p>
-
-        <div class="bbi-select-row">
-          <span class="bbi-field-label">尺度上限</span>
-          <BbiSelect v-model="loreMaxNsfwSel" :options="NSFW_LEVEL_OPTIONS" aria-label="素材库尺度上限" />
-        </div>
-        <p class="bbi-field-hint">只决定能召回哪些候选,不改写正文。写日常剧情时降到「仅日常」,可避免情趣款被误召回。</p>
-
-        <label class="bbi-num-row">
-          <span class="bbi-field-label">服装候选条数</span>
-          <input
-            v-model.number="settings.autoTag.lore.wardrobeLimit"
-            class="bbi-input bbi-num"
-            type="number"
-            min="1"
-            max="16"
-            step="1"
-            @change="normalizeAutoTagNumbers"
-          />
-        </label>
-
-        <label class="bbi-num-row">
-          <span class="bbi-field-label">姿势候选条数</span>
-          <input
-            v-model.number="settings.autoTag.lore.poseLimit"
-            class="bbi-input bbi-num"
-            type="number"
-            min="0"
-            max="12"
-            step="1"
-            @change="normalizeAutoTagNumbers"
-          />
-        </label>
-        <p class="bbi-field-hint">姿势填 0 = 不注入姿势库。条数越多模型挑得越准,代价是占副 API 的上下文。</p>
-
-        <label class="bbi-switch-row">
-          <span class="bbi-field-label">注入人物外貌候选</span>
-          <input v-model="settings.autoTag.lore.faces" type="checkbox" class="bbi-checkbox" />
-        </label>
-        <p class="bbi-field-hint">
-          默认开(旧配置升级时也会自动开一次)。命中「清冷 / 银发 / 红瞳 / 丰腴」这类外形词、或正文点名了某部作品的某个角色时,把整套脸型/体型/同人骨相指纹交给模型整组照抄,治「生出来人物不好看、一张大众脸」。关掉后新建档只能由模型现场编脸。
-        </p>
-
-        <label class="bbi-num-row">
-          <span class="bbi-field-label">人物外貌候选条数</span>
-          <input
-            v-model.number="settings.autoTag.lore.faceLimit"
-            class="bbi-input bbi-num"
-            type="number"
-            min="2"
-            max="10"
-            step="1"
-            @change="normalizeAutoTagNumbers"
-          />
-        </label>
-        <p class="bbi-field-hint">
-          同人骨相优先占位:正文点名作品或角色时排最前,只用外形词擦边时退居其后,剩下的位置留给脸型和体型。建议 8——低了同人进不来,高了占上下文。同人条目自带 `0.6::角色 (作品)::` 权重,是借骨相,不会把原剧情带进来;发色瞳色与角色的固定外貌冲突时以角色为准。如果是你自己写的「同人向」剧情,把作品名或角色名写进正文,命中率会从「靠外形词擦边」变成「必定排第一」。
-        </p>
-        <p class="bbi-field-hint">
-          <strong>外形写全了就直接复用</strong>:正文把角色写成「银白长发、紫瞳、尖耳」这种具体外形,而你库里正好有一条逐项对得上时,那条会被标「外形重合」并压到第一位,提示词要求模型照抄它、不许再自己编一张脸。同一个判定也作用在已建档角色上——正文外形与某份档案逐项对上,会直接点名「这段就是她」,不会重复建档。
-        </p>
-
-        <div class="bbi-channel-bar">
-          <span class="bbi-field-label">服装 / 姿势 / 面相</span>
-          <button class="bbi-btn bbi-btn-primary bbi-btn-sm" type="button" @click="openLorePage">
-            <Icon name="lore" /> 打开素材库
-          </button>
-        </div>
-        <p class="bbi-field-hint">
-          素材库里可以逐条浏览,点一条直接套到角色管理里的某个人物身上(写入该角色的固定着装或外貌字段);页顶的「新增 / 导入 / 导出」用来放你自己找到的款式——导入的条目与内置条目一起参与召回,库变大不会让每次请求变长(只按命中挑固定的几条)。
-        </p>
+      <Collapsible title="衣橱自动候选" :open="false">
+        <label class="bbi-switch-row"><span class="bbi-field-label">首次穿搭／明确换装时推荐衣橱款式</span><input v-model="settings.autoTag.lore.enabled" type="checkbox" class="bbi-checkbox" /></label>
+        <p class="bbi-field-hint">只从新版衣橱中允许自动使用的独立标签组合挑候选。已有款式和穿脱记录优先，没换装时不重新选款。旧姿势／脸型／服装长句模板已退出自动召回。</p>
+        <label class="bbi-num-row"><span class="bbi-field-label">服装候选条数</span><input v-model.number="settings.autoTag.lore.wardrobeLimit" class="bbi-input bbi-num" type="number" min="1" max="16" @change="normalizeAutoTagNumbers" /></label>
+        <button class="bbi-btn" @click="openLorePage">打开角色与衣橱</button>
       </Collapsible>
 
       <!-- 排除角色:名单与柏宝书共享(见 state/settings.ts 的共享存储),任一端改动自动同步 -->

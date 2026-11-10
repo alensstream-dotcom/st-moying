@@ -20,6 +20,7 @@
 
 import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 import { allWardrobeItems } from '@/data/loreIndex';
+import { clothingWords } from '@/data/materialLibrary';
 import type { CharTagEntry } from '@/state/charTags';
 import type { STMessage } from '@/st/context';
 import { parseImageTags, parseImageTagContent } from '@/st/imageTagRegex';
@@ -88,6 +89,7 @@ const COLOR_ONLY = new Set([
 ]);
 
 let garmentVocab: Set<string> | null = null;
+let clothingWordCount = 0;
 
 /**
  * 服装词表:服装库所有 tag 词 + 少量库外常见部件。
@@ -96,14 +98,18 @@ let garmentVocab: Set<string> | null = null;
  * 所以词表漏一个词最多是少记一件,不会写出它没穿过的东西。
  */
 function vocab(): Set<string> {
-  if (garmentVocab) return garmentVocab;
-  const set = new Set<string>();
+  if (garmentVocab && clothingWordCount === clothingWords.length) return garmentVocab;
+  const set = new Set<string>(clothingWords);
   for (const item of allWardrobeItems()) {
     for (const part of String(item.tags ?? '').split(',')) {
       const word = part.trim().toLowerCase();
       if (!word) continue;
       // 权重语法 2::xxx:: 与括号注释剥掉,只留词干
-      const bare = word.replace(/^[-+\d.]+::/, '').replace(/::/g, '').replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+      const bare = word
+        .replace(/^[-+\d.]+::/, '')
+        .replace(/::/g, '')
+        .replace(/\s*\([^)]*\)\s*/g, ' ')
+        .trim();
       if (bare) set.add(bare);
     }
   }
@@ -151,6 +157,7 @@ function vocab(): Set<string> {
     set.add(extra);
   }
   garmentVocab = set;
+  clothingWordCount = clothingWords.length;
   return set;
 }
 
@@ -172,7 +179,7 @@ export function extractGarment(tag: string): string {
   const words = vocab();
   const segments = (tag ?? '')
     .split(',')
-    .map(part =>
+    .map((part) =>
       part
         .trim()
         .toLowerCase()
@@ -210,7 +217,7 @@ export function extractGarment(tag: string): string {
 export function readWear(tag: string): { wear: WearLevel; state: string } {
   const hay = tag ?? '';
   const off = hay.match(OFF_STATE_RE);
-  const partialWords = [...hay.matchAll(new RegExp(PARTIAL_STATE_RE.source, 'gi'))].map(m => m[0]);
+  const partialWords = [...hay.matchAll(new RegExp(PARTIAL_STATE_RE.source, 'gi'))].map((m) => m[0]);
   const partial = partialWords.join(', ');
   // 同时出现「脱到地上」与移位词时按移位算:衣服还在画面里,那是半脱
   if (partial) return { wear: 'partial', state: partial };
@@ -278,7 +285,7 @@ export function latestOutfitStates(chat: STMessage[], beforeFloor: number): Map<
     }
     const rawTags = typeof message.mes === 'string' ? parseImageTags(message.mes) : [];
     if (rawTags.length) {
-      const parsedImages = rawTags.map(raw => parseImageTagContent(raw));
+      const parsedImages = rawTags.map((raw) => parseImageTagContent(raw));
       merged = nextOutfitState(merged, parsedImages);
     }
   }
@@ -330,7 +337,7 @@ export function buildOutfitStatePayload(
   states: Map<string, OutfitStateEntry>,
   swipe: number,
 ): OutfitFloorState | undefined {
-  const entries = [...states.values()].filter(entry => entry.garment || entry.wear !== 'worn');
+  const entries = [...states.values()].filter((entry) => entry.garment || entry.wear !== 'worn');
   if (!entries.length) return undefined;
   return { v: 1, swipe, entries: entries.slice(0, ENTRY_CAP) };
 }
@@ -375,9 +382,9 @@ export function seedOutfitStates(
  * 措辞要说明「这是事实、不是候选」:模型对候选会重新挑,对事实才照抄。
  */
 export function buildOutfitStateBlock(states: Map<string, OutfitStateEntry>): string {
-  const rows = [...states.values()].filter(entry => entry.garment || entry.wear !== 'worn');
+  const rows = [...states.values()].filter((entry) => entry.garment || entry.wear !== 'worn');
   if (!rows.length) return '';
-  const lines = rows.map(entry => {
+  const lines = rows.map((entry) => {
     const head = `- ${entry.name}:${WEAR_LABEL[entry.wear]}`;
     const body = entry.garment ? `，${entry.garment}` : '';
     const tail = entry.state ? `（${entry.state}）` : '';
@@ -417,7 +424,7 @@ function garmentWords(garment: string): Set<string> {
     (garment ?? '')
       .toLowerCase()
       .split(',')
-      .map(word => word.trim())
+      .map((word) => word.trim())
       .filter(Boolean),
   );
 }
@@ -449,7 +456,7 @@ export function diagnoseGarment(
     const after = garmentWords(actual);
     if (!before.size || !after.size) continue;
     // 有任何一件重合就承认是同一套:加了围裙、脱了外套都还是这套衣服
-    const shared = [...after].some(word => before.has(word));
+    const shared = [...after].some((word) => before.has(word));
     if (shared) continue;
     gaps.push({
       name: character.name,
@@ -478,7 +485,11 @@ export function diagnoseOutfit(
     if (!prior) continue;
     const { wear } = readWear(character.tag);
     const garment = extractGarment(character.tag);
-    if (prior.wear === 'partial' && wear === 'off' && !/underwear|lingerie|panties|bra/i.test(character.tag)) {
+    if (
+      prior.wear === 'partial' &&
+      wear === 'off' &&
+      !/underwear|lingerie|panties|bra/i.test(character.tag)
+    ) {
       gaps.push({ name: character.name, kind: 'half-to-nude', expected: '半脱', actual: '全裸' });
       continue;
     }
@@ -496,7 +507,7 @@ export function diagnoseOutfit(
 /** 违反账本时的重试话术。 */
 export function outfitRetryNote(gaps: OutfitGap[]): string {
   const lines = gaps.map(
-    gap =>
+    (gap) =>
       `- ${gap.name}:账本里她是「${gap.expected}」,这张写成了「${gap.actual}」` +
       (gap.kind === 'half-to-nude'
         ? '——半脱要把留下的布料写出来(slipped down / pulled aside / unzipped / clothes around waist),不能直接 nude'

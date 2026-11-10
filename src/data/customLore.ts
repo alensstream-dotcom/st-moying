@@ -282,7 +282,7 @@ export function addCustomWardrobe(input: CustomWardrobeInput): AddResult<Wardrob
     category: WARDROBE_CATEGORIES.some(c => c.id === input.category) ? input.category : 'costume',
     slot: input.slot,
   };
-  persist({ wardrobe: [...store.wardrobe, item], poses: store.poses });
+  persist({ ...store, wardrobe: [...store.wardrobe, item] });
   return { ok: true, item };
 }
 
@@ -314,7 +314,7 @@ export function addCustomPose(input: CustomPoseInput): AddResult<PoseEntry> {
     camera: input.camera?.trim() || undefined,
     note: input.note?.trim() || undefined,
   };
-  persist({ wardrobe: store.wardrobe, poses: [...store.poses, item] });
+  persist({ ...store, poses: [...store.poses, item] });
   return { ok: true, item };
 }
 
@@ -346,7 +346,7 @@ export function updateCustomWardrobe(id: string, input: CustomWardrobeInput): Ad
   };
   const wardrobe = [...store.wardrobe];
   wardrobe[index] = item;
-  persist({ wardrobe, poses: store.poses });
+  persist({ ...store, wardrobe });
   return { ok: true, item };
 }
 
@@ -380,7 +380,7 @@ export function updateCustomPose(id: string, input: CustomPoseInput): AddResult<
   };
   const poses = [...store.poses];
   poses[index] = item;
-  persist({ wardrobe: store.wardrobe, poses });
+  persist({ ...store, poses });
   return { ok: true, item };
 }
 
@@ -395,12 +395,12 @@ export function removeCustomLore(kind: 'wardrobe' | 'pose' | 'fandom', id: strin
   if (kind === 'wardrobe') {
     const next = store.wardrobe.filter(item => item.id !== id);
     if (next.length === store.wardrobe.length) return false;
-    persist({ wardrobe: next, poses: store.poses });
+    persist({ ...store, wardrobe: next });
     return true;
   }
   const next = store.poses.filter(item => item.id !== id);
   if (next.length === store.poses.length) return false;
-  persist({ wardrobe: store.wardrobe, poses: next });
+  persist({ ...store, poses: next });
   return true;
 }
 

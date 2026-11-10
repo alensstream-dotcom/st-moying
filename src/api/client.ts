@@ -59,6 +59,8 @@ function alternateUrl(url: string): string {
 }
 
 export interface RequestOptions {
+  /** Explicit clothing-image analysis only; never stored as base64 in the text request history. */
+  imageData?: string;
   signal?: AbortSignal;
   /**
    * 用途标签,只用于请求历史页的展示(如「自动 tag」)。
@@ -257,6 +259,15 @@ async function requestCompletionAtUrl(
 
   const stream = channel.stream ?? false;
   const body = buildRequestBody(channel, messages, reverseProxy, stream);
+  if (opts.imageData) {
+    if (!/^data:image\/(?:png|jpeg|webp);base64,/.test(opts.imageData) || opts.imageData.length > 12 * 1024 * 1024)
+      throw new ApiError('服装参考图格式或大小不正确');
+    const at = messages.map(m => m.role).lastIndexOf('user');
+    if (at < 0) throw new ApiError('图片识别缺少用户指令');
+    body.messages = messages.map((m, i) => i !== at ? m : { role: m.role, content: [
+      { type: 'text', text: m.content }, { type: 'image_url', image_url: { url: opts.imageData, detail: 'auto' } },
+    ] });
+  }
 
   const timeoutSec = validTimeoutSec(channel.timeoutSec);
 

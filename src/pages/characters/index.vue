@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import WardrobePanel from '@/components/WardrobePanel.vue';
-import OnlineLibrary from '@/components/OnlineLibrary.vue';
-import type { OnlineMaterial } from '@/data/onlineLibrary';
+import FandomLibrary from '@/components/FandomLibrary.vue';
+import type { FandomMaterial } from '@/data/fandomCatalog';
 import { appearancePolicy, setAppearancePolicy, type AppearanceMode } from '@/state/appearancePolicy';
 
 import { openLightbox } from '@/floor/lightbox';
@@ -46,7 +46,6 @@ import { settings, getTagGenChannel } from '@/state/settings';
 import { generateImage, decideSeed } from '@/generate';
 import { costumeBefore } from '@/autoTag/costumeContext';
 import { clothingBefore } from '@/autoTag/outfitTimeline';
-import { allFandomItems } from '@/data/loreIndex';
 import { reviewAutomaticProfiles } from '@/autoTag/identityReview';
 import {
   currentIdentityFacts,
@@ -134,7 +133,6 @@ function persistPolicy(entry: CharTagEntry) {
 const locks = ref<string[]>(['sex', 'age', 'hair', 'eyes', 'body', 'fandom']);
 const version = ref(0),
   floor = ref(0),
-  fandomQuery = ref(''),
   customTag = ref(''),
   customZh = ref('');
 const rows = computed(() =>
@@ -159,18 +157,7 @@ const clothing = computed(() => {
       ].find((e) => e.name === selected.value)
     : null;
 });
-const fandoms = computed(() => {
-  version.value;
-  return fandomQuery.value.trim()
-    ? allFandomItems()
-        .filter((e) =>
-          (e.name + e.franchise + e.aliases.join(' '))
-            .toLowerCase()
-            .includes(fandomQuery.value.toLowerCase()),
-        )
-        .slice(0, 12)
-    : [];
-});
+
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
 }
@@ -433,21 +420,7 @@ async function adopt() {
     feedback.value = '已采用定妆，后续默认使用文字档案，无逐图参考费';
   });
 }
-function useFandom(id: string) {
-  if (!draft.value) return;
-  revoke();
-  const item = allFandomItems().find((e) => e.id === id);
-  if (!item) return;
-  candidate.value = clone(draft.value);
-  candidate.value.fields.fandom = item.tags;
-  appearanceMode.value = 'fandom';
-  protectedFields.value = [];
-  candidate.value.source = 'manual';
-  candidate.value.nl = '';
-  feedback.value = '同人模板已生成候选，采用后锁定完整形象；衣服遵循剧情';
-  tab.value = '定妆';
-}
-function useOnlineFandom(item: OnlineMaterial) {
+function useOnlineFandom(item: FandomMaterial) {
   if (!draft.value || busy.value) return;
   revoke();
   candidate.value = clone(draft.value);
@@ -915,21 +888,8 @@ watch(
                 <button class="bbi-btn bbi-btn-primary" @click="adopt">采用此候选</button
                 ><button class="bbi-btn" @click="revoke">丢弃候选</button>
               </div>
-              <OnlineLibrary kind="character" @select="useOnlineFandom" @saved="version++" />
-              <details>
-                <summary>将此人换成指定同人形象</summary>
-                <p>
-                  搜索已收录的角色，创建外貌候选。采用后使用该同人身份标签；不是只提取脸，会连带发色、装饰等特征。服装仍按剧情。
-                </p>
-                <input v-model="fandomQuery" class="bbi-input" placeholder="中文角色名或作品" /><button
-                  v-for="f in fandoms"
-                  :key="f.id"
-                  class="bbi-btn"
-                  @click="useFandom(f.id)"
-                >
-                  {{ f.name }} · {{ f.franchise }}
-                </button>
-              </details>
+              <FandomLibrary @select="useOnlineFandom" @saved="version++" />
+
               <div class="reference">
                 <h3>让后续生成参考这张图 · 可选付费</h3>
                 <p>

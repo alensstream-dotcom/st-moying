@@ -21,7 +21,7 @@ export interface PageDef {
 export const PAGES: PageDef[] = [
   { id: 'backend', label: '渠道', component: Backend },
   { id: 'characters', label: '角色管理', component: Characters },
-  { id: 'lore', label: '素材库', component: Lore },
+  { id: 'lore', label: '角色与衣橱', component: Lore },
   { id: 'gallery', label: '图库', component: Gallery },
   { id: 'history', label: '请求历史', component: History },
   { id: 'settings', label: '设置', component: Settings },
