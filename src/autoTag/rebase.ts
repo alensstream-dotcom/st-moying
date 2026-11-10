@@ -8,7 +8,7 @@
  *
  * 对齐口径:两份 segment 列表(prepareTargetText 的产物,天然只含清洗后活下来的叙事行)
  * 先按文本相等求最长公共子序列作骨架,骨架之间的空隙按序号比例配对——空隙里旧 1 条新 1 条
- * 正好是「那句话被改写了」,精确命中而非近似;整句消失的行回落到前一个已配对锚点。
+ * 正好是「那句话被改写了」,精确命中而非近似;整句消失的行顺延到后一个已配对锚点，后面无锚点则放弃写入。
  *
  * 落点只能是当前正文的 segment,不能是裸行号:这样 tag 绝不会掉进别的插件刚追加的
  * 状态栏块内部——那些块在清洗阶段就已不构成 segment。
@@ -87,11 +87,10 @@ function alignSegments(oldTexts: string[], newTexts: string[]): number[] {
   return mapped;
 }
 
-/** 从 index 起向前找最近的已配对位置,前面没有再往后找。全都没有返回 -1。 */
+/** 从 index 后方寻找已配对位置；没有后方锚点返回 -1，禁止回退到剧情前方。 */
 function nearestMapped(mapped: number[], index: number): number {
-  for (let i = index; i >= 0; i -= 1) {
-    if (mapped[i] >= 0) return mapped[i];
-  }
+  // Never move an illustration before a surviving later scene when its sentence
+  // was deleted. With no later anchor, refuse to guess at an earlier paragraph.
   for (let i = index + 1; i < mapped.length; i += 1) {
     if (mapped[i] >= 0) return mapped[i];
   }
@@ -103,7 +102,7 @@ export interface RebaseReport {
   anchored: number;
   /** 锚点句被改写:按对齐结果落到它在新正文里的对应句。 */
   remapped: number;
-  /** 锚点句整句消失:顺延到前一个锚点(宁可位置偏一点,也不丢 tag)。 */
+  /** 锚点句整句消失:顺延到后一个锚点(宁可位置偏一点,也不丢 tag)。 */
   drifted: number;
 }
 
@@ -143,8 +142,8 @@ export function rebaseImagePositions(
     if (!oldIndexByLine.has(segment.sourceLine)) oldIndexByLine.set(segment.sourceLine, index);
   });
   const mapped = alignSegments(
-    plannedSegments.map(segment => segment.text),
-    newSegments.map(segment => segment.text),
+    plannedSegments.map((segment) => segment.text),
+    newSegments.map((segment) => segment.text),
   );
 
   const out: ImageInsertion[] = [];
@@ -169,6 +168,8 @@ export function rebaseImagePositions(
   }
 
   // 升序保证叙事顺序单调;sort 稳定,落到同一位置的图片保持模型给出的原相对顺序
-  out.sort((left, right) => left.sourceLine - right.sourceLine || (left.charOffset || 0) - (right.charOffset || 0));
+  out.sort(
+    (left, right) => left.sourceLine - right.sourceLine || (left.charOffset || 0) - (right.charOffset || 0),
+  );
   return { images: out, report };
 }

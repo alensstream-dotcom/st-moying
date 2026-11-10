@@ -82,6 +82,7 @@ const HISTORY_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 interface SourceLine {
+  start: number;
   text: string;
   eol: string;
 }
@@ -91,10 +92,10 @@ function sourceLines(source: string): SourceLine[] {
   const newline = /\r\n|\n|\r/g;
   let start = 0;
   for (let match = newline.exec(source); match; match = newline.exec(source)) {
-    lines.push({ text: source.slice(start, match.index), eol: match[0] });
+    lines.push({ start, text: source.slice(start, match.index), eol: match[0] });
     start = match.index + match[0].length;
   }
-  lines.push({ text: source.slice(start), eol: '' });
+  lines.push({ start, text: source.slice(start), eol: '' });
   return lines;
 }
 
@@ -198,13 +199,10 @@ export function parseImagePlan(
   const parsed = parseObject(raw);
   if (!Array.isArray(parsed.images)) throw new Error('AI 返回的 JSON 缺少 images 数组');
   const normalizedMax = Math.max(1, Math.floor(Number(maxImages)) || 1);
-  const normalizedMin = Math.min(
-    normalizedMax,
-    Math.max(0, Math.floor(Number(minImages)) || 0),
-  );
-  const positions = new Map(segments.map(segment => [segment.id, segment.sourceLine]));
+  const normalizedMin = Math.min(normalizedMax, Math.max(0, Math.floor(Number(minImages)) || 0));
+  const positions = new Map(segments.map((segment) => [segment.id, segment.sourceLine]));
   // 行内落位用:同一行可能切出多个句子级段,故按 id 取整段而不是只取行号。
-  const segmentById = new Map(segments.map(segment => [segment.id, segment]));
+  const segmentById = new Map(segments.map((segment) => [segment.id, segment]));
 
   const images: ImageInsertion[] = [];
   for (let index = 0; index < parsed.images.length; index += 1) {
@@ -241,9 +239,7 @@ export function parseImagePlan(
 
   const limitedImages = images.slice(0, normalizedMax);
   if (limitedImages.length < normalizedMin) {
-    throw new Error(
-      `AI 返回了 ${limitedImages.length} 张图片，少于设置的最少图片数 ${normalizedMin}`,
-    );
+    throw new Error(`AI 返回了 ${limitedImages.length} 张图片，少于设置的最少图片数 ${normalizedMin}`);
   }
   return {
     images: limitedImages,
@@ -292,7 +288,11 @@ function parseNewFields(raw: Record<string, unknown>): string | null {
   return JSON.stringify(fields);
 }
 
-function parseChanges(raw: unknown, positions: Map<string, number>, segments?: Map<string, TargetSegment>): CharChange[] {
+function parseChanges(
+  raw: unknown,
+  positions: Map<string, number>,
+  segments?: Map<string, TargetSegment>,
+): CharChange[] {
   if (!Array.isArray(raw)) return [];
   const out: CharChange[] = [];
   for (const item of raw) {
@@ -319,9 +319,17 @@ function parseChanges(raw: unknown, positions: Map<string, number>, segments?: M
     const nl = typeof o.nl === 'string' ? o.nl.trim() : '';
     const reason = typeof o.reason === 'string' ? o.reason.trim() : '';
     if (!value && !nl) continue;
-    out.push({ name, field, value, nl: nl || undefined, reason, position, sourceLine,
+    out.push({
+      name,
+      field,
+      value,
+      nl: nl || undefined,
+      reason,
+      position,
+      sourceLine,
       charOffset: segments?.get(position)?.charOffset ?? 0,
-      evidence: typeof o.evidence === 'string' ? o.evidence.trim().slice(0, 1600) : undefined });
+      evidence: typeof o.evidence === 'string' ? o.evidence.trim().slice(0, 1600) : undefined,
+    });
   }
   return out;
 }
@@ -335,21 +343,93 @@ function parseChanges(raw: unknown, positions: Map<string, number>, segments?: M
  * 知道自己在行内的结束偏移，tag 就钉在那句话后面，并把该行剩余内容接在 tag 之后
  * 换行继续，读起来就是图夹在两段叙事中间。
  */
+/** A block image must never be foster-parented above an HTML table or
+ * swallowed by a code fence. Coordinates are UTF-16 offsets in the original text. */
+function safeImageOffset(source: string, offset: number): number {
+  let at = offset;
+  // Fences can contain arbitrary HTML-like text, so also handle their source span.
+  const lines = sourceLines(source);
+  const fenceRanges: Array<{ start: number; end: number }> = [];
+  let fence: { marker: string; size: number; start: number } | undefined;
+  for (const line of lines) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line.text);
+    if (!m) continue;
+    if (!fence) fence = { marker: m[1][0], size: m[1].length, start: line.start };
+    else if (
+      m[1][0] === fence.marker &&
+      m[1].length >= fence.size &&
+      /^ {0,3}(?:`+|~+)\s*$/.test(line.text)
+    ) {
+      const end = line.start + line.text.length;
+      fenceRanges.push({ start: fence.start, end });
+      if (fence.start < at && at <= end) at = end;
+      fence = undefined;
+    }
+  }
+  if (fence && fence.start < at) throw new Error('图片定位落在未闭合的代码块内，请先修正正文格式');
+  const containers: Array<{ name: string; start: number }> = [];
+  const html = /<!--[\s\S]*?-->|<\/?([a-z][\w:-]*)\b(?:"[^"]*"|'[^']*'|[^'">])*?>/gi;
+  let enclosingEnd = -1;
+  for (const match of source.matchAll(html)) {
+    const start = match.index!,
+      end = start + match[0].length;
+    if (fenceRanges.some((range) => start >= range.start && start < range.end)) continue;
+    if (start < at && at < end) at = end;
+    const name = (match[1] || '').toLowerCase();
+    if (!['table', 'pre', 'script', 'style', 'textarea', 'select'].includes(name)) continue;
+    if (/^<\//.test(match[0])) {
+      const index = containers.map((c) => c.name).lastIndexOf(name);
+      if (index >= 0) {
+        const open = containers[index];
+        containers.splice(index);
+        if (open.start < at && at <= end) enclosingEnd = Math.max(enclosingEnd, end);
+      }
+    } else if (!/\/\s*>$/.test(match[0])) containers.push({ name, start });
+  }
+  if (enclosingEnd >= 0) at = Math.max(at, enclosingEnd);
+  if (containers.some((c) => c.start < at))
+    throw new Error('图片定位落在未闭合的 HTML 容器内，请先修正正文格式');
+  // Keep markdown table rows intact. A block div inside a row can appear above it.
+  let index = lines.findIndex((line) => at >= line.start && at <= line.start + line.text.length);
+  if (index >= 0 && lines[index].text.includes('|')) {
+    let first = index,
+      last = index;
+    while (first > 0 && lines[first - 1].text.trim() && lines[first - 1].text.includes('|')) first--;
+    while (last + 1 < lines.length && lines[last + 1].text.trim() && lines[last + 1].text.includes('|'))
+      last++;
+    if (lines.slice(first, last + 1).some((line) => /^\s*\|?\s*:?-{3,}:?\s*\|/.test(line.text)))
+      at = lines[last].start + lines[last].text.length;
+  }
+  // A sentence-ending quote belongs before its illustration.
+  while (at < source.length && /[」』”’）】]/.test(source[at])) at++;
+  return at;
+}
+
 export function injectImageTags(source: string, images: ImageInsertion[]): string {
   if (!images.length) return source;
   const lines = sourceLines(source);
   const byLine = new Map<number, ImageInsertion[]>();
-  for (const image of images) {
+  for (const original of images) {
+    let image = original;
     if (!Number.isInteger(image.sourceLine) || image.sourceLine < 0 || image.sourceLine >= lines.length) {
       throw new Error(`位置 ${image.position} 对应的原始物理行已失效`);
     }
+    const originalLine = lines[image.sourceLine];
+    const relative =
+      Number.isFinite(image.charOffset) && image.charOffset > 0
+        ? Math.min(Math.round(image.charOffset), originalLine.text.length)
+        : originalLine.text.length;
+    const offset = safeImageOffset(source, originalLine.start + relative);
+    const resolvedLine = lines.findIndex((l) => offset >= l.start && offset <= l.start + l.text.length);
+    if (resolvedLine < 0) throw new Error('无法定位安全的剧情段尾，本次未写入图片标签');
+    image = { ...image, sourceLine: resolvedLine, charOffset: offset - lines[resolvedLine].start };
     const line = image.sourceLine;
     const list = byLine.get(line) ?? [];
     list.push(image);
     byLine.set(line, list);
   }
 
-  const fallbackEol = lines.find(line => line.eol)?.eol || '\n';
+  const fallbackEol = lines.find((line) => line.eol)?.eol || '\n';
   let output = '';
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -364,7 +444,7 @@ export function injectImageTags(source: string, images: ImageInsertion[]): strin
     const ordered = inserted
       .map((image, order) => ({ image, order }))
       .sort((a, b) => (a.image.charOffset || 0) - (b.image.charOffset || 0) || a.order - b.order)
-      .map(item => item.image);
+      .map((item) => item.image);
 
     const inline: ImageInsertion[] = [];
     const tail: ImageInsertion[] = [];
@@ -380,13 +460,14 @@ export function injectImageTags(source: string, images: ImageInsertion[]): strin
       piece += line.text.slice(cursor, image.charOffset);
       // 序列化口径见 st/imageTagRegex.ts 的 serializeImageTag（与手动编辑弹窗共用同一份，
       // 两处漂移会让「解析出的字段」与「落进正文的原文」对不上，而 promptHash 吃的是原文）。
-      piece += `${insertedEol}${serializeImageTag(image)}${insertedEol}`;
+      piece += `${insertedEol}${insertedEol}${serializeImageTag(image)}${insertedEol}${insertedEol}`;
       cursor = image.charOffset;
       // 吃掉句后原有的空白/缩进,免得 tag 后面拖出一串空格
       while (cursor < line.text.length && /[ \t]/.test(line.text[cursor])) cursor += 1;
     }
     piece += line.text.slice(cursor);
-    for (const image of tail) piece += `${insertedEol}${serializeImageTag(image)}`;
+    for (const image of tail)
+      piece += `${insertedEol}${insertedEol}${serializeImageTag(image)}${insertedEol}`;
     output += piece + line.eol;
   }
   return output;
