@@ -890,11 +890,48 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       const accepted = mayCreateHeroine(op.name, planIdentities) && !MALE_SEX_RE.test(op.fields.sex.trim());
       if (!accepted)
         appearanceChangeNotes.push(
-          `${op.name}: 暂不自动入库，需要已验证女性身份及女主资格；本张仍可正常出镜`,
+          `${op.name}: 暂不自动入库，需要可验证的女性身份，且不是无名路人；本张仍可正常出镜`,
         );
       if (accepted) op.fields.sex = '1girl';
       return accepted;
     });
+    // Fill only absent face dimensions on new original profiles, then persist them.
+    // Existing appearances and manual fandom choices are never rerolled here.
+    const faceOptions = [
+      ['tsurime', 'thin eyebrows', 'oval face'],
+      ['tareme', 'thick eyebrows', 'round face'],
+      ['narrow eyes', 'thin eyebrows', 'angular face'],
+      ['tsurime', 'thick eyebrows', 'round face'],
+      ['tareme', 'thin eyebrows', 'oval face'],
+      ['narrow eyes', 'thick eyebrows', 'oval face'],
+    ];
+    const usedFaces = new Set(safeEntries.map((e) => e.fields.extra));
+    for (const item of maleGuarded) {
+      const op = item.op;
+      if (op.kind !== 'new' || op.fields.fandom) continue;
+      let index = [...op.name].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0) % faceOptions.length;
+      for (let n = 0; n < faceOptions.length && usedFaces.has(faceOptions[index].join(', ')); n++)
+        index = (index + 1) % faceOptions.length;
+      op.fields.extra = op.fields.extra.replace(
+        /\b(?:beautiful|gorgeous|perfect|pretty|detailed) face\b/gi,
+        '',
+      );
+      const parts = op.fields.extra
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const all = [op.fields.eyes, op.fields.extra].join(', ');
+      const patterns = [
+        /tsurime|tareme|narrow eyes|wide eyes|eye shape|almond/i,
+        /eyebrows/i,
+        /face|jaw|chin|cheek/i,
+      ];
+      faceOptions[index].forEach((tag, i) => {
+        if (!patterns[i].test(all)) parts.push(tag);
+      });
+      op.fields.extra = [...new Set(parts)].join(', ');
+      usedFaces.add(op.fields.extra);
+    }
     const floorOps = maleGuarded.map((item) => item.op);
     const previousDelta = readCharTagFloorDelta(message);
 

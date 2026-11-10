@@ -358,7 +358,7 @@ export async function buildAutoTagMessages(
       ? '\n   - NAI V5 profile requirement: every field:"new" change must include a non-empty nl containing a concise English natural-language description of the character fixed appearance. The name must be the character exact name from the card/lorebook/story — a Chinese name stays Chinese (小雪), never pinyin or translation. Fandom characters must also include their identity tag in fields.fandom, e.g. {"name":"冬海","field":"new","fields":{"sex":"1girl","age":"teenager","hair":"long black hair","eyes":"blue eyes","fandom":"kasumi (blue archive)"},"nl":"A slender girl with long black hair and blue eyes.","position":"P2","reason":"first appearance"}; original characters omit fandom. If an existing library entry lacks fandom but the character is fandom, report a changes item with field:"fandom". Describe only fixed appearance: no current outfit, pose, or location — temporary states never enter the profile. The nl carries the age band and its companion build words too (e.g. "a mature woman with a voluptuous figure"), so the age survives into every later image.'
       : '\n   - NAI profile requirement: the name must be the character exact name from the card/lorebook/story — a Chinese name stays Chinese (小雪), never pinyin or translation. Fandom characters must also include their identity tag in fields.fandom, e.g. {"name":"冬海","field":"new","fields":{"sex":"1girl","age":"teenager","hair":"long black hair","eyes":"blue eyes","fandom":"kasumi (blue archive)"},"position":"P2","reason":"first appearance"}; original characters omit fandom. If an existing library entry lacks fandom but the character is fandom, report a changes item with field:"fandom".';
   const newCharacterRule = `
-   - **建档先于画图**：先通读目标正文，找出每个有名有姓、且【角色固定外貌库】里还没有的**女性**正式角色——只要角色卡、世界书、柏宝书或持续剧情为她给出了设定，或她是持续参与剧情的角色，首次出场就必须建档，不论她是否入选本次图片。判断依据是发给你的全部设定内容，由你自己通读判断。一次性无名路人不建。
+   - **建档先于画图**：先通读目标正文，找出每个有名有姓、且【角色固定外貌库】里还没有的**女性**正式角色——只要本次正文或设定已经明确她是女性并有可识别姓名或稳定称谓，首次出场就必须建档，不要求持续参与或主要设定，不论她是否入选本次图片。判断依据是发给你的全部设定内容，由你自己通读判断。一次性无名路人不建。
   - **男性角色一律不建档**：玩家角色（男主）、男配、男性反派、男性路人，不论戏份多少、设定多完整，都不得在 changes 里输出 field:"new"，也不得为他输出 hair/eyes/skin/body/extra/outfit 中任何一项。档案会被之后每一张图照抄，把男人锁进库就等于让他在后续画面里反复出现、抢女性主角的位置；他需要入画时，外貌直接从本楼正文与上下文里临时取用，不入库。
    - **建档资格与入画资格是两回事**：不建档只表示他不进角色库，不表示他不能入画；已建档也不表示他必须入画。先按本图的主体和核心互动取景，再为镜头内的人写外貌，不按档案状态决定取舍。无名角色若是核心互动的参与者，照常入画，不得仅因缺档案放弃画面、改选瞬间或裁掉他；仅仅在场不构成入画理由，无关在场者可以留在镜头外。
    - “已建档”只能按【角色固定外貌库】区块中的同名条目判断：只有名字实际列在该区块中才算已建档；世界书、角色卡、柏宝书或正文里的详细设定只是建档依据，绝不等于已经在库。每个在场的**女性**正式角色必须二选一：指出库中的同名条目，或在 changes 中输出 field:"new"；男性角色不参与这条二选一，他只需要按正文写进画面，不建档也不写 changes。一次性无名角色同样不在这条二选一之内：他既不建档也不写 changes，不需要指出任何库条目，缺档案是正常状态而非遗漏。**同一角色多称呼归并**：当正文用姓氏+尊称/辈分/职务（如把已建档的「风千华」叫作「风阿姨」「风姐」「风老师」）、直呼其名（如「千华」）、或关系称谓指代某个已建档角色时，她就是该【已建档】角色本人——既不重复建档，也绝不得把她当成未建档称谓另编外貌；在思考块与最终 JSON 的角色名中必须一律归一写成库里的档案原名（写「风千华」，不写「风阿姨」），并逐字照抄该档案的固定外貌与【服装现状】。
@@ -377,7 +377,7 @@ export async function buildAutoTagMessages(
     ? '- 多人画面中，每个角色的发色、瞳色、体型、服装、物件和个人动作都必须放进各自的 characters[].tag，禁止放进 Base 或分配给其他角色。'
     : '- 多人画面中，每个角色的发色、瞳色、体型、服装、物件和个人动作都必须使用该角色的区分性称谓邻接绑定，禁止把两人的外貌特征散放成无法归属的一串公共 tag。';
   const faceDesignRule =
-    '原创人物首次建档时 extra 应记录少量稳定面部特征（眼型、眉、轮廓、鼻唇），原文优先，缺项才补全；与已有女主比较，避免只换发色瞳色。不要堆 gorgeous face 等泛化美女词，不强加痣疤，不把微笑、半闭眼、妆容永久写入。已定妆或手动同人档案原样复用。';
+    '具名女性首次出现当次就建档，不等待主要女主资格；无名路人不建档。原创人物首次建档时 extra 应记录少量稳定面部特征（眼型、眉、轮廓、鼻唇），原文优先，缺项才补全；与已有女主比较，避免只换发色瞳色。不要堆 gorgeous face 等泛化美女词，不强加痣疤，不把微笑、半闭眼、妆容永久写入。已定妆或手动同人档案原样复用。';
   const characterRule = `7. 角色状态与 changes：${newCharacterRule}
    ${faceDesignRule}
    ${libraryReferenceRule}

@@ -276,6 +276,29 @@ export function acceptClothingChanges(
       }
     }
 
+    // Re-wearing an existing garment updates that piece; it cannot reset the
+    // rest of a partially undressed outfit to the default worn state.
+    if (
+      old &&
+      c.operation === 'change' &&
+      !/换装|更衣|换衣|换成|换上.{0,16}(?:一套|另一套|新衣|新裙)|change.{0,20}(?:outfit|clothes)|new outfit/i.test(
+        c.evidence,
+      )
+    ) {
+      const mapped = c.pieces.map((p) => {
+        const existing = old.pieces.find(
+          (o) => o.id === p.id || o.design.trim().toLowerCase() === p.design.trim().toLowerCase(),
+        );
+        return existing ? { ...p, id: existing.id, design: '' } : null;
+      });
+      if (mapped.length && mapped.every(Boolean)) {
+        c.operation = 'patch';
+        c.pieces = mapped as ClothingPiece[];
+      } else {
+        rejected.push(c.name + ': 非明确换装不能整套重置，请用已有部件 patch 或新增衣物 add');
+        continue;
+      }
+    }
     const line = source.replace(/\r\n?/g, '\n').split('\n');
     const preceding = [
       ...line.slice(0, c.sourceLine),
@@ -312,6 +335,25 @@ export function acceptClothingChanges(
       rejected.push(`${c.name} ${c.position}: ${reason}`);
       continue;
     }
+    if (c.operation === 'patch')
+      for (const piece of c.pieces) {
+        // Default values emitted by the model are not restoration events.
+        const restore: Record<string, RegExp> = {
+          fastening: /扣好|扣上|拉上|系好|系上|fasten|button.{0,12}up|zip.{0,12}up|clos/i,
+          arrangement:
+            /整理好|恢复原状|拉回|放下|穿好|穿回|pull.{0,12}back|lower.{0,12}(?:skirt|dress)|straighten|redress/i,
+          location: /穿上|穿回|穿好|套上|披上|put.{0,12}on|redress/i,
+          leftSleeve: /袖|sleeve/i,
+          rightSleeve: /袖|sleeve/i,
+        };
+        for (const [key, expression] of Object.entries(restore)) {
+          if (
+            ['closed', 'normal', 'worn', 'on_arm'].includes(piece.state[key]) &&
+            !expression.test(c.evidence)
+          )
+            delete piece.state[key];
+        }
+      }
     result.push(c);
     applyOne(current, c, 'accepted');
   }
@@ -501,19 +543,15 @@ export function enforceClothing(
   independent: boolean,
 ): void {
   let managed = 0;
-  let fixedSuit = false;
   for (const c of image.characters) {
     const record = state.get(c.name);
     if (!record) continue;
     managed++;
-    fixedSuit ||= record.suitMode === 'always';
     const caption = clothingCaption(record);
     const dynamic = c.tag
       .split(',')
       .map((t) => t.trim())
-      .filter(
-        (t) => t && !isClothingDescription(t) && !(record.suitMode === 'always' && LOCKED_WEAR_STATE.test(t)),
-      );
+      .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t));
     c.tag = [
       ...new Set([
         ...dynamic,
@@ -538,7 +576,7 @@ export function enforceClothing(
     image.tag = image.tag
       .split(',')
       .map((t) => t.trim())
-      .filter((t) => t && !isClothingDescription(t) && !(fixedSuit && LOCKED_WEAR_STATE.test(t)))
+      .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t))
       .join(', ');
     if (nl)
       image.nl = image.nl
@@ -551,7 +589,7 @@ export function enforceClothing(
         ...image.tag
           .split(',')
           .map((t) => t.trim())
-          .filter((t) => t && !isClothingDescription(t) && !(fixedSuit && LOCKED_WEAR_STATE.test(t))),
+          .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t)),
         ...image.characters[0].tag.split(',').map((t) => t.trim()),
       ]),
     ].join(', ');
