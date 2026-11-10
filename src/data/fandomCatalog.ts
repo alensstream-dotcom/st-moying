@@ -137,6 +137,7 @@ let saved: CatalogState = { version: 3, edits: [], hidden: [] },
   memo: FandomMaterial[] | null = null,
   loaded: Promise<void> | undefined;
 let resolvedEditedIds = new Set<string>();
+let catalogRedirects: Record<string, string> = {};
 export const catalogInfo = {
   characters: 0,
   works: 0,
@@ -186,6 +187,7 @@ export function loadFandomCatalog(): Promise<void> {
       roleChinese = roleModule.default,
       extra = extraModule.default;
     if (pack.version !== 1 || !Array.isArray(pack.works)) throw new Error('角色目录格式不正确');
+    catalogRedirects = pack.redirects && typeof pack.redirects === 'object' ? pack.redirects : {};
     const curated = new Map(
       BUILTIN_FANDOMS.map((x) => [normal(x.workTag) + '|' + normal(x.roleTag).split(' (')[0], x]),
     );
@@ -206,6 +208,16 @@ export function loadFandomCatalog(): Promise<void> {
         const machineRole = (extra.characters as Record<string, string>)[slug];
         const machineWork = (extra.works as Record<string, string>)[copyright];
         const extraAliases = (extra.aliases as Record<string, string[]>)[slug] || [];
+        const variantChinese = (variants || []).flatMap((trigger) => {
+          const key = trigger.split(',')[0].trim().replace(/\s+/g, '_');
+          const translated = (roleChinese as Record<string, string[]>)[key];
+          return [
+            translated?.[0],
+            ...(translated?.[1] || '').split('|'),
+            (extra.characters as Record<string, string>)[key],
+            ...((extra.aliases as Record<string, string[]>)[key] || []),
+          ].filter((x): x is string => !!x && /[\u3400-\u9fff]/.test(x));
+        });
         const roleAliases = (roleTranslation?.[1] || '').split('|').filter(Boolean);
         const item: FandomMaterial = {
           id: 'animadex:' + slug,
@@ -236,6 +248,7 @@ export function loadFandomCatalog(): Promise<void> {
               ...(cn?.aliases || []),
               ...roleAliases,
               ...extraAliases,
+              ...variantChinese,
               ...(variants || []).map((v) => v.replace(/_/g, ' ')),
             ]),
           ],
@@ -313,6 +326,37 @@ export function fandomCatalog(): FandomMaterial[] {
   }
   for (const edit of saved.edits) {
     if (!edit?.roleTag || typeof edit.workTag !== 'string') continue;
+    const oldSlug = edit.id.startsWith('animadex:') ? edit.id.slice('animadex:'.length) : '';
+    const redirected = catalogRedirects[oldSlug];
+    const redirectedItem = redirected ? map.get('animadex:' + redirected) : undefined;
+    if (redirectedItem) {
+      const aliases = [
+        ...new Set(
+          [
+            ...redirectedItem.aliases,
+            ...(Array.isArray(edit.aliases) ? edit.aliases : []),
+            edit.name,
+            edit.tags,
+          ].filter(Boolean),
+        ),
+      ];
+      map.set(redirectedItem.id, {
+        ...redirectedItem,
+        aliases,
+        searchText: normal(
+          [
+            redirectedItem.name,
+            redirectedItem.franchise,
+            redirectedItem.roleTag,
+            redirectedItem.workTag,
+            ...aliases,
+            ...(redirectedItem.workAliases || []),
+          ].join(' '),
+        ),
+      });
+      editedIds.add(redirectedItem.id);
+      continue;
+    }
     const old =
       map.get(edit.id) ||
       exactLookup.get(normal(edit.roleTag) + '|' + normal(edit.workTag)) ||
@@ -323,11 +367,20 @@ export function fandomCatalog(): FandomMaterial[] {
       ...old,
       ...edit,
       id,
+      name: old && edit.name === edit.roleTag ? old.name : edit.name,
+      franchise: old && edit.franchise === edit.workTag ? old.franchise : edit.franchise,
       tags: edit.trigger || edit.tags || edit.roleTag + ', ' + edit.workTag,
-      aliases: Array.isArray(edit.aliases) ? edit.aliases : [],
+      aliases: [...new Set([...(old?.aliases || []), ...(Array.isArray(edit.aliases) ? edit.aliases : [])])],
     };
     value.searchText = normal(
-      [value.name, value.roleTag, value.workTag, value.franchise, ...value.aliases].join(' '),
+      [
+        value.name,
+        value.roleTag,
+        value.workTag,
+        value.franchise,
+        ...value.aliases,
+        ...(value.workAliases || []),
+      ].join(' '),
     );
     map.set(id, value);
   }
