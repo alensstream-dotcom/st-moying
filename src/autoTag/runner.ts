@@ -1,3 +1,4 @@
+import { recoverProfileFields } from './profileRecovery';
 import {
   appearancePolicyRevision,
   blocksAppearanceChange,
@@ -210,7 +211,7 @@ function describeRebase(report: RebaseReport): string {
   if (!report.remapped && !report.drifted) return '';
   const parts = [`原位 ${report.anchored}`];
   if (report.remapped) parts.push(`跟随改写句 ${report.remapped}`);
-  if (report.drifted) parts.push(`顺延到上一段 ${report.drifted}`);
+  if (report.drifted) parts.push(`顺延到后方段落 ${report.drifted}`);
   return parts.join(' · ');
 }
 
@@ -623,6 +624,54 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           candidate.changes = candidate.changes.filter(
             (c) => c.field !== 'new' || mayCreateHeroine(c.name, candidateFacts),
           );
+          // A confirmed named woman must not disappear merely because the LLM
+          // supplied a character block but forgot changes.new.
+          if (!slot)
+            for (const image of candidate.images)
+              for (const character of image.characters) {
+                const fact = identityFactFor(character.name, candidateFacts);
+                const name = fact?.name || character.name;
+                if (
+                  !mayCreateHeroine(name, candidateFacts) ||
+                  entriesBefore.some((e) => e.name === name) ||
+                  candidate.changes.some((c) => c.field === 'new' && c.name === name)
+                )
+                  continue;
+                const fields = recoverProfileFields(character.tag);
+                candidate.changes.push({
+                  name,
+                  field: 'new',
+                  value: JSON.stringify(fields),
+                  nl: Object.values(fields).filter(Boolean).join(', '),
+                  reason: '已确认女性：从本次具名角色块补建遗漏档案',
+                  position: image.position,
+                  sourceLine: image.sourceLine,
+                  charOffset: image.charOffset,
+                });
+              }
+          if (!slot)
+            for (const fact of candidateFacts) {
+              if (
+                !source.includes(fact.name) ||
+                !mayCreateHeroine(fact.name, candidateFacts) ||
+                entriesBefore.some((e) => e.name === fact.name) ||
+                candidate.changes.some((c) => c.field === 'new' && c.name === fact.name)
+              )
+                continue;
+              const position = preparedTarget.segments[0];
+              if (!position) continue;
+              const fields = recoverProfileFields();
+              candidate.changes.push({
+                name: fact.name,
+                field: 'new',
+                value: JSON.stringify(fields),
+                nl: 'female',
+                reason: '本节已确认具名女性首次出场；外貌资料待补全，不因未入选图片而漏档',
+                position: position.id,
+                sourceLine: position.sourceLine,
+                charOffset: position.charOffset,
+              });
+            }
           const candidateEntries = eligibleIdentityEntries(entriesBefore, candidateFacts);
           for (const image of candidate.images)
             for (const character of image.characters) {

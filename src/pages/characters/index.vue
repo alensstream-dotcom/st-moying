@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { parseImageTags, parseImageTagContent } from '@/st/imageTagRegex';
+import { recoverProfileFromChat } from '@/autoTag/profileRecovery';
 import { characterAliases, saveCharacterAliases } from '@/state/characterAliases';
 import WardrobePanel from '@/components/WardrobePanel.vue';
 import FandomLibrary from '@/components/FandomLibrary.vue';
@@ -11,6 +13,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import {
   recomputeCharTags,
   charTagBaseNames,
+  readCharTagFloorDelta,
   charTagLib,
   emptyCharFields,
   upsertCharTag,
@@ -107,6 +110,50 @@ function zoomPortrait(candidateImage = false) {
       prompt: candidateImage ? candidate.value?.nl : draft.value?.nl,
     });
 }
+const pendingIdentities = computed(() => {
+  version.value;
+  return currentIdentityFacts().filter(
+    (f) =>
+      f.gender === 'unknown' ||
+      f.conflict ||
+      (f.gender === 'female' && !charTagLib.entries.some((e) => e.name === f.name)),
+  );
+});
+async function confirmIdentity(name: string, female: boolean) {
+  try {
+    confirmCharacterIdentity(name, female ? 'female' : 'male', female);
+    recomputeCharTags();
+    if (female && !findCharTag(name)) {
+      const fields = recoverProfileFromChat(name, characterAliases(name), getContext()?.chat || []);
+      if (
+        !upsertCharTag({
+          name,
+          fields,
+          source: 'manual',
+          raw: '',
+          nl: '',
+          desc: '用户确认女性后从已有具名图片标签恢复；缺少的外貌字段可继续补全',
+          history: [],
+        })
+      )
+        throw new Error('身份已确认，但档案保存失败');
+    }
+    recomputeCharTags();
+    version.value++;
+    if (female) await select(name);
+    feedback.value = female
+      ? `已确认 ${name} 为女性，角色档案已显示；恢复的外貌请核对，缺项可补全`
+      : `已确认 ${name} 为男性，自动女性档案已暂停使用`;
+  } catch (e) {
+    feedback.value = e instanceof Error ? e.message : String(e);
+  }
+}
+function undoReview() {
+  undoIdentityReview();
+  recomputeCharTags();
+  version.value++;
+  feedback.value = '已撤销身份审核结论；确认女性时补建的档案保留，可在角色库删除';
+}
 const aliasDraft = ref('');
 function saveAliases() {
   try {
@@ -176,9 +223,29 @@ const version = ref(0),
   floor = ref(0),
   customTag = ref(''),
   customZh = ref('');
+const appearedNames = computed(() => {
+  version.value;
+  const entries = charTagLib.entries;
+  const names = new Set<string>();
+  for (const message of getContext()?.chat || []) {
+    const delta = readCharTagFloorDelta(message);
+    if (delta?.swipe === (message.swipe_id ?? 0)) for (const op of delta.ops) names.add(op.name);
+    for (const tag of parseImageTags(message.mes))
+      for (const c of parseImageTagContent(tag).characters) {
+        const matches = entries.filter((e) => e.name === c.name || characterAliases(e.name).includes(c.name));
+        if (matches.length === 1) names.add(matches[0].name);
+      }
+  }
+  return names;
+});
 const rows = computed(() =>
   charTagLib.entries
-    .filter((e) => charTagBaseNames.has(e.name) || !globalCharTagLib.entries.some((g) => g.name === e.name))
+    .filter(
+      (e) =>
+        charTagBaseNames.has(e.name) ||
+        appearedNames.value.has(e.name) ||
+        !globalCharTagLib.entries.some((g) => g.name === e.name),
+    )
     .filter((e) =>
       (e.name + ' ' + e.desc + ' ' + JSON.stringify(e.fields))
         .toLowerCase()
@@ -689,7 +756,9 @@ watch(
           </button>
         </details>
         <details>
-          <summary>身份审核</summary>
+          <summary>身份待核对 · {{ pendingIdentities.length }}</summary>
+          <p>仅处理身份不明、冲突或已确认女性但缺档的人物。确认女性会补建档案；这不是每个角色必点的开关。</p>
+          <p v-if="!pendingIdentities.length">暂无待核对身份。</p>
           <button
             class="bbi-btn"
             :disabled="busy"
@@ -700,14 +769,11 @@ watch(
             "
           >
             检查错误入库（LLM）</button
-          ><button class="bbi-btn" :disabled="busy" @click="undoIdentityReview">撤销审核</button>
-          <div v-for="fact in currentIdentityFacts()" :key="fact.name">
+          ><button class="bbi-btn" :disabled="busy" @click="undoReview">撤销审核</button>
+          <div v-for="fact in pendingIdentities" :key="fact.name">
             <span>{{ fact.name }} · {{ fact.gender }}</span
-            ><button class="bbi-btn" @click="confirmCharacterIdentity(fact.name, 'male', false)">
-              确认男性</button
-            ><button class="bbi-btn" @click="confirmCharacterIdentity(fact.name, 'female', true)">
-              确认女主
-            </button>
+            ><button class="bbi-btn" @click="confirmIdentity(fact.name, false)">确认男性</button
+            ><button class="bbi-btn" @click="confirmIdentity(fact.name, true)">确认女性并补建档案</button>
           </div>
         </details>
       </aside>

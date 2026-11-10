@@ -159,7 +159,27 @@ export function assessIdentityClaims(claims: IdentityClaim[], sources: IdentityS
           : c.evidence && origin.includes(c.evidence)
             ? subjectGender(c.name, c.evidence, c.source !== 'story')
             : 'unknown';
-    const gender = bookGender === 'male' ? 'male' : verified;
+    // Exact source quotations can establish identity through normal narrative,
+    // not only the narrow copula patterns recognized by subjectGender.
+    const grounded =
+      c.evidence && origin.includes(c.evidence) && c.evidence.includes(c.name) && c.reason.length >= 4;
+    const objectOnly =
+      /(?:看着|望着|看向|望向|注视|对着|让|把|给)她/.test(c.evidence) &&
+      !/女性|女子|女孩|少女|姑娘|女人|女修|师姐|师妹|female|woman/i.test(c.evidence);
+    const narrativeFemale =
+      !objectOnly &&
+      grounded &&
+      c.gender === 'female' &&
+      /她|女性|女子|女孩|少女|姑娘|女人|女修|师姐|师妹|woman|female|\bshe\b/i.test(c.evidence) &&
+      !/不是|并非|假设|梦境|男扮|伪装|变身|变成|disguis|transform|dream/i.test(c.evidence);
+    const gender =
+      bookGender === 'male'
+        ? 'male'
+        : verified !== 'unknown'
+          ? verified
+          : narrativeFemale
+            ? 'female'
+            : 'unknown';
     if (gender === 'unknown' || c.gender !== gender) {
       facts.push({
         ...c,
@@ -239,8 +259,9 @@ export function isMaleIdentity(name: string, facts = currentIdentityFacts()): bo
   return identityFactFor(name, facts)?.gender === 'male';
 }
 export function identityEntrySuspended(entry: CharTagEntry, facts = currentIdentityFacts()): boolean {
-  if (entry.source === 'manual') return false;
   const fact = identityFactFor(entry.name, facts);
+  if (fact?.source === 'manual' && fact.gender === 'male') return true;
+  if (entry.source === 'manual') return false;
   return !!fact && (fact.gender === 'male' || (fact.source === 'manual' && !fact.heroine));
 }
 export function eligibleIdentityEntries(
@@ -288,7 +309,7 @@ export function confirmCharacterIdentity(name: string, gender: IdentityGender, h
     heroine: gender === 'female' && heroine,
     source: 'manual',
     evidence: '用户确认',
-    reason: '用户明确确认人物身份与女主资格',
+    reason: '用户明确确认人物性别与入库选择',
   });
   saveReview(data);
 }
