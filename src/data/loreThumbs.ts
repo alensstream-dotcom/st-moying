@@ -113,6 +113,29 @@ export async function clearThumbs(): Promise<void> {
     // 忽略
   }
 }
+/** Remove only retired material-cache keys, never portraits or story images. */
+export async function purgeLegacyMaterialThumbs(): Promise<void> {
+  const retired = (key: string) =>
+    key.startsWith('pose:') ||
+    (key.startsWith('wardrobe:') && !key.startsWith('wardrobe:closet-')) ||
+    (key.startsWith('face:') && !key.startsWith('face:animadex:') && !key.startsWith('face:identity:'));
+  for (const key of memory.keys()) if (retired(key)) memory.delete(key);
+  const db = await openDb();
+  if (!db) return;
+  await new Promise<void>((resolve, reject) => {
+    const t = db.transaction(STORE, 'readwrite');
+    const r = t.objectStore(STORE).openCursor();
+    r.onsuccess = () => {
+      const cursor = r.result;
+      if (!cursor) return;
+      if (retired(String(cursor.key))) cursor.delete();
+      cursor.continue();
+    };
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error);
+  });
+}
 
 /** 已缓存的数量（设置页/工具栏显示用）。 */
 export async function countThumbs(): Promise<number> {

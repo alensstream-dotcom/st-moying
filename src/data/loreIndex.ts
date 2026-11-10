@@ -499,5 +499,5 @@ export function allPoseItems(): PoseEntry[] {
 }
 
 export function allFandomItems(): FandomPreset[] {
-  return [...fandomCatalog(), ...customFandom()];
+  return fandomCatalog();
 }

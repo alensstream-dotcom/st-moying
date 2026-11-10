@@ -861,7 +861,7 @@ async function confirmUpdate() {
         <label class="bbi-switch-row"><span class="bbi-field-label">首次穿搭／明确换装时推荐衣橱款式</span><input v-model="settings.autoTag.lore.enabled" type="checkbox" class="bbi-checkbox" /></label>
         <p class="bbi-field-hint">只从新版衣橱中允许自动使用的独立标签组合挑候选。已有款式和穿脱记录优先，没换装时不重新选款。旧姿势／脸型／服装长句模板已退出自动召回。</p>
         <label class="bbi-num-row"><span class="bbi-field-label">服装候选条数</span><input v-model.number="settings.autoTag.lore.wardrobeLimit" class="bbi-input bbi-num" type="number" min="1" max="16" @change="normalizeAutoTagNumbers" /></label>
-        <button class="bbi-btn" @click="openLorePage">打开角色与衣橱</button>
+        <button class="bbi-btn" @click="openLorePage">打开素材库</button>
       </Collapsible>
 
       <!-- 排除角色:名单与柏宝书共享(见 state/settings.ts 的共享存储),任一端改动自动同步 -->

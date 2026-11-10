@@ -249,6 +249,7 @@ export interface MaterialStore {
   suits: SuitMaterial[];
   legacy?: string;
   words?: string[];
+  hidden?: string[];
 }
 function store(): MaterialStore {
   try {
@@ -257,18 +258,11 @@ function store(): MaterialStore {
   } catch {}
   return { version: 2, suits: [] };
 }
-export function archiveLegacyMaterials() {
+export function purgeLegacyMaterials() {
   const value = store();
-  if (value.legacy !== undefined) return;
-  value.legacy = localStorage.getItem('moying_image_custom_lore') || '';
+  delete value.legacy;
   localStorage.setItem(MATERIAL_KEY, JSON.stringify(value));
-}
-export function legacyMaterials(): { name: string; tags: string }[] {
-  try {
-    return JSON.parse(store().legacy || '{}').wardrobe || [];
-  } catch {
-    return [];
-  }
+  localStorage.removeItem('moying_image_custom_lore');
 }
 export function savedSuits(): SuitMaterial[] {
   return store().suits.filter(
@@ -276,7 +270,10 @@ export function savedSuits(): SuitMaterial[] {
   );
 }
 export function suitLibrary(): SuitMaterial[] {
-  return [...BUILTIN_SUITS, ...savedSuits()];
+  const hidden = new Set(store().hidden || []);
+  return [...new Map([...BUILTIN_SUITS, ...savedSuits()].map((x) => [x.id, x])).values()].filter(
+    (x) => !hidden.has(x.id),
+  );
 }
 export function saveSuit(input: Omit<SuitMaterial, 'id'>, id?: string): SuitMaterial {
   const result = inspectClothing(input.tags);
@@ -295,12 +292,14 @@ export function saveSuit(input: Omit<SuitMaterial, 'id'>, id?: string): SuitMate
     if (data.suits.length >= 600) throw new Error('衣橱已达 600 套上限');
     data.suits.push(item);
   } else data.suits[index] = item;
+  data.hidden = (data.hidden || []).filter((x) => x !== item.id);
   localStorage.setItem(MATERIAL_KEY, JSON.stringify(data));
   return item;
 }
 export function deleteSuit(id: string) {
   const data = store();
   data.suits = data.suits.filter((s) => s.id !== id);
+  data.hidden = [...new Set([...(data.hidden || []), id])];
   localStorage.setItem(MATERIAL_KEY, JSON.stringify(data));
 }
 export function exportMaterials() {
@@ -311,7 +310,29 @@ export function exportMaterials() {
   );
 }
 export function importMaterials(json: string) {
-  const value = JSON.parse(json);
+  let value = JSON.parse(json);
+  if (Array.isArray(value) || Array.isArray(value?.wardrobe)) {
+    const rows = Array.isArray(value) ? value : value.wardrobe;
+    value = {
+      version: 2,
+      suits: rows.map((r: any) => ({
+        id: 'closet-user-' + crypto.randomUUID(),
+        name: String(r.name || '导入的服装'),
+        tags: typeof r.tags === 'string' ? r.tags : '',
+        aliases: Array.isArray(r.aliases)
+          ? r.aliases.filter((x: unknown) => typeof x === 'string')
+          : [String(r.name || '导入的服装')],
+        category: SUIT_CATEGORIES.some((c) => c[0] === r.category) ? r.category : 'costume',
+        era: ['ancient', 'modern', 'fantasy', 'any'].includes(r.era) ? r.era : 'any',
+        slot: ['full', 'top', 'bottom', 'underwear', 'hosiery', 'shoes', 'accessory'].includes(r.slot)
+          ? r.slot
+          : 'full',
+        automatic: false,
+        origin: '用户导入',
+        nsfw: Number(r.nsfw) || 0,
+      })),
+    };
+  }
   if (value?.version !== 2 || !Array.isArray(value.suits)) throw new Error('请选择新版衣橱备份');
   if (value.suits.length > 600) throw new Error('导入文件超过 600 套');
   const extra: unknown = value.words ?? [];
@@ -320,11 +341,12 @@ export function importMaterials(json: string) {
   const incomingKnown = new Set([...known, ...extra]);
   const next = store(),
     ids = new Set(next.suits.map((s) => s.id));
+  const identities = new Set(suitLibrary().map((s) => s.name + '|' + inspectClothing(s.tags).tags));
   // Validate everything before writing anything.
   const incoming = value.suits.map((s: SuitMaterial) => {
     if (
       typeof s?.id !== 'string' ||
-      !s.id.startsWith('closet-user-') ||
+      !s.id.startsWith('closet-') ||
       typeof s.name !== 'string' ||
       !s.name.trim() ||
       s.name.length > 120 ||
@@ -349,12 +371,17 @@ export function importMaterials(json: string) {
     };
   });
   for (const item of incoming)
-    if (!ids.has(item.id)) {
+    if (!ids.has(item.id) && !identities.has(item.name + '|' + item.tags)) {
       next.suits.push(item);
       ids.add(item.id);
+      identities.add(item.name + '|' + item.tags);
     }
   if (next.suits.length > 600) throw new Error('合并后超过 600 套');
   next.words = [...incomingKnown].filter((w) => !Object.hasOwn(vocabulary, w));
+  if (Array.isArray(value.hidden))
+    next.hidden = [
+      ...new Set([...(next.hidden || []), ...value.hidden.filter((x: unknown) => typeof x === 'string')]),
+    ];
   if (next.words.length > 2000) throw new Error('合并后个人衣物词超过 2000 条');
   localStorage.setItem(MATERIAL_KEY, JSON.stringify(next));
   for (const word of extra)

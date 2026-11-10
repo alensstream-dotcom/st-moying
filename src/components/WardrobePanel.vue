@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, onUnmounted, watch, onMounted } from 'vue';
 import MaterialThumbnail from './MaterialThumbnail.vue';
+import PreviewQueueBar from './PreviewQueueBar.vue';
+import { onThumbTaskDone, retargetThumbTasks, type ThumbTask } from '@/data/loreThumbJob';
 import {
   suitLibrary,
+  savedSuits,
   saveSuit,
   deleteSuit,
   inspectClothing,
@@ -10,14 +13,12 @@ import {
   clothingWords,
   SUIT_CATEGORIES,
   CLOTHING_SOURCE,
-  legacyMaterials,
-  archiveLegacyMaterials,
+  purgeLegacyMaterials,
   type SuitMaterial,
 } from '@/data/materialLibrary';
 import { bindingFromTags, mergeSuitWithCurrent, chooseWardrobe, type SuitMode } from '@/state/wardrobeChoice';
-import { charTagLib, findCharTag, buildEntryTag, isManualFandom } from '@/state/charTags';
+import { charTagLib } from '@/state/charTags';
 import { explainTags, loadTagChinese } from '@/state/characterStudio';
-import { generateImage, decideSeed } from '@/generate';
 import { getContext } from '@/st/context';
 import { getThumb, putStudioImage } from '@/data/loreThumbs';
 import { openLightbox } from '@/floor/lightbox';
@@ -27,6 +28,11 @@ import { clothingBefore } from '@/autoTag/outfitTimeline';
 import type { WardrobeSlot } from '@/data/loreTypes';
 const props = defineProps<{ name?: string; floor?: number }>();
 const emit = defineEmits<{ changed: [] }>();
+const detailOpen = ref(false),
+  marked = ref(new Set<string>()),
+  queueScope = ref('page'),
+  queueLimit = ref(24),
+  draftId = ref('closet-draft-' + crypto.randomUUID());
 const revision = ref(0),
   query = ref(''),
   category = ref(''),
@@ -58,10 +64,6 @@ const all = computed(() => {
   revision.value;
   return suitLibrary();
 });
-const legacy = computed(() => {
-  revision.value;
-  return legacyMaterials();
-});
 const checked = computed(() => {
   revision.value;
   return inspectClothing(tags.value);
@@ -75,12 +77,16 @@ const words = computed(() =>
     )
     .slice(0, 36),
 );
+const ownIds = computed(() => {
+  revision.value;
+  return new Set(savedSuits().map((x) => x.id));
+});
 const results = computed(() =>
   all.value.filter(
     (i) =>
       (!category.value || i.category === category.value) &&
       (!era.value || i.era === era.value || i.era === 'any') &&
-      (!onlyMine.value || i.id.startsWith('closet-user-')) &&
+      (!onlyMine.value || ownIds.value.has(i.id)) &&
       (!query.value.trim() ||
         (i.name + ' ' + i.tags + ' ' + i.aliases.join(' '))
           .toLowerCase()
@@ -88,6 +94,49 @@ const results = computed(() =>
   ),
 );
 const shown = computed(() => results.value.slice(page.value * 18, page.value * 18 + 18));
+const queueItems = computed(() => {
+  const items =
+    queueScope.value === 'checked'
+      ? all.value.filter((x) => marked.value.has(x.id))
+      : queueScope.value === 'filtered'
+        ? results.value
+        : shown.value;
+  return items.slice(0, Math.max(1, Math.min(1000, Number(queueLimit.value) || 24)));
+});
+const queueTasks = computed<ThumbTask[]>(() =>
+  queueItems.value.map((x) => ({ kind: 'wardrobe', id: x.id, name: x.name, prompt: x.tags })),
+);
+const singleTask = computed<ThumbTask[]>(() =>
+  checked.value.tags && !checked.value.unknown.length
+    ? [
+        {
+          kind: 'wardrobe',
+          id: selectedId.value || draftId.value,
+          name: title.value,
+          prompt: checked.value.tags,
+        },
+      ]
+    : [],
+);
+function mark(id: string) {
+  const next = new Set(marked.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  marked.value = next;
+}
+const offQueue = onThumbTaskDone(async (task) => {
+  revision.value++;
+  if (
+    task.kind !== 'wardrobe' ||
+    task.id !== (selectedId.value || draftId.value) ||
+    task.prompt !== checked.value.tags ||
+    busy.value
+  )
+    return;
+  const ticket = epoch;
+  const cached = await getThumb('wardrobe:' + task.id);
+  if (cached && ticket === epoch) setImage(cached.blob);
+});
 const floor = computed(() => props.floor ?? Math.max(0, (getContext()?.chat.length || 1) - 1));
 const current = computed(() => {
   revision.value;
@@ -151,7 +200,6 @@ function setImage(value: Blob) {
 }
 function editTags() {
   clearPreview();
-  if (!selectedId.value.startsWith('closet-user-')) selectedId.value = '';
   origin.value = '用户编辑';
 }
 function addWord(word: string) {
@@ -183,6 +231,7 @@ function swatch(value: string) {
                 : '#b6a797';
 }
 async function pick(item: SuitMaterial) {
+  detailOpen.value = true;
   clearPreview();
   description.value = '';
   selectedId.value = item.id;
@@ -203,6 +252,8 @@ async function pick(item: SuitMaterial) {
   } catch {}
 }
 function newSuit() {
+  detailOpen.value = true;
+  draftId.value = 'closet-draft-' + crypto.randomUUID();
   clearPreview();
   selectedId.value = '';
   title.value = '我的套装';
@@ -216,6 +267,37 @@ function newSuit() {
 }
 function roll() {
   if (results.value.length) void pick(results.value[Math.floor(Math.random() * results.value.length)]);
+}
+function rollColour() {
+  const tokens = checked.value.tags.split(', ').filter(Boolean),
+    colour = /^(white|black|blue|red|green|pink|purple|yellow|brown|grey|orange) (.+)$/;
+  for (let i = 0; i < tokens.length; i++) {
+    const match = tokens[i].match(colour);
+    if (!match) continue;
+    const options = clothingWords.filter((w) => {
+      const m = w.match(colour);
+      return m && m[2] === match[2] && w !== tokens[i];
+    });
+    if (!options.length) continue;
+    tokens[i] = options[Math.floor(Math.random() * options.length)];
+    tags.value = tokens.join(', ');
+    selectedId.value = '';
+    draftId.value = 'closet-draft-' + crypto.randomUUID();
+    clearPreview();
+    title.value = title.value.replace(/ · 配色.*$/, '') + ' · 配色候选';
+    origin.value = '从现有款式 Roll 配色';
+    feedback.value = '只改一个部件的已收录颜色标签，不改版型、不调用 LLM；可直接预览，满意后另存';
+    return;
+  }
+  feedback.value = '当前款式没有可替换的已收录配色标签，可从词表手动添加';
+}
+async function copyTags() {
+  try {
+    await navigator.clipboard.writeText(checked.value.tags);
+    feedback.value = '已复制服装标签';
+  } catch {
+    feedback.value = '复制不可用，请选中标签手动复制';
+  }
 }
 function assertTags() {
   if (!checked.value.tags) throw new Error('请先选择服装或添加标签');
@@ -246,7 +328,8 @@ async function run(action: () => Promise<void>) {
 async function save() {
   await run(async () => {
     assertTags();
-    const id = selectedId.value.startsWith('closet-user-') ? selectedId.value : undefined;
+    const oldId = selectedId.value || draftId.value;
+    const id = selectedId.value || undefined;
     const result = saveSuit(
       {
         name: title.value,
@@ -269,6 +352,7 @@ async function save() {
       id,
     );
     selectedId.value = result.id;
+    if (oldId !== result.id) retargetThumbTasks('wardrobe', oldId, result.id, result.tags);
     revision.value++;
     let imageNote = '';
     if (blob)
@@ -308,41 +392,6 @@ async function release() {
     revision.value++;
     emit('changed');
     feedback.value = '已解除套装保护，保留当前穿着状态，之后按剧情变化';
-  });
-}
-async function draw() {
-  await run(async () => {
-    assertTags();
-    if (settings.defaultBackend !== 'nai') throw new Error('请先选 NAI 生图渠道');
-    const entry = findCharTag(actor.value);
-    if (!entry) throw new Error('请先选择有外貌档案的剧情人物');
-    const ctx = getContext(),
-      chat = ctx?.getCurrentChatId?.(),
-      expected = mergeSuitWithCurrent(
-        bindingFromTags(actor.value, title.value, checked.value.tags, mode.value, slot.value),
-        current.value,
-      )
-        .pieces.map((piece) => piece.design)
-        .join(', ');
-    const body = isManualFandom(entry)
-      ? [entry.fields.sex, entry.fields.fandom].filter(Boolean).join(', ')
-      : buildEntryTag({ ...entry, fields: { ...entry.fields, outfit: '' } });
-    const result = await generateImage(
-      {
-        prompt: 'solo, full body, standing, facing viewer, centered composition, ' + body + ', ' + expected,
-        characters: [],
-        size: 'portrait',
-        seed: decideSeed('nai', undefined, true),
-        suppressCharacterReference: true,
-      },
-      controller!.signal,
-    );
-    const response = await fetch(result.result.url, { signal: controller!.signal });
-    if (!response.ok) throw new Error('试穿图读取失败');
-    const image = await response.blob();
-    if (chat !== getContext()?.getCurrentChatId?.()) throw new Error('聊天已切换，请在生成记录中查看试穿图');
-    setImage(image);
-    feedback.value = '已试穿一张；满意后收藏。没有自动启用图片参考。';
   });
 }
 async function upload(event: Event) {
@@ -410,21 +459,16 @@ async function analyse() {
 }
 function remove() {
   try {
-    if (!selectedId.value.startsWith('closet-user-')) return;
+    if (!selectedId.value) return;
     deleteSuit(selectedId.value);
     newSuit();
+    detailOpen.value = false;
     revision.value++;
     emit('changed');
     feedback.value = '已删除收藏；不影响剧情楼层里已记录的衣服';
   } catch (e) {
     feedback.value = String(e);
   }
-}
-function rescue(item: { name: string; tags: string }) {
-  newSuit();
-  title.value = item.name;
-  description.value = item.tags;
-  feedback.value = '旧标签放入描述栏待整理，尚未进入新衣橱或生成提示词';
 }
 watch(
   () => props.name,
@@ -438,13 +482,14 @@ watch([query, category, era, onlyMine], () => {
 onMounted(() => {
   void loadTagChinese().catch(() => {});
   try {
-    archiveLegacyMaterials();
+    purgeLegacyMaterials();
     revision.value++;
   } catch {
-    feedback.value = '旧素材归档未能写入；原数据仍保留，请导出旧备份';
+    feedback.value = '旧素材清理失败，请检查浏览器存储权限';
   }
 });
 onUnmounted(() => {
+  offQueue();
   controller?.abort();
   clearPreview();
 });
@@ -453,13 +498,16 @@ onUnmounted(() => {
   <section class="closet">
     <header>
       <div>
-        <h3>服装衣橱</h3>
-        <p>选定一套款式，穿脱状态留给剧情账本。</p>
+        <h3>{{ detailOpen ? title : '服装素材库' }}</h3>
+        <p>素材可直接生成预览；套用到剧情人物是可选操作。</p>
       </div>
-      <button class="bbi-btn" :disabled="busy" @click="newSuit">新建搭配</button>
+      <div class="tools">
+        <button v-if="detailOpen" class="bbi-btn" @click="detailOpen = false">返回服装列表</button
+        ><button class="bbi-btn" :disabled="busy" @click="newSuit">新建搭配</button>
+      </div>
     </header>
     <fieldset :disabled="busy">
-      <div class="tools">
+      <div v-if="!detailOpen" class="tools">
         <input v-model="query" class="bbi-input search" placeholder="搜中文款式或英文标签" /><select
           v-model="era"
           class="bbi-input"
@@ -470,10 +518,10 @@ onUnmounted(() => {
           <option value="fantasy">奇幻</option>
           <option value="any">通用部件</option></select
         ><label><input v-model="onlyMine" type="checkbox" />只看我的收藏</label
-        ><button class="bbi-btn" :disabled="!results.length" @click="roll">在当前分类挑一套</button>
+        ><button class="bbi-btn" :disabled="!results.length" @click="roll">Roll 当前分类</button>
       </div>
-      <div class="closet-layout">
-        <aside>
+      <div class="closet-layout" :class="{ detail: detailOpen }">
+        <aside v-if="!detailOpen">
           <button class="category" :class="{ active: !category }" @click="category = ''">
             全部 · {{ all.length }}</button
           ><button
@@ -486,23 +534,27 @@ onUnmounted(() => {
             {{ c[1] }}
           </button>
         </aside>
-        <div>
+        <div v-if="!detailOpen">
           <div class="suit-grid">
-            <button
+            <article
               v-for="item in shown"
               :key="item.id"
               class="suit"
               :class="{ chosen: selectedId === item.id }"
-              @click="pick(item)"
             >
-              <MaterialThumbnail :id="item.id" :tags="item.tags" :revision="revision" />
-              <span class="swatch" :style="{ background: swatch(item.tags) }"></span
-              ><strong>{{ item.name }}</strong
-              ><small
-                >{{ categoryLabel(item.category) }} ·
-                {{ item.id.startsWith('closet-user-') ? '收藏' : '内置' }}</small
-              ><span class="meaning">{{ explainTags(item.tags) }}</span>
-            </button>
+              <label
+                ><input type="checkbox" :checked="marked.has(item.id)" @change="mark(item.id)" /> 勾选</label
+              >
+              <div @click="pick(item)">
+                <MaterialThumbnail :id="item.id" :name="item.name" :tags="item.tags" :revision="revision" />
+              </div>
+              <span class="swatch" :style="{ background: swatch(item.tags) }"></span>
+              <button class="suit-name" @click="pick(item)">
+                <strong>{{ item.name }}</strong
+                ><small>{{ categoryLabel(item.category) }}</small
+                ><code>{{ item.tags }}</code>
+              </button>
+            </article>
           </div>
           <p v-if="!results.length">没有匹配的搭配，可新建或用描述整理一套。</p>
           <div class="tools">
@@ -513,8 +565,31 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
-        <div class="editor">
-          <h4>{{ selectedId ? '编辑这套服装' : '组合新款式' }}</h4>
+        <div v-if="detailOpen" class="editor">
+          <div class="material-visual">
+            <img
+              v-if="preview"
+              class="preview"
+              :src="preview"
+              alt="服装素材预览，双击放大"
+              tabindex="0"
+              @dblclick.stop="openLightbox({ src: preview, prompt: tags, filename: title })"
+              @keydown.enter="openLightbox({ src: preview, prompt: tags, filename: title })"
+            /><MaterialThumbnail
+              v-else
+              :id="selectedId || draftId"
+              :tags="checked.tags"
+              :name="title"
+              :revision="revision"
+              large
+            />
+          </div>
+          <h4>{{ selectedId ? '服装素材详情' : '组合新款式' }}</h4>
+          <button class="bbi-btn" @click="rollColour">Roll 配色 · 不改变版型</button
+          ><button class="bbi-btn" @click="copyTags">复制标签</button>
+          <label class="bbi-btn file"
+            >导入预览图<input type="file" accept="image/png,image/jpeg,image/webp" @change="upload"
+          /></label>
           <label>套装名称<input v-model="title" class="bbi-input" /></label>
           <div class="tools">
             <select v-model="suitCategory" class="bbi-input" aria-label="服装分类">
@@ -569,23 +644,16 @@ onUnmounted(() => {
           <label><input v-model="automatic" type="checkbox" />允许首次穿搭／明确换装时自动选用</label>
           <div class="tools">
             <button class="bbi-btn bbi-btn-primary" :disabled="!!checked.unknown.length" @click="save">
-              {{ selectedId.startsWith('closet-user-') ? '保存修改' : '收藏这套' }}</button
-            ><button class="bbi-btn" @click="draw">试穿一次（NAI）</button
-            ><button v-if="selectedId.startsWith('closet-user-')" class="bbi-btn" @click="remove">
-              删除收藏
-            </button>
+              {{ selectedId ? '保存修改' : '收藏这套' }}</button
+            ><button v-if="selectedId" class="bbi-btn" @click="remove">删除收藏</button>
           </div>
-          <img
-            v-if="preview"
-            class="preview"
-            :src="preview"
-            alt="服装参考或试穿图，点击放大"
-            tabindex="0"
-            @click="openLightbox({ src: preview, prompt: tags, filename: title })"
-            @keydown.enter="openLightbox({ src: preview, prompt: tags, filename: title })"
+
+          <PreviewQueueBar
+            :tasks="singleTask"
+            scene="1girl, solo, full body, standing, facing viewer, centered composition, simple background"
           />
           <div class="wear">
-            <h4>穿给剧情人物</h4>
+            <h4>套用到剧情人物 · 可选</h4>
             <select v-if="!props.name" v-model="actor" class="bbi-input">
               <option value="">选择人物</option>
               <option v-for="n in names" :key="n">{{ n }}</option>
@@ -603,7 +671,7 @@ onUnmounted(() => {
               }}
             </p>
             <div class="tools">
-              <button class="bbi-btn bbi-btn-primary" @click="wear">穿给人物</button
+              <button class="bbi-btn bbi-btn-primary" @click="wear">套用给人物</button
               ><button class="bbi-btn" @click="release">解除保护</button>
             </div>
             <details v-if="current">
@@ -615,7 +683,28 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-      <details class="recognise">
+      <template v-if="!detailOpen"
+        ><div class="tools">
+          <label
+            >排队范围<select v-model="queueScope" class="bbi-input">
+              <option value="page">当前页</option>
+              <option value="checked">勾选素材</option>
+              <option value="filtered">当前筛选结果</option>
+            </select></label
+          ><label
+            >本批上限<input
+              v-model.number="queueLimit"
+              class="bbi-input"
+              type="number"
+              min="1"
+              max="1000" /></label
+          ><button class="bbi-btn" @click="marked = new Set()">清空勾选</button>
+        </div>
+        <PreviewQueueBar
+          :tasks="queueTasks"
+          scene="1girl, solo, full body, standing, facing viewer, centered composition, simple background"
+      /></template>
+      <details v-if="detailOpen" class="recognise">
         <summary>从描述或参考图建立新款式 · 使用已保存的 LLM</summary>
         <p>
           主动点击才调用一次。图片识别需要你选择支持看图的 OpenAI
@@ -647,15 +736,6 @@ onUnmounted(() => {
           ><a href="https://deeyu.github.io/ai-costume-gallery-zh/" target="_blank" rel="noopener noreferrer"
             >服装搭配参考 ↗</a
           ><a :href="CLOTHING_SOURCE" target="_blank" rel="noopener noreferrer">标签来源 ↗</a>
-        </div>
-      </details>
-      <details v-if="legacy.length">
-        <summary>旧服装待整理 · {{ legacy.length }} 条，不参与生成</summary>
-        <p>旧收藏保持原样归档，不自动转成新款式。点击后把旧内容放入描述栏整理。</p>
-        <div class="chips">
-          <button v-for="(item, i) in legacy" :key="i" class="chip" @click="rescue(item)">
-            {{ item.name }}
-          </button>
         </div>
       </details>
     </fieldset>
@@ -699,9 +779,42 @@ fieldset {
 .tools select {
   width: auto;
 }
+.closet-layout.detail {
+  display: block;
+}
+.suit-name {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+}
+.suit-name code {
+  display: block;
+  font-size: 0.75em;
+  overflow-wrap: anywhere;
+  max-height: 4.5em;
+  overflow: hidden;
+}
+.editor > * {
+  grid-column: 2;
+}
+.editor > .material-visual {
+  grid-column: 1;
+  grid-row: 1 / span 9;
+}
+.editor > .queue-bar,
+.editor > .wear {
+  grid-column: 1/-1;
+}
+.editor {
+  max-width: 1000px;
+  margin: auto;
+}
 .closet-layout {
   display: grid;
-  grid-template-columns: 132px minmax(190px, 1fr) minmax(250px, 0.9fr);
+  grid-template-columns: 160px minmax(0, 1fr);
   gap: 16px;
 }
 aside {
@@ -763,6 +876,9 @@ aside {
   overflow: hidden;
 }
 .editor {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.85fr) minmax(270px, 1fr);
+  gap: 10px 24px;
   padding-left: 16px;
   border-left: 1px solid #8884;
   min-width: 0;
@@ -845,6 +961,14 @@ small {
     border-left: 0;
     border-top: 1px solid #8884;
     padding: 18px 0;
+  }
+}
+@media (max-width: 700px) {
+  .editor {
+    display: block;
+  }
+  .material-visual {
+    margin: 12px 0;
   }
 }
 @media (max-width: 480px) {

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import FandomLibrary from '@/components/FandomLibrary.vue';
 import WardrobePanel from '@/components/WardrobePanel.vue';
 import { charTagLib, findCharTag, upsertCharTag, recomputeCharTags } from '@/state/charTags';
 import { setAppearancePolicy } from '@/state/appearancePolicy';
 import { adoptLook } from '@/state/characterStudio';
-import { archiveLegacyMaterials, exportMaterials, importMaterials } from '@/data/materialLibrary';
-import { exportCustomLoreJson } from '@/data/customLore';
+import { purgeLegacyMaterials, exportMaterials, importMaterials } from '@/data/materialLibrary';
+import { purgeLegacyMaterialThumbs } from '@/data/loreThumbs';
 import type { FandomMaterial } from '@/data/fandomCatalog';
 const tab = ref('wardrobe'),
   target = ref(''),
@@ -41,16 +41,9 @@ function download(text: string, name: string) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function localLegacyBackup() {
-  try {
-    return localStorage.getItem('moying_image_custom_lore') || exportCustomLoreJson();
-  } catch {
-    return exportCustomLoreJson();
-  }
-}
 function backup() {
   try {
-    archiveLegacyMaterials();
+    purgeLegacyMaterials();
     download(exportMaterials(), '墨影-新衣橱备份.json');
     feedback.value = '已导出衣橱款式；图片缓存在本机，不包含在这份标签备份里';
   } catch (e) {
@@ -72,13 +65,21 @@ async function imported(event: Event) {
     input.value = '';
   }
 }
+onMounted(async () => {
+  try {
+    purgeLegacyMaterials();
+    await purgeLegacyMaterialThumbs();
+  } catch {
+    feedback.value = '部分旧缓存未能清理，不影响新素材使用';
+  }
+});
 </script>
 <template>
   <section class="bbi-page materials">
     <div class="bbi-page-head">
       <div>
-        <h2 class="bbi-title bbi-title-sub">角色与衣橱</h2>
-        <p>人物认准身份，衣服记住款式。</p>
+        <h2 class="bbi-title bbi-title-sub">素材库</h2>
+        <p>独立选材、直接预览、批量排队；需要时再套用到人物。</p>
       </div>
       <div class="tools">
         <button class="bbi-btn" @click="backup">导出衣橱</button
@@ -93,7 +94,7 @@ async function imported(event: Event) {
         role="tab"
         @click="tab = 'wardrobe'"
       >
-        服装衣橱</button
+        服装素材</button
       ><button
         class="bbi-btn"
         :class="{ 'bbi-btn-primary': tab === 'fandom' }"
@@ -105,24 +106,19 @@ async function imported(event: Event) {
       </button>
     </div>
     <template v-if="tab === 'fandom'"
-      ><label class="target"
-        >要更换形象的剧情人物<select v-model="target" class="bbi-input">
-          <option value="">选择人物；仅收藏时可留空</option>
-          <option v-for="name in names" :key="name">{{ name }}</option>
-        </select></label
-      ><FandomLibrary action-label="固定给所选人物" @select="applyFandom"
+      ><details class="optional-apply">
+        <summary>可选：套用到剧情人物</summary>
+        <label class="target"
+          >仅套用时选择人物<select v-model="target" class="bbi-input">
+            <option value="">不套用，独立使用素材</option>
+            <option v-for="name in names" :key="name">{{ name }}</option>
+          </select></label
+        >
+      </details>
+      <FandomLibrary action-label="套用给所选人物（可选）" @select="applyFandom"
     /></template>
     <WardrobePanel v-else :key="revision" />
     <p role="status">{{ feedback }}</p>
-    <details>
-      <summary>旧素材备份</summary>
-      <p>
-        旧服装、脸型和姿势候选不再参与新素材召回。旧个人收藏和图片缓存保留；衣橱里的“旧服装待整理”可逐条重建。已写入剧情的历史穿搭不会被删除。
-      </p>
-      <button class="bbi-btn" @click="download(localLegacyBackup(), '墨影-旧素材原始备份.json')">
-        导出旧个人收藏
-      </button>
-    </details>
   </section>
 </template>
 <style scoped>
