@@ -64,7 +64,7 @@ operation=init：仅首次没有穿搭时建立整套；明确剧情用原文证
 operation=patch：只改已有衣物状态，design 留空，必须引用原文动作，证据需包含角色名（代词动作连同此前姓名一起引用）。
 operation=add：剧情明确加穿一件衣物，只新增部件，不能重置其他衣服。
 operation=change：只有明确换装/穿回等事件才整套替换，不能因为时间/场景跳跃、特写或没提衣服就 change。
-pieces 的 id 持续使用账本中的 ID。design 用逗号分隔的独立服装标签，如 white shirt, collared shirt, long sleeves；优先逐字使用新版衣橱候选，不拼形容词长句，不含脸/发色/体型/画风/穿脱状态。
+pieces 每件衣物独立 ID，外套、衬衣、内衣、裙子、内裤、袜子必须拆开，不能整套合成一个部件。穿脱时只 patch 对应衣物；未提及的部件和字段省略，不输出默认 normal/worn/closed，不用 unknown 覆盖已知状态。脱去外套不等于上身全裸。半脱优先组合 location=worn、单侧袖口 off_arm、fastening=open、arrangement=lowered 等具体字段，只有衣物完全离身才 removed。pieces 的 id 持续使用账本中的 ID。design 用逗号分隔的独立服装标签，如 white shirt, collared shirt, long sleeves；优先逐字使用新版衣橱候选，不拼形容词长句，不含脸/发色/体型/画风/穿脱状态。
 state 可用 location=worn/removed/held/floor/chair/unknown；fastening=closed/open/loose/unknown；arrangement=normal/lifted/pulled_aside/lowered/around_waist/around_ankles/unknown；leftSleeve/rightSleeve=on_arm/off_arm/rolled_up/unknown；damage=intact/torn/unknown；wetness=dry/wet/unknown。
 只列变化字段，未列的字段必须继承。掀裙不是脱掉整套，解衬衫扣子不是重新选衣服；恢复也要有明确整理/穿好证据。
 例如上一楼 blouse 的 fastening=open，本楼仅聊天，不输出任何恢复事件，画面仍沿用敞开状态。
@@ -365,7 +365,11 @@ function applyOne(state: ClothingState, c: ClothingChange, scope: string): void 
   if (c.operation === 'patch') {
     for (const p of c.pieces) {
       const piece = old?.pieces.find((g) => g.id === p.id);
-      if (piece) Object.assign(piece.state, p.state);
+      if (piece)
+        Object.assign(
+          piece.state,
+          Object.fromEntries(Object.entries(p.state).filter(([, value]) => value !== 'unknown')),
+        );
     }
   } else if (c.operation === 'add' && old) {
     old.pieces.push(
@@ -493,6 +497,30 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
         if (s.legacy) tags.push(s.legacy);
         continue;
       }
+      const garment = /\b(?:shirt|blouse)\b/i.test(p.design)
+        ? 'shirt'
+        : /\bbra\b/i.test(p.design)
+          ? 'bra'
+          : /\bpanties\b/i.test(p.design)
+            ? 'panties'
+            : /\b(?:pants|trousers)\b/i.test(p.design)
+              ? 'pants'
+              : /\bskirt\b/i.test(p.design)
+                ? 'skirt'
+                : /\bdress\b/i.test(p.design)
+                  ? 'dress'
+                  : '';
+      if (
+        garment &&
+        !record.pieces.some(
+          (other) =>
+            other.id !== p.id &&
+            other.state.location === 'worn' &&
+            new RegExp('\\b' + garment + '\\b', 'i').test(other.design),
+        )
+      )
+        tags.push('no ' + garment);
+      if (location === 'removed') sentences.push(`Not wearing ${p.design}; it has been taken off.`);
       if (location !== 'removed')
         sentences.push(
           `The ${p.design} is ${location === 'held' ? 'held, not worn' : `on the ${location}, not worn`}.`,
@@ -503,22 +531,41 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
     lowerWorn ||= lower;
     tags.push(p.design);
     if (s.legacy) tags.push(s.legacy);
-    if (s.fastening === 'open') tags.push('open clothes');
+    if (s.fastening === 'open')
+      tags.push(
+        /shirt|blouse/i.test(p.design)
+          ? 'open shirt'
+          : /jacket|blazer/i.test(p.design)
+            ? 'open jacket'
+            : /coat/i.test(p.design)
+              ? 'open coat'
+              : 'open clothes',
+      );
     if (s.fastening === 'loose') tags.push('loose clothes');
     if (s.leftSleeve === 'off_arm' || s.rightSleeve === 'off_arm') tags.push('off shoulder');
     if (s.leftSleeve === 'rolled_up' || s.rightSleeve === 'rolled_up') tags.push('sleeves rolled up');
     if (s.damage === 'torn') tags.push('torn clothes');
     if (s.wetness === 'wet') tags.push('wet clothes');
     const arrangements: Record<string, string> = {
-      lifted: /skirt|dress/i.test(p.design) ? 'skirt lifted' : 'clothes lifted',
-      pulled_aside: 'clothes pulled aside',
-      lowered: 'clothes down',
+      lifted: /skirt/i.test(p.design)
+        ? 'skirt lift'
+        : /dress/i.test(p.design)
+          ? 'dress lift'
+          : /shirt|blouse/i.test(p.design)
+            ? 'shirt lift'
+            : 'clothes lifted',
+      pulled_aside: /panties/i.test(p.design) ? 'panties aside' : 'clothes pulled aside',
+      lowered: /panties/i.test(p.design)
+        ? 'panties down'
+        : /pants|trousers/i.test(p.design)
+          ? 'pants down'
+          : 'clothes down',
       around_waist: 'clothes around waist',
       around_ankles: 'clothes around ankles',
     };
     if (arrangements[s.arrangement]) tags.push(arrangements[s.arrangement]);
     const detail = [
-      s.fastening === 'open' ? 'unfastened' : '',
+      s.fastening === 'open' ? 'unfastened' : s.fastening === 'closed' ? 'fastened' : '',
       arrangements[s.arrangement],
       s.leftSleeve === 'off_arm' ? 'left sleeve off the arm' : '',
       s.rightSleeve === 'off_arm' ? 'right sleeve off the arm' : '',

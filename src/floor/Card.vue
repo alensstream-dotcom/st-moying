@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { openHairLock } from '@/floor/hairLock';
 import { setAppearancePolicy } from '@/state/appearancePolicy';
 import { CHAR_TAG_FIELDS, recomputeCharTags, upsertCharTag, findCharTag } from '@/state/charTags';
 import { imageAppearance, adoptLook } from '@/state/characterStudio';
@@ -356,7 +357,12 @@ function openImage(): void {
   // 重水合销毁本组件,而灯箱还开着。回调里再读 props 就是读已销毁实例,故全部先快照。
   const at = { messageId: props.messageId, swipeId: props.swipeId };
   const openedChat = getContext()?.getCurrentChatId?.();
+  const hairCast = parseImageTagContent(entry.prompt).characters.map((c) => ({ name: c.name, tag: c.tag }));
+  const hairSrc = entry.path;
   openLightbox({
+    onLockHair: hairCast.length
+      ? () => openHairLock({ src: hairSrc, cast: hairCast, chat: openedChat })
+      : undefined,
     src: entry.path,
     prompt: lightboxPrompt.value,
     filename: downloadFileName(entry),

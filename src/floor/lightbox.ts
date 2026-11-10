@@ -23,6 +23,7 @@ export interface LightboxOptions {
   onDelete?: () => void;
   onAdopt?: () => void;
   onReroll?: () => void;
+  onLockHair?: () => void;
 }
 
 /** 同一时刻只允许一个灯箱,重复调用先关旧的。 */
@@ -52,6 +53,11 @@ export function openLightbox(options: LightboxOptions): void {
       deletable: !!options.onDelete,
       adoptable: !!options.onAdopt,
       rerollable: !!options.onReroll,
+      hairLockable: !!options.onLockHair,
+      onLockHair: () => {
+        close();
+        options.onLockHair?.();
+      },
       onAdopt: () => {
         close();
         options.onAdopt?.();

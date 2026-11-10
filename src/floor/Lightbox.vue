@@ -39,9 +39,10 @@ const props = defineProps<{
   deletable?: boolean;
   adoptable?: boolean;
   rerollable?: boolean;
+  hairLockable?: boolean;
 }>();
 
-const emit = defineEmits<{ close: []; delete: []; adopt: []; reroll: [] }>();
+const emit = defineEmits<{ close: []; delete: []; adopt: []; reroll: []; lockHair: [] }>();
 
 /** 适应屏幕 ↔ 原始尺寸。 */
 const zoomed = ref(false);
@@ -146,8 +147,16 @@ const promptText = computed(() => (props.prompt ?? '').trim());
     <div class="bbi-lightbox" @click="emit('close')">
       <div class="bbi-lightbox__bar" @click.stop>
         <button
+          v-if="hairLockable"
+          class="bbi-lb-btn bbi-lb-btn--text"
+          @click="emit('lockHair')"
+          title="从图片识别并固定同人发型"
+        >
+          固定同人发型
+        </button>
+        <button
           v-if="adoptable"
-          class="bbi-lb-btn"
+          class="bbi-lb-btn bbi-lb-btn--text"
           @click="emit('adopt')"
           title="保存图中人物的标签与头像，不训练模型"
         >
@@ -155,7 +164,7 @@ const promptText = computed(() => (props.prompt ?? '').trim());
         </button>
         <button
           v-if="rerollable"
-          class="bbi-lb-btn"
+          class="bbi-lb-btn bbi-lb-btn--text"
           @click="emit('reroll')"
           title="沿用当前提示词，换随机种子生成一张（消耗生图额度）"
         >
@@ -228,6 +237,7 @@ const promptText = computed(() => (props.prompt ?? '').trim());
 }
 
 .bbi-lightbox__bar {
+  flex-wrap: wrap;
   flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
@@ -328,5 +338,14 @@ const promptText = computed(() => (props.prompt ?? '').trim());
   word-break: break-word;
   /* 提示词要可选中复制,故此处不禁用选择 */
   user-select: text;
+}
+</style>
+
+<style scoped>
+.bbi-lb-btn--text {
+  width: auto;
+  min-height: 38px;
+  height: auto;
+  padding: 8px 12px;
 }
 </style>
