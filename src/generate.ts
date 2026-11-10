@@ -493,7 +493,7 @@ export async function generateImage(
         },
       );
       result = output.result;
-      meta = { backend: 'nai', model: status.model, ...output.usage };
+      meta = { backend: 'nai', model: naiConn.model, ...output.usage };
     } else {
       const conn = effectiveComfyConn();
       result = await generateComfyImage(

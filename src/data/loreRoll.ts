@@ -38,6 +38,7 @@ export interface RollResult {
   /** 匹配到的原始条目 id（同人条目保存预览图时作为索引键） */
   id?: string;
   franchise?: string;
+  workTag?: string;
   materialTags?: string;
   hair?: string;
   eyes?: string;
@@ -83,7 +84,7 @@ function pick<T>(items: readonly T[], rng: Rng): T | null {
 function splitTags(raw: string): string[] {
   return raw
     .split(',')
-    .map(tag => tag.trim())
+    .map((tag) => tag.trim())
     .filter(Boolean);
 }
 
@@ -129,15 +130,21 @@ function matchItems<T extends { name: string; tags: string; aliases: string[]; c
   }
 
   if (!scored.length) return [];
-  const maxScore = Math.max(...scored.map(s => s.score));
+  const maxScore = Math.max(...scored.map((s) => s.score));
   const topThreshold = maxScore >= 50 ? 50 : maxScore >= 30 ? 30 : 10;
-  return scored.filter(s => s.score >= topThreshold).map(s => s.item);
+  return scored.filter((s) => s.score >= topThreshold).map((s) => s.item);
 }
 
 export function normalizeFandomQuery(value: string): string {
   const from = '寧愛電將軍麗絲華葉風雲櫻兒學國師羅亞夢龍緋紅綠銀髮優蘭雙瀨繪裡曉時崎宮輝夜蓮澤';
-  const to   = '宁爱电将军丽丝华叶风云樱儿学国师罗亚梦龙绯红绿银发优兰双濑绘里晓时崎宫辉夜莲泽';
-  return [...value.normalize('NFKC').toLowerCase()].map(c => { const i = from.indexOf(c); return i < 0 ? c : to[i]; }).join('').replace(/[\s_·・:：()（）\\-]/g, '');
+  const to = '宁爱电将军丽丝华叶风云樱儿学国师罗亚梦龙绯红绿银发优兰双濑绘里晓时崎宫辉夜莲泽';
+  return [...value.normalize('NFKC').toLowerCase()]
+    .map((c) => {
+      const i = from.indexOf(c);
+      return i < 0 ? c : to[i];
+    })
+    .join('')
+    .replace(/[\s_·・:：()（）\\-]/g, '');
 }
 
 /** 匹配同人角色条目：名字、作品、别名、发色、瞳色、tag 串任一处包含即算。若 keyword 为空，返回全部条目。 */
@@ -145,33 +152,39 @@ export function matchFandomItems(items: readonly FandomPreset[], keyword: string
   const kw = normalizeFandomQuery(keyword);
   if (!kw) return [...items];
   const aliasCounts = new Map<string, number>();
-  for (const item of items) for (const alias of new Set(item.aliases.map(normalizeFandomQuery))) {
-    if (alias) aliasCounts.set(alias, (aliasCounts.get(alias) ?? 0) + 1);
-  }
-  const scored = items.map(item => {
-    const name = normalizeFandomQuery(item.name), work = normalizeFandomQuery(item.franchise);
-    let score = 0;
-    if (name === kw) score = 100;
-    else if (name && name.includes(kw)) score = 50;
-    else if (name.length >= 2 && kw.includes(name)) score = 80;
-    for (const alias of item.aliases) {
-      const a = normalizeFandomQuery(alias);
-      if (!a) continue;
-      if (a === kw) score = Math.max(score, 100);
-      else if (a.includes(kw)) score = Math.max(score, 50);
-      // A shared work alias inside a longer query must not hide an unknown character.
-      else if (a.length >= 2 && kw.includes(a) && (aliasCounts.get(a) ?? 0) <= 2 && a !== work) score = Math.max(score, 70);
+  for (const item of items)
+    for (const alias of new Set(item.aliases.map(normalizeFandomQuery))) {
+      if (alias) aliasCounts.set(alias, (aliasCounts.get(alias) ?? 0) + 1);
     }
-    if (work && (work === kw || work.includes(kw))) score = Math.max(score, 30);
-    if (normalizeFandomQuery(item.tags).includes(kw)) score = Math.max(score, 15);
-    if ([item.hair, item.eyes].some(t => t && normalizeFandomQuery(t).includes(kw))) score = Math.max(score, 10);
-    // When a work is supplied, favor the matching version of a shared character name.
-    if (score >= 50 && work && kw.includes(work) && kw !== work) score += 5;
-    return { item, score };
-  }).filter(s => s.score > 0);
+  const scored = items
+    .map((item) => {
+      const name = normalizeFandomQuery(item.name),
+        work = normalizeFandomQuery(item.franchise);
+      let score = 0;
+      if (name === kw) score = 100;
+      else if (name && name.includes(kw)) score = 50;
+      else if (name.length >= 2 && kw.includes(name)) score = 80;
+      for (const alias of item.aliases) {
+        const a = normalizeFandomQuery(alias);
+        if (!a) continue;
+        if (a === kw) score = Math.max(score, 100);
+        else if (a.includes(kw)) score = Math.max(score, 50);
+        // A shared work alias inside a longer query must not hide an unknown character.
+        else if (a.length >= 2 && kw.includes(a) && (aliasCounts.get(a) ?? 0) <= 2 && a !== work)
+          score = Math.max(score, 70);
+      }
+      if (work && (work === kw || work.includes(kw))) score = Math.max(score, 30);
+      if (normalizeFandomQuery(item.tags).includes(kw)) score = Math.max(score, 15);
+      if ([item.hair, item.eyes].some((t) => t && normalizeFandomQuery(t).includes(kw)))
+        score = Math.max(score, 10);
+      // When a work is supplied, favor the matching version of a shared character name.
+      if (score >= 50 && work && kw.includes(work) && kw !== work) score += 5;
+      return { item, score };
+    })
+    .filter((s) => s.score > 0);
   if (!scored.length) return [];
-  const best = Math.max(...scored.map(s => s.score));
-  return scored.filter(s => s.score === best).map(s => s.item);
+  const best = Math.max(...scored.map((s) => s.score));
+  return scored.filter((s) => s.score === best).map((s) => s.item);
 }
 
 function uniquePush(target: string[], tags: string[], limit: number): void {
@@ -198,7 +211,7 @@ export function rollWardrobe(keyword: string = '', rng: Rng = DEFAULT_RNG): Roll
 
   if (pool.length) {
     source = pick(pool, rng) as WardrobeItem;
-    categoryLabel = WARDROBE_CATEGORIES.find(c => c.id === source.category)?.label ?? source.category;
+    categoryLabel = WARDROBE_CATEGORIES.find((c) => c.id === source.category)?.label ?? source.category;
   } else if (kw) {
     isCustom = true;
     const cat = guessWardrobeCategory(kw);
@@ -212,7 +225,7 @@ export function rollWardrobe(keyword: string = '', rng: Rng = DEFAULT_RNG): Roll
       slot,
       nsfw: 1,
     };
-    categoryLabel = WARDROBE_CATEGORIES.find(c => c.id === cat)?.label ?? '自定义搭配';
+    categoryLabel = WARDROBE_CATEGORIES.find((c) => c.id === cat)?.label ?? '自定义搭配';
   } else {
     return null;
   }
@@ -221,13 +234,13 @@ export function rollWardrobe(keyword: string = '', rng: Rng = DEFAULT_RNG): Roll
 
   if (!isCustom) {
     // 同分类再补 1–2 个部件
-    const siblings = all.filter(item => item.category === source.category && item.id !== source.id);
+    const siblings = all.filter((item) => item.category === source.category && item.id !== source.id);
     const mate = pick(siblings, rng);
     if (mate) uniquePush(tags, splitTags(mate.tags).slice(0, 2), tags.length + 2);
 
     // 整套或上装可概率混搭配饰/鞋袜部件
     if (source.slot === 'full' || source.slot === 'top') {
-      const accessories = all.filter(item => item.slot === 'accessory' || item.slot === 'hosiery');
+      const accessories = all.filter((item) => item.slot === 'accessory' || item.slot === 'hosiery');
       const extraAcc = pick(accessories, rng);
       if (extraAcc && rng() > 0.4) {
         uniquePush(tags, splitTags(extraAcc.tags).slice(0, 1), tags.length + 1);
@@ -272,7 +285,7 @@ export function rollPose(keyword: string = '', rng: Rng = DEFAULT_RNG): RollResu
 
   if (pool.length) {
     source = pick(pool, rng) as PoseEntry;
-    categoryLabel = POSE_CATEGORIES.find(c => c.id === source.category)?.label ?? source.category;
+    categoryLabel = POSE_CATEGORIES.find((c) => c.id === source.category)?.label ?? source.category;
   } else if (kw) {
     isCustom = true;
     source = {
@@ -290,7 +303,7 @@ export function rollPose(keyword: string = '', rng: Rng = DEFAULT_RNG): RollResu
 
   const tags = splitTags(source.tags);
   if (!isCustom) {
-    const siblings = all.filter(item => item.category === source.category && item.id !== source.id);
+    const siblings = all.filter((item) => item.category === source.category && item.id !== source.id);
     const mate = pick(siblings, rng);
     if (mate) uniquePush(tags, splitTags(mate.tags).slice(0, 1), tags.length + 1);
   }
@@ -339,7 +352,9 @@ export function rollFandom(keyword: string = '', rng: Rng = DEFAULT_RNG): RollRe
 
   return {
     id: source.id,
-    materialTags: source.tags, hair: source.hair, eyes: source.eyes,
+    materialTags: source.tags,
+    hair: source.hair,
+    eyes: source.eyes,
     name: `${source.name}${franchiseLabel}`,
     tags: tags.join(', '),
     aliases: source.aliases,
@@ -367,5 +382,5 @@ export function rollPoolSize(keyword: string, kind: RollKind): number {
 
 /** 姿势分类合法性（写库前校验用）。 */
 export function isPoseCategory(id: string): id is PoseCategoryId {
-  return POSE_CATEGORIES.some(category => category.id === id);
+  return POSE_CATEGORIES.some((category) => category.id === id);
 }

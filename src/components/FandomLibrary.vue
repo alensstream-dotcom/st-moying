@@ -16,10 +16,12 @@ import MaterialThumbnail from './MaterialThumbnail.vue';
 import PreviewQueueBar from './PreviewQueueBar.vue';
 import { putStudioImage } from '@/data/loreThumbs';
 import type { ThumbTask } from '@/data/loreThumbJob';
-import { retargetThumbTasks } from '@/data/loreThumbJob';
+import { startThumbJob, retargetThumbTasks } from '@/data/loreThumbJob';
 import { getThumb } from '@/data/loreThumbs';
 import { requestCompletion, requestViaMainApi } from '@/api/client';
-import { getTagGenChannel } from '@/state/settings';
+import { getTagGenChannel, settings } from '@/state/settings';
+import { resolveFandomRoll } from '@/autoTag/fandomRoll';
+import type { RollResult } from '@/data/loreRoll';
 const props = defineProps<{ actionLabel?: string }>();
 const emit = defineEmits<{ select: [item: FandomMaterial]; saved: [] }>();
 const revision = ref(0),
@@ -33,7 +35,18 @@ const revision = ref(0),
   busy = ref(true),
   selected = shallowRef<FandomMaterial | null>(null),
   mergeQuery = ref('');
-const mine = ref(false);
+const mine = ref(false),
+  showRare = ref(false);
+const commonWorks = computed(() => {
+  const totals = new Map<string, number>();
+  for (const x of all.value) totals.set(x.workTag, (totals.get(x.workTag) || 0) + (x.count || 0));
+  return new Set(
+    [...totals].filter(([tag, count]) => tag && tag !== 'original' && count >= 500).map(([tag]) => tag),
+  );
+});
+function visibleItem(x: FandomMaterial) {
+  return showRare.value || mineIds.value.has(x.id) || (!!x.medium && commonWorks.value.has(x.workTag));
+}
 const mineIds = computed(() => {
   revision.value;
   return editedFandomIds();
@@ -57,22 +70,28 @@ const all = computed(() => {
   revision.value;
   return fandomCatalog();
 });
-const media = computed(() => [...new Set(all.value.map((x) => x.medium))]);
+const media = ['游戏', '动漫', '漫画', '小说'];
 const results = computed(() => {
   const q = query.value.trim().toLowerCase().replace(/_/g, ' ');
   return all.value.filter(
     (x) =>
-      (!medium.value || x.medium === medium.value) &&
+      (!medium.value || x.medium.split('／').includes(medium.value)) &&
       (!work.value || (x.workTag || '__unknown__') === work.value) &&
       (!mine.value || mineIds.value.has(x.id)) &&
-      (!female.value || x.gender === 'f') &&
+      (!female.value || x.gender !== 'm') &&
+      (q || work.value || workQuery.value.trim() ? true : visibleItem(x)) &&
       (!q || (x.searchText || [x.name, x.tags, ...x.aliases].join(' ').toLowerCase()).includes(q)),
   );
 });
 const works = computed(() => {
   const groups = new Map<string, { tag: string; name: string; count: number; aliases: string[] }>();
   for (const item of all.value) {
-    if ((medium.value && item.medium !== medium.value) || (female.value && item.gender !== 'f')) continue;
+    if (
+      (medium.value && !item.medium.split('／').includes(medium.value)) ||
+      (female.value && item.gender === 'm')
+    )
+      continue;
+    if (!workQuery.value.trim() && !visibleItem(item)) continue;
     const old = groups.get(item.workTag || '__unknown__');
     if (old) old.count++;
     else
@@ -152,11 +171,74 @@ function newItem() {
     nsfw: 0,
   });
 }
-function roll() {
-  if (!results.value.length) return;
-  const common = results.value.filter((x) => (x.count || 0) >= 20),
-    pool = common.length ? common : results.value;
-  pick(pool[Math.floor(Math.random() * pool.length)]);
+function previewItem(item: FandomMaterial) {
+  pick(item);
+  startThumbJob(
+    [{ kind: 'face', id: item.id, name: item.name, prompt: item.tags }],
+    settings.autoTag.lore.thumbIntervalMs,
+    true,
+  );
+  feedback.value = '已提交预览；可编辑人物标签后重新生成，满意再保存。';
+}
+function fromRoll(item: RollResult): FandomMaterial {
+  const existing = all.value.find((x) => x.id === item.id);
+  if (existing) return existing;
+  return {
+    id: 'identity:draft:' + crypto.randomUUID(),
+    name: item.name,
+    franchise: item.franchise || '',
+    roleTag: item.tags.split(',')[0].trim(),
+    workTag: item.workTag || '',
+    medium: '',
+    tags: item.tags,
+    aliases: item.aliases,
+    nsfw: item.nsfw,
+    gender: 'u',
+    source: item.source,
+  };
+}
+async function roll() {
+  if (busy.value) return;
+  busy.value = true;
+  resolver = new AbortController();
+  try {
+    const chosenWork = all.value.find((x) => x.workTag === work.value)?.franchise || work.value;
+    const keyword = [chosenWork, query.value.trim()].filter(Boolean).join(' ');
+    if (!keyword) {
+      if (results.value.length) previewItem(results.value[Math.floor(Math.random() * results.value.length)]);
+      return;
+    }
+    const candidates = await resolveFandomRoll(keyword, resolver.signal);
+    if (!alive) return;
+    if (candidates.length === 1) previewItem(fromRoll(candidates[0]));
+    else {
+      nameMatches.value = candidates.map((x) => ({ item: fromRoll(x), name: x.name }));
+      feedback.value = '名称有多个候选，点击确认人物后生成。';
+    }
+  } catch (e) {
+    feedback.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    busy.value = false;
+    resolver = null;
+  }
+}
+async function completeWork() {
+  const title = all.value.find((x) => x.workTag === work.value)?.franchise || query.value.trim();
+  if (!title || busy.value) return;
+  busy.value = true;
+  resolver = new AbortController();
+  try {
+    const candidates = await resolveFandomRoll(title, resolver.signal, true);
+    if (!alive) return;
+    nameMatches.value = candidates.map((x) => ({ item: fromRoll(x), name: x.name }));
+    feedback.value =
+      '已生成本作品人物候选（LLM 知识，未经网站核实）；点击人物可编辑标签并生成，满意后保存进目录。';
+  } catch (e) {
+    if (alive) feedback.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    busy.value = false;
+    resolver = null;
+  }
 }
 async function locateChinese() {
   if (!query.value.trim() || busy.value) return;
@@ -209,7 +291,7 @@ async function locateChinese() {
     }
     nameMatches.value = matches.slice(0, 12);
     feedback.value = matches.length
-      ? '已匹配本地目录，点击候选核对并保存中文别名；没有自动生图'
+      ? '已匹配本地目录；点击候选会生成预览，可编辑标签并保存中文名'
       : '模型提供的名字未匹配本地目录；可补作品名重试或手动新增，不把模型猜测伪装成数据库结果';
   } catch (e) {
     if (alive) feedback.value = e instanceof Error ? e.message : String(e);
@@ -234,7 +316,7 @@ async function save(use = false) {
       const image = await getThumb('face:' + oldId);
       if (image?.prompt === item.tags)
         try {
-          await putStudioImage('face:' + item.id, image.blob, item.tags);
+          await putStudioImage('face:' + item.id, image.blob, item.tags, image.meta);
         } catch {
           imageNote = '；预览图未能复制到新素材，请下载备份或重新导入';
         }
@@ -377,19 +459,33 @@ onUnmounted(() => {
             <option value="">全部作品类型</option>
             <option v-for="m in media" :key="m">{{ m }}</option></select
           ><label><input v-model="mine" type="checkbox" @change="page = 0" />我的编辑 / 收藏</label
-          ><label><input v-model="female" type="checkbox" @change="page = 0" />只看源数据标注女性</label
-          ><button class="bbi-btn" :disabled="!results.length" @click="roll">Roll 当前范围 · 优先常用</button
+          ><label
+            ><input
+              v-model="female"
+              type="checkbox"
+              @change="page = 0"
+            />隐藏明确男性（保留性别未标注角色）</label
+          ><button class="bbi-btn" :disabled="busy || (!results.length && !query.trim())" @click="roll">
+            {{ query.trim() ? '按输入生成' : 'Roll 并生成' }}</button
+          ><label><input v-model="showRare" type="checkbox" @change="page = 0" />显示冷门及未归类素材</label
           ><button class="bbi-btn" :disabled="!query.trim()" @click="locateChinese">
             LLM 定位中文名（一次）
           </button>
         </div>
+        <p class="muted">
+          输入中文角色名直接生成；本地未命中会调用已保存的
+          LLM。名单是标签目录，不保证收齐官方登场人物。选中作品后可查找缺失人物。
+        </p>
+        <button class="bbi-btn" :disabled="busy || (!work && !query.trim())" @click="completeWork">
+          补充本作品人物（LLM 候选）
+        </button>
         <div v-if="nameMatches.length" class="tools">
           <button
             v-for="match in nameMatches"
             :key="match.item.id"
             class="bbi-btn"
             @click="
-              pick(match.item);
+              previewItem(match.item);
               draft.name = match.name;
             "
           >
@@ -448,8 +544,9 @@ onUnmounted(() => {
                 <button class="identity-name" @click="pick(item)">
                   <strong>{{ item.name }}</strong
                   ><span>{{ item.franchise }}</span
-                  ><code>{{ item.tags }}</code></button
-                ><small v-if="item.variants?.length">已合并 {{ item.variants.length }} 个版本</small>
+                  ><code>{{ item.tags }}</code
+                  ><small>编辑标签 / 查看详情</small>
+                </button>
               </article>
             </div>
             <div class="tools">
@@ -481,21 +578,17 @@ onUnmounted(() => {
             >本批上限<input v-model.number="limit" class="bbi-input number" type="number" min="1" max="1000"
           /></label>
         </div>
-        <PreviewQueueBar
-          scene="solo, cowboy shot, looking at viewer, centered composition, simple background"
-          :tasks="tasks"
-          @changed="revision++"
-        />
+        <PreviewQueueBar scene="solo, centered composition" :tasks="tasks" @changed="revision++" />
         <details>
           <summary>目录来源、导入导出</summary>
           <p>
             本地目录来自 Animadex 官方仓库指向的公开同源数据，共
-            {{ catalogInfo.characters.toLocaleString() }} 个归并条目、{{ catalogInfo.works.toLocaleString() }}
+            {{ catalogInfo.characters.toLocaleString() }} 个人物条目、{{ catalogInfo.works.toLocaleString() }}
             部作品。它是该公开快照，不声称等于 Animadex
             当前实时图库。源数据的性别和别名可能有误，不用来改写剧情人物。
           </p>
           <p>
-            本体存在且同作品的括号版本自动并入本体；无法确认的同人可在详情手动合并，避免把不同作品的同名人物合错。未知作品类型仍按作品单独列出。
+            本体存在且同作品的括号版本自动并入本体；无法确认的同人可在详情手动合并，避免把不同作品的同名人物合错。默认展示有类型资料的常用作品；搜索可查完整目录，作品人物数量仅代表已收录标签，不等于官方完整名单。
           </p>
           <div class="tools">
             <label class="bbi-btn file"
@@ -541,7 +634,12 @@ onUnmounted(() => {
             ><label>角色标签<input v-model="draft.roleTag" class="bbi-input" /></label
             ><label>作品英文标签<input v-model="draft.workTag" class="bbi-input" /></label
             ><label>作品显示名<input v-model="draft.franchise" class="bbi-input" /></label
-            ><label>作品类型<input v-model="draft.medium" class="bbi-input" /></label
+            ><label
+              >作品类型<select v-model="draft.medium" class="bbi-input">
+                <option value="">暂不归类</option>
+                <option v-if="draft.medium.includes('／')" :value="draft.medium">{{ draft.medium }}</option>
+                <option v-for="m in media" :key="m">{{ m }}</option>
+              </select></label
             ><label
               >目录性别标记（只用于筛选）<select v-model="draft.gender" class="bbi-input">
                 <option value="f">女性</option>
@@ -549,7 +647,11 @@ onUnmounted(() => {
                 <option value="u">未知 / 其他</option>
               </select></label
             ><label
-              >原始 trigger（直接用于生图）<textarea v-model="draft.trigger" class="bbi-input" rows="3" />
+              >生图标签（可自由编辑，保存后生效）<textarea
+                v-model="draft.trigger"
+                class="bbi-input"
+                rows="3"
+              />
             </label>
             <p>不附加该素材人物的外貌库，不读取当前剧情角色；你的生图预设仍然生效。</p>
             <div class="tools">
@@ -561,11 +663,7 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
-        <PreviewQueueBar
-          scene="solo, cowboy shot, looking at viewer, centered composition, simple background"
-          :tasks="single"
-          @changed="revision++"
-        />
+        <PreviewQueueBar scene="solo, centered composition" :tasks="single" @changed="revision++" />
         <details>
           <summary>同一人物的重复条目合并</summary>
           <p>
@@ -582,7 +680,7 @@ onUnmounted(() => {
           </button>
         </details>
         <details v-if="selected.variants?.length">
-          <summary>已合并版本 / 别名</summary>
+          <summary>其它形象标签 / 别名</summary>
           <p>{{ selected.variants.join('、') }}</p>
         </details>
       </template>

@@ -23,7 +23,7 @@ const job = ref(thumbJobState()),
 const scene = ref(
   props.scene ??
     (props.tasks[0]?.kind === 'face'
-      ? 'solo, cowboy shot, looking at viewer, centered composition, simple background'
+      ? 'solo, centered composition'
       : 'solo, full body, standing, looking at viewer, centered composition, simple background'),
 );
 const presets = computed(() => genPresetList());
@@ -99,8 +99,8 @@ onUnmounted(() => {
       <p>固定正向词：{{ config.positive || '由当前工作流提供' }}</p>
       <p>固定负向词：{{ config.negative || '由当前工作流提供' }}</p>
       <p>
-        更换配置后，请勾选“重画已有预览”，否则仍会显示已缓存的旧图。同人默认半身取景便于看脸；需要看完整服装时可把
-        cowboy shot 改为 full body。
+        更换配置后，请勾选“重画已有预览”，否则仍会显示已缓存的旧图。同人默认不限制半身或全身；可自行添加 full
+        body（全身）、cowboy shot（半身）或 portrait（肖像）来控制取景。
       </p>
       <p>
         素材标签与统一构图会叠加当前画师串、质量词和负面词；预设只替换模型与采样参数。不读取剧情人物外貌、不绑定角色，也不自动携带角色参考图。点击生成后按所选渠道计费。切换插件页面会继续排队；刷新或关闭酒馆会停止，已完成图片保留，下次可跳过补齐。

@@ -1,3 +1,4 @@
+import workMedia from './workMedia.json';
 import catalogUrl from './characterCatalog.json?url';
 import type { FandomPreset } from './loreTypes';
 const KEY = 'moying_fandom_catalog_v2';
@@ -240,7 +241,10 @@ export function loadFandomCatalog(): Promise<void> {
             (!work?.[1] && !/[\u3400-\u9fff]/.test(workTranslation?.[0] || '') && machineWork)
               ? '部分名称为机器翻译，请核对'
               : undefined,
-          medium: work?.[2] || '未分类',
+          medium:
+            (workMedia as Record<string, string[]>)[copyright]?.join('／') ||
+            work?.[2]?.replace(/动画/g, '动漫') ||
+            '',
           tags,
           trigger: tags,
           aliases: [
@@ -248,6 +252,7 @@ export function loadFandomCatalog(): Promise<void> {
               ...(cn?.aliases || []),
               ...roleAliases,
               ...extraAliases,
+              ...((pack.aliases?.[slug] as string[] | undefined) || []),
               ...variantChinese,
               ...(variants || []).map((v) => v.replace(/_/g, ' ')),
             ]),

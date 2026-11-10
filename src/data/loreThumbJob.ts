@@ -116,7 +116,7 @@ export function startThumbJob(tasks: ThumbTask[], intervalMs: number, force = fa
       scene:
         t.scene ??
         (t.kind === 'face'
-          ? 'solo, cowboy shot, looking at viewer, centered composition, simple background'
+          ? 'solo, centered composition'
           : 'solo, full body, standing, looking at viewer, centered composition, simple background'),
     }));
   if (!pending.length) return 0;
