@@ -111,6 +111,7 @@ export interface FandomMaterial extends FandomPreset {
   source?: string;
   searchText?: string;
   workAliases?: string[];
+  translationNote?: string;
 }
 export const BUILTIN_FANDOMS: FandomMaterial[] = works.flatMap(([workTag, franchise, medium, characters]) =>
   characters.map(([name, roleTag]) => ({
@@ -175,13 +176,15 @@ export function loadFandomCatalog(): Promise<void> {
     resource.searchParams.set('ver', __BBI_VERSION__);
     const response = await fetch(resource);
     if (!response.ok) throw new Error('本地角色目录读取失败，请更新插件完整文件后重试');
-    const [pack, workModule, roleModule] = await Promise.all([
+    const [pack, workModule, roleModule, extraModule] = await Promise.all([
       response.json(),
       import('./copyrightZh.json'),
       import('./characterZh.json'),
+      import('./catalogChineseExtra.json'),
     ]);
     const workChinese = workModule.default,
-      roleChinese = roleModule.default;
+      roleChinese = roleModule.default,
+      extra = extraModule.default;
     if (pack.version !== 1 || !Array.isArray(pack.works)) throw new Error('角色目录格式不正确');
     const curated = new Map(
       BUILTIN_FANDOMS.map((x) => [normal(x.workTag) + '|' + normal(x.roleTag).split(' (')[0], x]),
@@ -200,18 +203,31 @@ export function loadFandomCatalog(): Promise<void> {
           cn = curated.get(normal(workTag) + '|' + normal(roleTag).split(' (')[0]);
         const tags = override || roleTag + ', ' + workTag;
         const roleTranslation = (roleChinese as Record<string, string[]>)[slug];
+        const machineRole = (extra.characters as Record<string, string>)[slug];
+        const machineWork = (extra.works as Record<string, string>)[copyright];
+        const extraAliases = (extra.aliases as Record<string, string[]>)[slug] || [];
         const roleAliases = (roleTranslation?.[1] || '').split('|').filter(Boolean);
         const item: FandomMaterial = {
           id: 'animadex:' + slug,
           name:
-            cn?.name || (/[\u3400-\u9fff]/.test(roleTranslation?.[0] || '') ? roleTranslation[0] : roleTag),
+            cn?.name ||
+            (/[\u3400-\u9fff]/.test(roleTranslation?.[0] || '')
+              ? roleTranslation[0]
+              : machineRole || roleTag),
           roleTag,
           workTag,
           franchise:
             work?.[1] ||
-            (/[\u3400-\u9fff]/.test(workTranslation?.[0] || '') ? workTranslation[0] : workTag) ||
+            (/[\u3400-\u9fff]/.test(workTranslation?.[0] || '')
+              ? workTranslation[0]
+              : machineWork || workTag) ||
             '未注明作品',
           workAliases,
+          translationNote:
+            (!cn?.name && !/[\u3400-\u9fff]/.test(roleTranslation?.[0] || '') && machineRole) ||
+            (!work?.[1] && !/[\u3400-\u9fff]/.test(workTranslation?.[0] || '') && machineWork)
+              ? '部分名称为机器翻译，请核对'
+              : undefined,
           medium: work?.[2] || '未分类',
           tags,
           trigger: tags,
@@ -219,6 +235,7 @@ export function loadFandomCatalog(): Promise<void> {
             ...new Set([
               ...(cn?.aliases || []),
               ...roleAliases,
+              ...extraAliases,
               ...(variants || []).map((v) => v.replace(/_/g, ' ')),
             ]),
           ],

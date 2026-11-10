@@ -532,6 +532,7 @@ onUnmounted(() => {
           </div>
           <div>
             <h3>{{ draft.name }}</h3>
+            <p v-if="selected.translationNote">{{ selected.translationNote }}</p>
             <label>素材名称 / 中文别名<input v-model="draft.name" class="bbi-input" /></label
             ><label>角色标签<input v-model="draft.roleTag" class="bbi-input" /></label
             ><label>作品英文标签<input v-model="draft.workTag" class="bbi-input" /></label
