@@ -11,17 +11,20 @@ export function recoverProfileFields(tag = '') {
     const t = token.replace(/_/g, ' ');
     if (/closed eyes|looking|wet|messy|windswept|smil|blush|cry|holding|pulling|breasts out/i.test(t))
       continue;
-    const key = /hair|bangs|braid|ponytail|twintails|bob cut/i.test(t)
-      ? 'hair'
-      : /eyes|heterochromia|tsurime|tareme/i.test(t)
-        ? 'eyes'
-        : /skin/i.test(t)
-          ? 'skin'
-          : /breasts|slim|slender|petite|voluptuous|muscular/i.test(t)
-            ? 'body'
-            : /eyebrows|face|jaw|freckles|mole|ears/i.test(t)
-              ? 'extra'
-              : '';
+    const key =
+      /hair|bangs|braid|ponytail|twintails|bob cut|ahoge|sidelocks|sideburns|chignon|updo|undercut|dreadlocks|cornrows|mohawk|ringlets|pixie cut|hime cut/i.test(
+        t,
+      )
+        ? 'hair'
+        : /eyes|heterochromia|tsurime|tareme/i.test(t)
+          ? 'eyes'
+          : /skin/i.test(t)
+            ? 'skin'
+            : /breasts|slim|slender|petite|voluptuous|muscular/i.test(t)
+              ? 'body'
+              : /eyebrows|face|jaw|freckles|mole|ears/i.test(t)
+                ? 'extra'
+                : '';
     if (key) fields[key] = [fields[key], token].filter(Boolean).join(', ');
   }
   return fields;

@@ -55,6 +55,7 @@ import { BBI_OUTFIT_EXTRA_KEY } from '@/autoTag/outfitState';
 import {
   CLOTHING_PROTOCOL,
   acceptClothingChanges,
+  unreportedClothingActions,
   clothingAt,
   clothingBefore,
   clothingBlock,
@@ -653,6 +654,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             preparedTarget.segments,
             salvaged ? 0 : promptOptions.minImages,
             promptOptions.maxImages,
+            source,
           );
           // 称呼归并与外貌兜底:模型若在 characters[].name 或 changes[].name 里写了已建档角色的
           // 别称/尊称/简称(如把「风千华」写成「风阿姨」「千华」),先唯一归并回档案主名,
@@ -755,6 +757,34 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           for (const change of candidate.outfitChanges ?? []) {
             if (!isMaleIdentity(change.name, candidateFacts))
               change.name = resolveCanonicalCharName(change.name, candidateEntries, candidateFacts);
+          }
+          if (!slot) {
+            const check = acceptClothingChanges(
+              (candidate.outfitChanges || []).filter((c) => wardrobe.get(c.name)?.suitMode !== 'always'),
+              source,
+              wardrobe,
+              candidateEntries,
+            );
+            const missingActions = unreportedClothingActions(
+              source,
+              candidate.outfitChanges || [],
+              candidateEntries,
+              wardrobe,
+            );
+            if (missingActions.length) {
+              retryNote =
+                '原文存在未覆盖的实际穿脱动作：' +
+                missingActions.join('；') +
+                '。请逐字引用动作句并补全对应衣物事件，不能只给楼层末态或删除这段动作。';
+              throw new Error(retryNote);
+            }
+            if (check.rejected.length) {
+              retryNote =
+                '服装事件无法写入：' +
+                check.rejected.join('；') +
+                '。请修正事件引用、衣物ID和初始穿搭，不得删掉真实穿脱动作或改成全穿着；只报告发生变化的字段。';
+              throw new Error(retryNote);
+            }
           }
           // 单槽重写忽略本次 changes,不校验建档 nl —— 校验它会为一份会被丢弃的
           // changes 白白消耗重试次数。NAI 关了自然语言时协议不要 nl,也就不验。
@@ -1220,7 +1250,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         appearance: entriesAt
           .filter((e) => image.characters.some((c) => c.name === e.name))
           .map((e) => ({ ...e, history: [] })),
-        entries: [...at.values()].filter((e) => image.characters.some((c) => c.name === e.name)),
+        entries: JSON.parse(
+          JSON.stringify([...at.values()].filter((e) => image.characters.some((c) => c.name === e.name))),
+        ),
         costume: frameCostume,
       });
     }
@@ -1295,7 +1327,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       costume,
       delta: true,
       manualChoiceRevision: expectedWardrobeChoice,
-      start: [],
+      start: JSON.parse(
+        JSON.stringify(
+          [...wardrobe.values()].filter(
+            (e) =>
+              accepted.changes.some((c) => c.name === e.name) ||
+              plan.images.some((i) => i.characters.some((c) => c.name === e.name)),
+          ),
+        ),
+      ),
       entries: [...finalWardrobe.values()].filter((e) => JSON.stringify(e) !== wardrobeBaseline.get(e.name)),
       changes: accepted.changes,
       rejected: visualNotes,
@@ -1312,6 +1352,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                     ...frame,
                     tag: serializeImageTag(plan.images[0]),
                     entries: frames[0]?.entries ?? frame.entries,
+                    appearance: frames[0]?.appearance ?? frame.appearance,
                     costume: frames[0]?.costume ?? frame.costume,
                   }
                 : frame,

@@ -195,6 +195,7 @@ export function parseImagePlan(
   segments: TargetSegment[],
   minImages: number,
   maxImages: number,
+  source?: string,
 ): ImagePlan {
   const parsed = parseObject(raw);
   if (!Array.isArray(parsed.images)) throw new Error('AI 返回的 JSON 缺少 images 数组');
@@ -257,7 +258,7 @@ export function parseImagePlan(
     images: limitedImages,
     changes: parseChanges(parsed.changes, positions, segmentById),
     costumeContexts: parsed.costumeContexts,
-    outfitChanges: parseClothingChanges(parsed.outfitChanges, segments),
+    outfitChanges: parseClothingChanges(parsed.outfitChanges, segments, source),
     identities: parseIdentityClaims(parsed.identities),
   };
 }

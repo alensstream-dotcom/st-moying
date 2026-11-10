@@ -7,6 +7,7 @@ import { requestCompletion, requestViaMainApi } from '@/api/client';
 import { findCharTag, upsertCharTag, recomputeCharTags, isManualFandom } from '@/state/charTags';
 import { appearancePolicy, setAppearancePolicy, fandomOnly } from '@/state/appearancePolicy';
 import { adoptLook } from '@/state/characterStudio';
+import { inspectHairTags } from '@/state/hairTags';
 import { recoverProfileFields } from '@/autoTag/profileRecovery';
 const props = defineProps<{ src: string; cast: Array<{ name: string; tag: string }>; chat?: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -18,6 +19,7 @@ const name = ref(candidates[0]?.name || ''),
   tags = ref(''),
   feedback = ref(''),
   busy = ref(false);
+const inspectedHair = computed(() => inspectHairTags(tags.value));
 const entry = computed(() => findCharTag(name.value));
 const controller = new AbortController();
 onBeforeUnmount(() => controller.abort());
@@ -80,17 +82,12 @@ function save() {
     checkChat();
     const old = entry.value;
     if (!old || !isManualFandom(old)) throw new Error('请选择已套用同人的角色');
-    const text = tags.value.trim().replace(/_/g, ' ');
-    if (
-      !text ||
-      !/^[a-zA-Z0-9 ,()\-]+$/.test(text) ||
-      text.length > 600 ||
-      /\b(?:artist|style|quality|dress|shirt|breasts|eyes|skin|wet|wind|expression)\b/i.test(text)
-    )
-      throw new Error('请只填写英文头发标签，例如 short hair, ponytail, black hair');
-    const hair = recoverProfileFields(text).hair;
-    if (!hair || text.split(',').some((t) => !recoverProfileFields(t).hair))
-      throw new Error('请移除非头发标签');
+    const inspected = inspectHairTags(tags.value);
+    if (!inspected.tags || inspected.tags.length > 1200)
+      throw new Error('请填写发型标签，总长度不超过1200字');
+    if (inspected.invalid.length)
+      throw new Error('请修改以下非发型或格式无效的标签：' + inspected.invalid.join('、'));
+    const hair = inspected.tags;
     const policy = {
       mode: 'fandom' as const,
       fields: { ...appearancePolicy(old.name)?.fields, fandom: old.fields.fandom, hair },
@@ -152,6 +149,12 @@ function save() {
       <p>
         识别会将此图发送给已保存的 tagGen LLM（未配置则用酒馆主
         API），需要模型支持看图并按渠道计费。核对后确认，只固定发型，不发送逐图参考，不改变衣服或其他角色。
+      </p>
+      <p v-if="inspectedHair.invalid.length">需要修改：{{ inspectedHair.invalid.join('、') }}</p>
+      <p v-if="inspectedHair.unusual.length">
+        未能自动分类的英文词：{{
+          inspectedHair.unusual.join('、')
+        }}。确认保存表示你将它们作为发型修正使用；插件不验证 NAI 是否认识这些词。
       </p>
       <p role="status">{{ feedback }}</p>
       <footer class="bbi-modal-foot">

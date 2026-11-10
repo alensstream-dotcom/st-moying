@@ -1,4 +1,4 @@
-import { wardrobeChoiceRevision, suitNote } from '@/state/wardrobeChoice';
+import { applyWardrobeChoices, wardrobeChoiceRevision, suitNote } from '@/state/wardrobeChoice';
 import { renderAppearanceOverrides } from '@/state/appearancePolicy';
 import { lookSettings, fingerprint } from '@/state/characterStudio';
 import { getThumb } from '@/data/loreThumbs';
@@ -360,7 +360,7 @@ export async function generateImage(
       floor = input.storyFrame.floor;
     const saved = readClothingFloor(chat[floor], clothingRevision(chat, floor));
     const frame = saved?.frames.find((f) => f.tag === input.storyFrame!.tag);
-    if (frame?.costume) {
+    if (frame) {
       costumeContext = frame.costume;
       const state = new Map(frame.entries.map((e) => [e.name, e]));
       const image = {
@@ -373,7 +373,7 @@ export async function generateImage(
         size: input.size ?? ('portrait' as const),
         characters: (input.characters ?? []).map((c) => ({ ...c })),
       };
-      appearanceNotes.push(...removeUnbackedCostume(image, state, frame.costume));
+      if (frame.costume) appearanceNotes.push(...removeUnbackedCostume(image, state, frame.costume));
       enforceClothing(
         image,
         state,
@@ -392,14 +392,15 @@ export async function generateImage(
     const chat = getContext()?.chat ?? [],
       floor = input.storyFrame.floor;
     const saved = readClothingFloor(chat[floor], clothingRevision(chat, floor));
-    const frame =
-      (saved?.manualChoiceRevision ?? '[]') === wardrobeChoiceRevision(chat[floor])
-        ? saved?.frames.find((f) => f.tag === input.storyFrame!.tag)
-        : undefined;
+    const frame = saved?.frames.find((f) => f.tag === input.storyFrame!.tag);
+    const exactState = new Map((frame?.entries || []).map((e) => [e.name, e]));
+    applyWardrobeChoices(exactState, chat[floor], saved?.manualChoiceRevision);
     const current = clothingBefore(chat, floor + 1, charTagLib.entries),
       bound = new Map();
     for (const c of input.characters) {
-      const record = frame?.entries.find((e) => e.name === c.name) ?? current.get(c.name);
+      const record =
+        exactState.get(c.name) ??
+        (current.get(c.name)?.suitMode === 'always' ? current.get(c.name) : undefined);
       if (record?.suitMode) bound.set(c.name, record);
     }
     if (bound.size) {

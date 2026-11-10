@@ -1,3 +1,4 @@
+import { characterAliases } from '@/state/characterAliases';
 import { applyWardrobeChoices, wardrobeChoiceRevision } from '@/state/wardrobeChoice';
 import type { CostumeContext, CostumeFloor } from './costumeContext';
 import type { TargetSegment } from './clean';
@@ -26,6 +27,8 @@ export interface ClothingRecord {
   source: string;
 }
 export interface ClothingChange {
+  reportedName?: string;
+  subjectEvidence?: string;
   name: string;
   position: string;
   sourceLine: number;
@@ -59,7 +62,7 @@ export interface ClothingFloor {
 export type ClothingState = Map<string, ClothingRecord>;
 export const CLOTHING_PROTOCOL = `服装连续性补充协议（本节替代“根据图片提示词反推账本”）：
 最终 JSON 增加 outfitChanges 数组。没有变化就 []；即使 images=[]，正文里的穿脱变化也必须报告。
-每项 {name,position,operation,evidence,pieces:[{id,design,state}]}，position 用本节 P 编号；name 用人物库原名。
+每项 {name,position,operation,evidence,subjectEvidence,pieces:[{id,design,state}]}，position 用本节 P 编号；name 用人物库原名。evidence 必须逐字引用实际穿脱动作句，事件在这句动作完成处生效；不要只给楼层最后状态。动作句使用“她”时 subjectEvidence 另引前文明确主语的原文，不能用扩大 evidence 到楼尾的方式补姓名。先记录初始穿着，再按发生顺序记录每次脱、半脱、复穿；第一张发生在脱衣前就必须穿着，后两张发生在脱衣后必须取脱后状态。
 operation=init：仅首次没有穿搭时建立整套；明确剧情用原文证据，无描写时可以一次性补全，evidence=""，后续直接继承。
 operation=patch：只改已有衣物状态，design 留空，必须引用原文动作，证据需包含角色名（代词动作连同此前姓名一起引用）。
 operation=add：剧情明确加穿一件衣物，只新增部件，不能重置其他衣服。
@@ -196,7 +199,11 @@ export function clothingBefore(
   }
   return state;
 }
-export function parseClothingChanges(raw: unknown, segments: TargetSegment[]): ClothingChange[] {
+export function parseClothingChanges(
+  raw: unknown,
+  segments: TargetSegment[],
+  source?: string,
+): ClothingChange[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .slice(0, 100)
@@ -220,12 +227,37 @@ export function parseClothingChanges(raw: unknown, segments: TargetSegment[]): C
         return [{ id: text(p.id), design: text(p.design), state }];
       });
       if (!pieces.length || new Set(pieces.map((p: ClothingPiece) => p.id)).size !== pieces.length) return [];
+      let sourceLine = at.sourceLine,
+        charOffset = at.charOffset ?? 0;
+      const evidence = text(item.evidence);
+      if (source !== undefined && evidence) {
+        const normalized = source.replace(/\r\n?/g, '\n'),
+          quote = evidence.replace(/\r\n?/g, '\n');
+        const matches: number[] = [];
+        for (let i = normalized.indexOf(quote); i >= 0; i = normalized.indexOf(quote, i + 1))
+          matches.push(i + quote.length);
+        if (!matches.length)
+          throw new Error(`${text(item.name)} 的穿脱 evidence 不是逐字原文，请引用实际动作句`);
+        const lines = normalized.split('\n');
+        const hint =
+          lines.slice(0, at.sourceLine).reduce((n, line) => n + line.length + 1, 0) + (at.charOffset || 0);
+        const distances = matches
+          .map((end) => ({ end, distance: Math.abs(end - hint) }))
+          .sort((a, b) => a.distance - b.distance);
+        if (distances.length > 1 && distances[0].distance === distances[1].distance)
+          throw new Error('穿脱动作引文有歧义，请加上附近原文以区分事件');
+        const prefix = normalized.slice(0, distances[0].end).split('\n');
+        sourceLine = prefix.length - 1;
+        charOffset = prefix[prefix.length - 1].length;
+      }
       return [
         {
+          reportedName: text(item.name),
+          subjectEvidence: text(item.subjectEvidence),
           name: text(item.name),
           position: at.id,
-          sourceLine: at.sourceLine,
-          charOffset: at.charOffset ?? 0,
+          sourceLine,
+          charOffset,
           operation: item.operation,
           evidence: text(item.evidence),
           pieces,
@@ -236,6 +268,52 @@ export function parseClothingChanges(raw: unknown, segments: TargetSegment[]): C
 }
 function reached(change: ClothingChange, line: number, offset: number): boolean {
   return change.sourceLine < line || (change.sourceLine === line && change.charOffset <= offset);
+}
+export function unreportedClothingActions(
+  source: string,
+  changes: ClothingChange[],
+  entries: CharTagEntry[],
+  before: ClothingState,
+): string[] {
+  const missing: string[] = [];
+  const normalized = source.replace(/\r\n?/g, '\n');
+  const pattern =
+    /(?:脱下|脱掉|脱去|褪下|褪去|解开|掀起|撩起|穿回|穿上|拉下)[^。！？\n]{0,14}?(?:外套|衬衫|衬衣|上衣|长裙|短裙|裙子|内裤|胸罩|文胸|裤子|丝袜|长袜|衣扣)|(?:外套|衬衫|衬衣|上衣|裙子|内裤|胸罩|文胸|裤子|丝袜)[^。！？\n]{0,8}?(?:脱下|脱掉|脱去|褪下|褪去|解开|掀起|撩起|拉下)/g;
+  const names = [...new Set([...entries.map((e) => e.name), ...changes.map((c) => c.name)])];
+  for (const match of normalized.matchAll(pattern)) {
+    const index = match.index || 0;
+    if (
+      /没有|并未|不要|不想|别|如果|假如|想要|准备|打算|试图|能否|要不要|可以|要求|命令|让|叫|请/.test(
+        normalized.slice(Math.max(0, index - 8), index),
+      )
+    )
+      continue;
+    const context = normalized.slice(Math.max(0, index - 300), index);
+    const mentions = names
+      .map((name) => ({
+        name,
+        at: Math.max(...[name, ...characterAliases(name)].map((a) => context.lastIndexOf(a))),
+      }))
+      .filter((m) => m.at >= 0)
+      .sort((a, b) => b.at - a.at);
+    const actor = mentions[0]?.name;
+    const local = context.slice(-24);
+    if (
+      !/她[^。！？“”「」『』]{0,8}$/.test(local) &&
+      ![actor || '', ...characterAliases(actor || '')].filter(Boolean).some((name) => local.includes(name))
+    )
+      continue;
+    if (
+      !actor ||
+      before.get(actor)?.suitMode === 'always' ||
+      (mentions[1] && mentions[0].at === mentions[1].at)
+    )
+      continue;
+    if (!before.has(actor) && !changes.some((c) => c.name === actor && c.operation === 'init')) continue;
+    if (!changes.some((c) => c.name === actor && c.evidence.includes(match[0])))
+      missing.push(actor + '：' + match[0]);
+  }
+  return [...new Set(missing)].slice(0, 8);
 }
 export function acceptClothingChanges(
   changes: ClothingChange[],
@@ -251,6 +329,14 @@ export function acceptClothingChanges(
     const c = copy(raw);
     c.name = resolveCanonicalCharName(c.name, entries);
     const old = current.get(c.name);
+    if (old && c.operation === 'patch')
+      for (const piece of c.pieces) {
+        if (old.pieces.some((p) => p.id === piece.id) || !piece.design) continue;
+        const matches = old.pieces.filter(
+          (p) => p.design.trim().toLowerCase() === piece.design.trim().toLowerCase(),
+        );
+        if (matches.length === 1) piece.id = matches[0].id;
+      }
     if (old?.suitMode === 'always') {
       rejected.push(c.name + ': 用户固定套装不接受剧情穿脱或换装');
       continue;
@@ -305,10 +391,30 @@ export function acceptClothingChanges(
       ...line.slice(0, c.sourceLine),
       (line[c.sourceLine] ?? '').slice(0, c.charOffset || undefined),
     ].join('\n');
+    const aliases = [...new Set([c.name, c.reportedName || '', ...characterAliases(c.name)])].filter(Boolean);
+    const subjectQuote = c.subjectEvidence || '';
+    const explicitSubject =
+      aliases.some((name) => c.evidence.includes(name)) ||
+      (!!subjectQuote &&
+        preceding.includes(subjectQuote) &&
+        aliases.some((name) => subjectQuote.includes(name)));
+    // Pronoun-only actions may continue the uniquely nearest named subject.
+    const actionStart = preceding.lastIndexOf(c.evidence);
+    const context = preceding.slice(Math.max(0, actionStart - 500), actionStart);
+    const mentions = entries
+      .map((e) => ({
+        name: e.name,
+        at: Math.max(...[e.name, ...characterAliases(e.name)].map((a) => context.lastIndexOf(a))),
+      }))
+      .filter((m) => m.at >= 0)
+      .sort((a, b) => b.at - a.at);
     const mentioned =
-      c.evidence.includes(c.name) || entries.some((e) => e.name === c.name && c.evidence.includes(raw.name));
+      explicitSubject ||
+      (/她|其|自己|\bshe\b|\bher\b/i.test(c.evidence) &&
+        mentions[0]?.name === c.name &&
+        (!mentions[1] || mentions[0].at > mentions[1].at));
     let reason = '';
-    if (!entries.some((e) => e.name === c.name) && !preceding.includes(c.name))
+    if (!entries.some((e) => e.name === c.name) && !aliases.some((name) => preceding.includes(name)))
       reason = '无法确认该服装记录对应的人物';
     else if (
       c.operation !== 'init' &&
@@ -344,17 +450,30 @@ export function acceptClothingChanges(
           arrangement:
             /整理好|恢复原状|拉回|放下|穿好|穿回|pull.{0,12}back|lower.{0,12}(?:skirt|dress)|straighten|redress/i,
           location: /穿上|穿回|穿好|套上|披上|put.{0,12}on|redress/i,
-          leftSleeve: /袖|sleeve/i,
-          rightSleeve: /袖|sleeve/i,
+          leftSleeve: /袖|穿好|穿回|重新穿|套上|sleeve|put.{0,12}on|redress/i,
+          rightSleeve: /袖|穿好|穿回|重新穿|套上|sleeve|put.{0,12}on|redress/i,
+          wetness: /擦干|晒干|烘干|干透|dry/i,
+          damage: /缝|修|补好|修复|repair|mend/i,
         };
         for (const [key, expression] of Object.entries(restore)) {
           if (
-            ['closed', 'normal', 'worn', 'on_arm'].includes(piece.state[key]) &&
+            ['closed', 'normal', 'worn', 'on_arm', 'dry', 'intact'].includes(piece.state[key]) &&
             !expression.test(c.evidence)
           )
             delete piece.state[key];
         }
       }
+    if (
+      c.operation === 'patch' &&
+      !c.pieces.some((p) => Object.values(p.state).some((v) => v !== 'unknown'))
+    ) {
+      rejected.push(c.name + ': 穿脱事件没有有效状态字段，请明确该衣物的穿着、位置或袖口变化');
+      continue;
+    }
+    if (new Set(c.pieces.map((p) => p.id)).size !== c.pieces.length) {
+      rejected.push(c.name + ': 多个部件被映射到同一衣物ID，请拆分或去重');
+      continue;
+    }
     result.push(c);
     applyOne(current, c, 'accepted');
   }
@@ -418,7 +537,42 @@ export function clothingTrace(message: STMessage | undefined, rawTag: string): s
     other: '其他文化',
     unknown: '文化未确定',
   };
+  const labels: Record<string, string> = {
+    location: '位置',
+    fastening: '扣合',
+    arrangement: '整理',
+    leftSleeve: '左袖',
+    rightSleeve: '右袖',
+    damage: '破损',
+    wetness: '干湿',
+    worn: '穿着',
+    removed: '已脱下',
+    held: '拿在手中',
+    floor: '在地上',
+    chair: '在椅上',
+    unknown: '未确定',
+    open: '敞开',
+    closed: '扣好',
+    loose: '松开',
+    normal: '正常',
+    lifted: '掀起',
+    pulled_aside: '拨到一侧',
+    lowered: '褪下',
+    around_waist: '退至腰间',
+    around_ankles: '退至脚踝',
+    on_arm: '袖子穿好',
+    off_arm: '袖子脱离手臂',
+    rolled_up: '挽起',
+    torn: '破损',
+    intact: '完整',
+    wet: '湿',
+    dry: '干',
+  };
   return [
+    '本图按原文位置独立记录衣物状态，不使用楼层末态',
+    ...floor.changes
+      .filter((c) => cast.includes(c.name) && reached(c, frame.sourceLine, frame.charOffset))
+      .map((c) => `本图前已发生：${c.name} · ${c.evidence || '首次穿搭补全'}`),
     ...(frame.costume
       ? [
           `服饰背景：${eraLabels[frame.costume.era]} / ${cultureLabels[frame.costume.culture]} · ${frame.costume.evidence || '沿用前文'}`,
@@ -432,7 +586,7 @@ export function clothingTrace(message: STMessage | undefined, rawTag: string): s
             .map(
               (p) =>
                 `${p.design || p.id} [${Object.entries(p.state)
-                  .map(([k, v]) => `${k}=${v}`)
+                  .map(([k, v]) => `${labels[k] || k}=${labels[v] || v}`)
                   .join(', ')}]`,
             )
             .join('；')}`,

@@ -11,7 +11,7 @@ const split = (s: string) =>
     .filter(Boolean);
 const unique = (parts: string[]) => [...new Map(parts.map((t) => [t.toLowerCase(), t])).values()].join(', ');
 const TRAIT =
-  /\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|ahoge|bob|pixie cut|updo|hair buns?|breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall|short woman|pointy ears|elf ears|tsurime|tareme|twintails|hairbun|hair bun|twin tails|fangs|lips|heterochromia|mole|scar|freckles|young adult|mature female|teenager|child)\b/i;
+  /\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|ahoge|sidelocks|sideburns|chignon|undercut|dreadlocks|cornrows|mohawk|ringlets|bob|pixie cut|updo|hair buns?|breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall|short woman|pointy ears|elf ears|tsurime|tareme|twintails|hairbun|hair bun|twin tails|fangs|lips|heterochromia|mole|scar|freckles|young adult|mature female|teenager|child)\b/i;
 const EXPRESSION =
   /\b(?:closed eyes|half.closed eyes|looking|gaze|eye contact|tears|crying|smiling|smile|blush|expression|breasts out|grabbing|holding|pulling|touching|stroking)\b/i;
 const FANDOM = /^[^:]*\s+\\?\([^()]+\\?\)\s*(?:::\s*)?$/;
@@ -62,7 +62,9 @@ function ownsTrait(entry: CharTagEntry, token: string): boolean {
   const f = entry.fields;
   return !!(
     (f.hair &&
-      /\b(?:hair|bangs|ponytail|twintails|braid|ahoge|bob|pixie cut|updo|hair bun)\b/i.test(token)) ||
+      /\b(?:hair|bangs|ponytail|twintails|braid|ahoge|sidelocks|sideburns|chignon|undercut|dreadlocks|cornrows|mohawk|ringlets|bob|pixie cut|updo|hair bun)\b/i.test(
+        token,
+      )) ||
     (f.eyes && /\b(?:eyes?|heterochromia)\b/i.test(token)) ||
     (f.skin && /\bskin\b/i.test(token)) ||
     (f.body &&
