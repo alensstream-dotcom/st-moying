@@ -70,7 +70,7 @@ const results = computed(() => {
   );
 });
 const works = computed(() => {
-  const groups = new Map<string, { tag: string; name: string; count: number }>();
+  const groups = new Map<string, { tag: string; name: string; count: number; aliases: string[] }>();
   for (const item of all.value) {
     if ((medium.value && item.medium !== medium.value) || (female.value && item.gender !== 'f')) continue;
     const old = groups.get(item.workTag || '__unknown__');
@@ -80,11 +80,12 @@ const works = computed(() => {
         tag: item.workTag || '__unknown__',
         name: item.franchise,
         count: 1,
+        aliases: item.workAliases || [],
       });
   }
   const q = workQuery.value.toLowerCase().trim();
   return [...groups.values()]
-    .filter((w) => !q || (w.name + ' ' + w.tag).toLowerCase().includes(q))
+    .filter((w) => !q || (w.name + ' ' + w.tag + ' ' + w.aliases.join(' ')).toLowerCase().includes(q))
     .sort((a, b) => b.count - a.count)
     .slice(0, 100);
 });

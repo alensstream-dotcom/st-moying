@@ -110,6 +110,7 @@ export interface FandomMaterial extends FandomPreset {
   variants?: string[];
   source?: string;
   searchText?: string;
+  workAliases?: string[];
 }
 export const BUILTIN_FANDOMS: FandomMaterial[] = works.flatMap(([workTag, franchise, medium, characters]) =>
   characters.map(([name, roleTag]) => ({
@@ -174,7 +175,13 @@ export function loadFandomCatalog(): Promise<void> {
     resource.searchParams.set('ver', __BBI_VERSION__);
     const response = await fetch(resource);
     if (!response.ok) throw new Error('本地角色目录读取失败，请更新插件完整文件后重试');
-    const pack = await response.json();
+    const [pack, workModule, roleModule] = await Promise.all([
+      response.json(),
+      import('./copyrightZh.json'),
+      import('./characterZh.json'),
+    ]);
+    const workChinese = workModule.default,
+      roleChinese = roleModule.default;
     if (pack.version !== 1 || !Array.isArray(pack.works)) throw new Error('角色目录格式不正确');
     const curated = new Map(
       BUILTIN_FANDOMS.map((x) => [normal(x.workTag) + '|' + normal(x.roleTag).split(' (')[0], x]),
@@ -184,22 +191,37 @@ export function loadFandomCatalog(): Promise<void> {
       string,
       Array<[string, number, string, string[]?, string?]>,
     ][]) {
+      const workTranslation = (workChinese as Record<string, string[]>)[copyright];
+      const workAliases = (workTranslation?.[1] || '').split('|').filter(Boolean);
       const workTag = copyright.replace(/_/g, ' '),
         work = works.find((w) => normal(w[0]) === normal(workTag));
       for (const [slug, count, gender, variants, override] of entries) {
         const roleTag = slug.replace(/_/g, ' '),
           cn = curated.get(normal(workTag) + '|' + normal(roleTag).split(' (')[0]);
         const tags = override || roleTag + ', ' + workTag;
+        const roleTranslation = (roleChinese as Record<string, string[]>)[slug];
+        const roleAliases = (roleTranslation?.[1] || '').split('|').filter(Boolean);
         const item: FandomMaterial = {
           id: 'animadex:' + slug,
-          name: cn?.name || roleTag,
+          name:
+            cn?.name || (/[\u3400-\u9fff]/.test(roleTranslation?.[0] || '') ? roleTranslation[0] : roleTag),
           roleTag,
           workTag,
-          franchise: work?.[1] || workTag || '未注明作品',
+          franchise:
+            work?.[1] ||
+            (/[\u3400-\u9fff]/.test(workTranslation?.[0] || '') ? workTranslation[0] : workTag) ||
+            '未注明作品',
+          workAliases,
           medium: work?.[2] || '未分类',
           tags,
           trigger: tags,
-          aliases: [...(cn?.aliases || []), ...(variants || []).map((v) => v.replace(/_/g, ' '))],
+          aliases: [
+            ...new Set([
+              ...(cn?.aliases || []),
+              ...roleAliases,
+              ...(variants || []).map((v) => v.replace(/_/g, ' ')),
+            ]),
+          ],
           gender,
           count,
           variants,
@@ -207,7 +229,7 @@ export function loadFandomCatalog(): Promise<void> {
           nsfw: 0,
         };
         item.searchText = normal(
-          [item.name, item.franchise, item.roleTag, item.workTag, ...item.aliases].join(' '),
+          [item.name, item.franchise, item.roleTag, item.workTag, ...item.aliases, ...workAliases].join(' '),
         );
         base.push(item);
       }
