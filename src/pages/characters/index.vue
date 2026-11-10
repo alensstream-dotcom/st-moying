@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { characterAliases, saveCharacterAliases } from '@/state/characterAliases';
 import WardrobePanel from '@/components/WardrobePanel.vue';
 import FandomLibrary from '@/components/FandomLibrary.vue';
 import type { FandomMaterial } from '@/data/fandomCatalog';
@@ -106,6 +107,20 @@ function zoomPortrait(candidateImage = false) {
       prompt: candidateImage ? candidate.value?.nl : draft.value?.nl,
     });
 }
+const aliasDraft = ref('');
+function saveAliases() {
+  try {
+    saveCharacterAliases(
+      selected.value,
+      aliasDraft.value,
+      charTagLib.entries.map((e) => e.name),
+    );
+    feedback.value = '称谓已关联到当前角色，后续分析与生图共用她的外貌和服装；旧重复档案不会自动删除';
+    version.value++;
+  } catch (e) {
+    feedback.value = e instanceof Error ? e.message : String(e);
+  }
+}
 const appearanceMode = ref<AppearanceMode>('story'),
   protectedFields = ref<string[]>([]);
 function pinEdited(field: string) {
@@ -194,6 +209,7 @@ function revoke() {
   candidate.value = null;
 }
 async function select(name: string) {
+  aliasDraft.value = characterAliases(name).join('、');
   if (busy.value) return;
   selected.value = name;
   draft.value = clone(charTagLib.entries.find((e) => e.name === name)!);
@@ -732,6 +748,16 @@ watch(
             </figure>
             <section v-if="tab === '档案'" class="editor">
               <label>姓名<input v-model="draft.name" class="bbi-input" /></label>
+              <label
+                >称谓／别名<input
+                  v-model="aliasDraft"
+                  class="bbi-input"
+                  placeholder="例如：千华、风阿姨、风老师，用顿号分隔"
+              /></label>
+              <button class="bbi-btn" :disabled="!selected" @click="saveAliases">保存称谓关联</button>
+              <p>
+                只填写确定指向她的称呼；不要使用“她”等代词。同名称谓有多个指向时不自动合并。保存后重新分析使用别称的楼层。
+              </p>
               <p>
                 勾选锁定项：重 Roll
                 时保留（仅约束重设计，不等于剧情保护）。性别和年龄已有值时保留。没有证据的细节由你决定是否补全。

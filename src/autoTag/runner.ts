@@ -644,13 +644,17 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             candidate.changes = candidate.changes.filter((change) => {
               const canonical = isMaleIdentity(change.name, candidateFacts)
                 ? change.name
-                : resolveCanonicalCharName(change.name, candidateEntries);
+                : resolveCanonicalCharName(change.name, candidateEntries, candidateFacts);
               if (canonical !== change.name) {
                 if (change.field === 'new' && existingNames.has(canonical)) return false;
                 change.name = canonical;
               }
               return true;
             });
+          }
+          for (const change of candidate.outfitChanges ?? []) {
+            if (!isMaleIdentity(change.name, candidateFacts))
+              change.name = resolveCanonicalCharName(change.name, candidateEntries, candidateFacts);
           }
           // 单槽重写忽略本次 changes,不校验建档 nl —— 校验它会为一份会被丢弃的
           // changes 白白消耗重试次数。NAI 关了自然语言时协议不要 nl,也就不验。

@@ -1,3 +1,5 @@
+import { characterAliases } from '@/state/characterAliases';
+import { currentIdentityFacts, type IdentityFact } from '@/state/characterIdentity';
 /**
  * 已建档角色的「直接复用」与「同人异称归并」判定。
  *
@@ -33,35 +35,217 @@ export interface CharAliasHit {
 
 /** 常见汉语复姓:拆姓与名时优先匹配双字姓,其余 2~4 字中文名按单字姓拆。 */
 const COMPOUND_SURNAMES = [
-  '欧阳', '太史', '端木', '上官', '司马', '东方', '独孤', '南宫', '万俟', '闻人',
-  '夏侯', '诸葛', '尉迟', '公羊', '赫连', '澹台', '皇甫', '宗政', '濮阳', '公冶',
-  '太叔', '申屠', '公孙', '慕容', '仲孙', '钟离', '长孙', '宇文', '司徒', '鲜于',
-  '司空', '闾丘', '子车', '亓官', '司寇', '巫马', '公西', '颛孙', '壤驷', '公良',
-  '漆雕', '乐正', '宰父', '谷梁', '拓跋', '夹谷', '轩辕', '令狐', '段干', '百里',
-  '呼延', '东郭', '南门', '羊舌', '微生', '梁丘', '左丘', '西门', '百里', '第五',
+  '欧阳',
+  '太史',
+  '端木',
+  '上官',
+  '司马',
+  '东方',
+  '独孤',
+  '南宫',
+  '万俟',
+  '闻人',
+  '夏侯',
+  '诸葛',
+  '尉迟',
+  '公羊',
+  '赫连',
+  '澹台',
+  '皇甫',
+  '宗政',
+  '濮阳',
+  '公冶',
+  '太叔',
+  '申屠',
+  '公孙',
+  '慕容',
+  '仲孙',
+  '钟离',
+  '长孙',
+  '宇文',
+  '司徒',
+  '鲜于',
+  '司空',
+  '闾丘',
+  '子车',
+  '亓官',
+  '司寇',
+  '巫马',
+  '公西',
+  '颛孙',
+  '壤驷',
+  '公良',
+  '漆雕',
+  '乐正',
+  '宰父',
+  '谷梁',
+  '拓跋',
+  '夹谷',
+  '轩辕',
+  '令狐',
+  '段干',
+  '百里',
+  '呼延',
+  '东郭',
+  '南门',
+  '羊舌',
+  '微生',
+  '梁丘',
+  '左丘',
+  '西门',
+  '百里',
+  '第五',
 ];
 
 /** 姓氏或名字后面常接的尊称、辈分、亲属、职务、仙侠/校园称谓后缀。 */
 const HONORIFIC_SUFFIXES = [
-  '阿姨', '大姨', '小姨', '姨妈', '姨母', '姨娘', '姨',
-  '妈妈', '母亲', '母后', '母妃', '母', '娘亲', '娘',
-  '姐姐', '老姐', '大姐', '小姐姐', '姐',
-  '妹妹', '小妹', '妹子', '妹',
-  '嫂子', '大嫂', '表嫂', '嫂',
-  '婶婶', '大婶', '小婶', '婶子', '婶',
-  '姑姑', '大姑', '小姑', '姑妈', '姑母', '姑',
-  '奶奶', '婆婆', '外婆', '姥姥', '太后', '老夫人', '老太太',
-  '夫人', '太太', '女士', '小姐', '姑娘', '丫头', '女侠', '千金', '大小姐', '二小姐', '三小姐',
-  '老师', '教师', '教授', '导师', '先生',
-  '医生', '大夫', '护士', '院长', '主任',
-  '总', '总裁', '董事长', '董', '经理', '总监', '部长', '处长', '局长', '科长', '书记', '厂长', '店长', '老板娘', '老板',
-  '校长', '会长', '社长', '班长', '队长', '团长', '组长', '委员',
-  '学姐', '学妹', '学长', '同学', '前辈', '后辈',
-  '师尊', '师父', '师傅', '师娘', '师母', '师姐', '师妹', '师叔', '师伯', '师祖',
-  '仙子', '仙尊', '仙姑', '真人', '真君', '道长', '圣女', '魔女', '妖女', '神女', '女帝', '女皇', '女王',
-  '长老', '掌门', '宗主', '门主', '谷主', '宫主', '阁主', '殿主', '峰主', '堂主', '教主', '帮主', '家主',
-  '殿下', '公主', '郡主', '王妃', '皇妃', '贵妃', '娘娘', '皇后', '太妃', '小主', '格格',
-  '大人', '将军', '统领', '警官', '探长',
+  '阿姨',
+  '大姨',
+  '小姨',
+  '姨妈',
+  '姨母',
+  '姨娘',
+  '姨',
+  '妈妈',
+  '母亲',
+  '母后',
+  '母妃',
+  '母',
+  '娘亲',
+  '娘',
+  '姐姐',
+  '老姐',
+  '大姐',
+  '小姐姐',
+  '姐',
+  '妹妹',
+  '小妹',
+  '妹子',
+  '妹',
+  '嫂子',
+  '大嫂',
+  '表嫂',
+  '嫂',
+  '婶婶',
+  '大婶',
+  '小婶',
+  '婶子',
+  '婶',
+  '姑姑',
+  '大姑',
+  '小姑',
+  '姑妈',
+  '姑母',
+  '姑',
+  '奶奶',
+  '婆婆',
+  '外婆',
+  '姥姥',
+  '太后',
+  '老夫人',
+  '老太太',
+  '夫人',
+  '太太',
+  '女士',
+  '小姐',
+  '姑娘',
+  '丫头',
+  '女侠',
+  '千金',
+  '大小姐',
+  '二小姐',
+  '三小姐',
+  '老师',
+  '教师',
+  '教授',
+  '导师',
+  '先生',
+  '医生',
+  '大夫',
+  '护士',
+  '院长',
+  '主任',
+  '总',
+  '总裁',
+  '董事长',
+  '董',
+  '经理',
+  '总监',
+  '部长',
+  '处长',
+  '局长',
+  '科长',
+  '书记',
+  '厂长',
+  '店长',
+  '老板娘',
+  '老板',
+  '校长',
+  '会长',
+  '社长',
+  '班长',
+  '队长',
+  '团长',
+  '组长',
+  '委员',
+  '学姐',
+  '学妹',
+  '学长',
+  '同学',
+  '前辈',
+  '后辈',
+  '师尊',
+  '师父',
+  '师傅',
+  '师娘',
+  '师母',
+  '师姐',
+  '师妹',
+  '师叔',
+  '师伯',
+  '师祖',
+  '仙子',
+  '仙尊',
+  '仙姑',
+  '真人',
+  '真君',
+  '道长',
+  '圣女',
+  '魔女',
+  '妖女',
+  '神女',
+  '女帝',
+  '女皇',
+  '女王',
+  '长老',
+  '掌门',
+  '宗主',
+  '门主',
+  '谷主',
+  '宫主',
+  '阁主',
+  '殿主',
+  '峰主',
+  '堂主',
+  '教主',
+  '帮主',
+  '家主',
+  '殿下',
+  '公主',
+  '郡主',
+  '王妃',
+  '皇妃',
+  '贵妃',
+  '娘娘',
+  '皇后',
+  '太妃',
+  '小主',
+  '格格',
+  '大人',
+  '将军',
+  '统领',
+  '警官',
+  '探长',
 ];
 
 /** 前缀式亲昵称呼:小X、阿X、老X。 */
@@ -108,12 +292,12 @@ function splitChineseName(raw: string): NameParts | null {
  * - 直呼其名/名字+称谓:千华、千华姐、千华阿姨、千华老师……
  * - 叠字小名(若单字名或尾字):华华(仅当原名 2 字如「风华」时生成「华华」)
  */
-export function candidateAliasesForEntry(entry: CharTagEntry): string[] {
+export function candidateAliasesForEntry(entry: CharTagEntry, facts = currentIdentityFacts()): string[] {
   const canonical = entry.name.trim();
   if (!canonical) return [];
   const parts = splitChineseName(canonical);
-  if (!parts) return [];
-  const out = new Set<string>();
+  const out = new Set(characterAliases(canonical, facts));
+  if (!parts) return [...out];
   const { surname, given } = parts;
 
   if (surname) {
@@ -160,6 +344,7 @@ export function candidateAliasesForEntry(entry: CharTagEntry): string[] {
 export function resolveCanonicalCharName(
   rawName: string,
   entries: readonly CharTagEntry[],
+  facts: IdentityFact[] = currentIdentityFacts(),
 ): string {
   const trimmed = rawName.trim();
   if (!trimmed || !entries.length) return trimmed;
@@ -167,26 +352,43 @@ export function resolveCanonicalCharName(
     if (entry.name.trim() === trimmed) return entry.name.trim();
   }
 
+  const confirmed = entries.filter((entry) => characterAliases(entry.name, facts).includes(trimmed));
+  if (confirmed.length === 1) return confirmed[0].name.trim();
+  if (confirmed.length > 1) return trimmed;
   const matched: CharTagEntry[] = [];
   for (const entry of entries) {
-    const aliases = candidateAliasesForEntry(entry);
+    const aliases = candidateAliasesForEntry(entry, facts);
     if (aliases.includes(trimmed)) {
       // A shared surname plus a title is not a unique identity, especially across genders.
-      const title = /老师|先生|女士|师兄|师姐|师弟|师妹|公子|少爷|夫人|阿姨|叔叔|姐姐|哥哥|妹妹|弟弟|师尊|掌门|长老|前辈|道友/;
-      if (title.test(trimmed) && !(entry.desc.includes(trimmed) && /又名|别名|也叫|称呼|叫她|叫他|also known|alias|aka/i.test(entry.desc))) continue;
+      const title =
+        /老师|先生|女士|师兄|师姐|师弟|师妹|公子|少爷|夫人|阿姨|叔叔|姐姐|哥哥|妹妹|弟弟|师尊|掌门|长老|前辈|道友/;
+      if (
+        title.test(trimmed) &&
+        !(
+          entry.desc.includes(trimmed) &&
+          /又名|别名|也叫|称呼|叫她|叫他|also known|alias|aka/i.test(entry.desc)
+        )
+      )
+        continue;
       matched.push(entry);
       continue;
     }
     // 兼容括号注明形态,如「风阿姨(风千华)」「风千华（风阿姨）」
     const canonical = entry.name.trim();
-    if (canonical && (trimmed.includes(`(${canonical})`) || trimmed.includes(`（${canonical}）`) || trimmed.startsWith(`${canonical}(`) || trimmed.startsWith(`${canonical}（`))) {
+    if (
+      canonical &&
+      (trimmed.includes(`(${canonical})`) ||
+        trimmed.includes(`（${canonical}）`) ||
+        trimmed.startsWith(`${canonical}(`) ||
+        trimmed.startsWith(`${canonical}（`))
+    ) {
       matched.push(entry);
     }
   }
 
   if (matched.length === 1) return matched[0].name.trim();
   if (matched.length > 1) {
-    const byDesc = matched.filter(entry => entry.desc && entry.desc.includes(trimmed));
+    const byDesc = matched.filter((entry) => entry.desc && entry.desc.includes(trimmed));
     if (byDesc.length === 1) return byDesc[0].name.trim();
   }
   return trimmed;
@@ -198,23 +400,21 @@ export function resolveCanonicalCharName(
  * 只返回「唯一指向某一个已建档角色」的别称,供提示词层直接点名告诉模型:
  * 「正文里的『风阿姨』就是档案里的『风千华』,统一用『风千华』并照抄她的外貌与服装」。
  */
-export function findCharAliases(
-  entries: readonly CharTagEntry[],
-  text: string,
-): CharAliasHit[] {
+export function findCharAliases(entries: readonly CharTagEntry[], text: string): CharAliasHit[] {
   if (!entries.length || !text.trim()) return [];
-  const existingNames = new Set(entries.map(e => e.name.trim()).filter(Boolean));
+  const facts = currentIdentityFacts();
+  const existingNames = new Set(entries.map((e) => e.name.trim()).filter(Boolean));
   const byEntry = new Map<string, string[]>();
 
   for (const entry of entries) {
     const canonical = entry.name.trim();
     if (!canonical) continue;
     const hits: string[] = [];
-    for (const alias of candidateAliasesForEntry(entry)) {
+    for (const alias of candidateAliasesForEntry(entry, facts)) {
       if (existingNames.has(alias)) continue;
       if (!text.includes(alias)) continue;
       // 单字名+常见字(如「小雪」的「阿雪」可以,但避免被更长的词误包含时先确认唯一归属)
-      if (resolveCanonicalCharName(alias, entries) !== canonical) continue;
+      if (resolveCanonicalCharName(alias, entries, facts) !== canonical) continue;
       hits.push(alias);
     }
     if (hits.length) {
@@ -242,7 +442,7 @@ export function normalizePlanCharacters(
   excludedNames: ReadonlySet<string> = new Set(),
 ): void {
   if (!entries.length) return;
-  const byName = new Map(entries.map(entry => [entry.name.trim(), entry]));
+  const byName = new Map(entries.map((entry) => [entry.name.trim(), entry]));
 
   for (const image of images) {
     for (const character of image.characters ?? []) {
@@ -279,11 +479,7 @@ function hasCoreFeature(tagLower: string, fieldVal: string, kind: 'hair' | 'eyes
  * - 当档案字段在 `character.tag` 中缺失时,按标准顺序补在主体词(`girl`/`boy`)之后,保证同一角色无论被怎么称呼,
  *   送去生图的固定外貌 tag 永远一致。
  */
-function ensureEntryAppearanceInCharacterTag(
-  rawTag: string,
-  entry: CharTagEntry,
-  wasAlias: boolean,
-): string {
+function ensureEntryAppearanceInCharacterTag(rawTag: string, entry: CharTagEntry, wasAlias: boolean): string {
   const tag = rawTag.trim();
   if (!tag) return tag;
 
@@ -300,7 +496,7 @@ function ensureEntryAppearanceInCharacterTag(
 
   let segments = tag
     .split(',')
-    .map(s => s.trim())
+    .map((s) => s.trim())
     .filter(Boolean);
   let lower = segments.join(', ').toLowerCase();
 
@@ -309,12 +505,22 @@ function ensureEntryAppearanceInCharacterTag(
 
   // 若是因为别称(如「风阿姨」)导致模型没抄档案、自己乱写了别的发色/瞳色,剔除乱写的发色/瞳色词组
   if (wasAlias && (missingHair || missingEyes)) {
-    segments = segments.filter(seg => {
+    segments = segments.filter((seg) => {
       const s = seg.toLowerCase();
-      if (missingHair && /\bhair\b/.test(s) && !/\b(?:ornament|ribbon|clip|band|pin|tie|flower|bow|grabbing|pulling|holding|brushing|tucking)\b/.test(s)) {
+      if (
+        missingHair &&
+        /\bhair\b/.test(s) &&
+        !/\b(?:ornament|ribbon|clip|band|pin|tie|flower|bow|grabbing|pulling|holding|brushing|tucking)\b/.test(
+          s,
+        )
+      ) {
         return false;
       }
-      if (missingEyes && /\beyes\b/.test(s) && !/\b(?:closed|half-closed|narrowed|wide|rolling|covering|teary|crying|looking|eye contact)\b/.test(s)) {
+      if (
+        missingEyes &&
+        /\beyes\b/.test(s) &&
+        !/\b(?:closed|half-closed|narrowed|wide|rolling|covering|teary|crying|looking|eye contact)\b/.test(s)
+      ) {
         return false;
       }
       return true;
@@ -324,7 +530,10 @@ function ensureEntryAppearanceInCharacterTag(
 
   const toInsert: string[] = [];
   const pushMissing = (fieldValue: string) => {
-    for (const part of fieldValue.split(',').map(s => s.trim()).filter(Boolean)) {
+    for (const part of fieldValue
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       const partLower = part.toLowerCase();
       if (!lower.includes(partLower)) {
         toInsert.push(part);
@@ -355,7 +564,9 @@ function ensureEntryAppearanceInCharacterTag(
     const s = segments[i].toLowerCase();
     if (
       (fandom && s === fandom.toLowerCase()) ||
-      /^(?:\d+)?(?:girl|girls|boy|boys|woman|women|man|men|female|male|mature female|young adult|teenager|child)$/.test(s)
+      /^(?:\d+)?(?:girl|girls|boy|boys|woman|women|man|men|female|male|mature female|young adult|teenager|child)$/.test(
+        s,
+      )
     ) {
       insertAt = i + 1;
     }
@@ -365,10 +576,13 @@ function ensureEntryAppearanceInCharacterTag(
 }
 
 /** 档案侧参与比对的字段:只取长期不变的外形,outfit 会把「今天穿了什么」也算进相似度。 */
-const LOOK_FIELDS = CHAR_TAG_FIELDS.filter(field => field === 'hair' || field === 'eyes' || field === 'body' || field === 'extra' || field === 'skin');
+const LOOK_FIELDS = CHAR_TAG_FIELDS.filter(
+  (field) =>
+    field === 'hair' || field === 'eyes' || field === 'body' || field === 'extra' || field === 'skin',
+);
 
 function entryLookText(entry: CharTagEntry): string {
-  return LOOK_FIELDS.map(field => entry.fields[field] ?? '')
+  return LOOK_FIELDS.map((field) => entry.fields[field] ?? '')
     .concat(entry.raw)
     .filter(Boolean)
     .join(', ');
@@ -391,7 +605,7 @@ export function findCharReuse(entries: readonly CharTagEntry[], text: string): C
     if (!look.dimensions.includes('hairColor') && !look.dimensions.includes('eyeColor')) continue;
     found.push({
       name: entry.name,
-      dimensions: look.dimensions.map(dimension => LOOK_DIMENSION_LABEL[dimension]).join('、'),
+      dimensions: look.dimensions.map((dimension) => LOOK_DIMENSION_LABEL[dimension]).join('、'),
       matched: look.matched,
     });
   }
@@ -414,19 +628,16 @@ export function buildCharReuseBlock(
 
   if (aliases.length) {
     const aliasLines = aliases.map(
-      item =>
+      (item) =>
         `- 正文中的「${item.aliases.join('」「')}」即已建档角色「${item.name}」本人：不是新角色，更不是【一次性】角色！在思考块、角色块名称与 tag/nl 中必须一律写成档案原名「${item.name}」（严禁写「${item.aliases[0]}」），并逐字照抄「${item.name}」的固定外貌与【服装现状】。`,
     );
     sections.push(
-      [
-        '【本段正文同人异称归并】[同一角色不同称呼，严禁换脸或当成别人]',
-        ...aliasLines,
-      ].join('\n'),
+      ['【本段正文同人异称归并】[同一角色不同称呼，严禁换脸或当成别人]', ...aliasLines].join('\n'),
     );
   }
 
   if (reuse.length) {
-    const lines = reuse.map(item => `- ${item.name}（发色/瞳色等逐项对上：${item.dimensions}）`);
+    const lines = reuse.map((item) => `- ${item.name}（发色/瞳色等逐项对上：${item.dimensions}）`);
     sections.push(
       [
         '【本段正文已对上的建档角色】[不要重新编脸]',
