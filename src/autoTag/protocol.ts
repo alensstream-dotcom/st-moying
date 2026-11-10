@@ -359,24 +359,8 @@ function parseChanges(
  * swallowed by a code fence. Coordinates are UTF-16 offsets in the original text. */
 function safeImageOffset(source: string, offset: number): number {
   let at = offset;
-  // Keep the selected scene time for state replay, but display the image after
-  // its full story paragraph (blank-line boundary), never between its earlier/later sentences.
-  const storyLines = sourceLines(source);
-  let paragraphIndex = storyLines.findIndex(
-    (line) => offset >= line.start && offset <= line.start + line.text.length,
-  );
-  if (paragraphIndex >= 0) {
-    while (
-      paragraphIndex + 1 < storyLines.length &&
-      storyLines[paragraphIndex + 1].text.trim() &&
-      !/^\s*(?:<\/?(?:content|details|summary|table|pre|bbs_|options|analysis)|#{1,6}\s|[-*+]\s|\d+[.)]\s)/i.test(
-        storyLines[paragraphIndex + 1].text,
-      )
-    )
-      paragraphIndex++;
-    const paragraph = storyLines[paragraphIndex];
-    at = paragraph.start + paragraph.text.length;
-  }
+  // The selected scene offset is authoritative. Never promote it to a line,
+  // paragraph or message end: a single line can contain many distinct scenes.
   // Fences can contain arbitrary HTML-like text, so also handle their source span.
   const lines = sourceLines(source);
   const fenceRanges: Array<{ start: number; end: number }> = [];

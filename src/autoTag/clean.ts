@@ -12,8 +12,8 @@ const STORY_META_TAG_NAMES = ['cot', 'options', 'tucao', 'analysis', 'konatan_pl
 const RE_CONTENT = /<content\b[^>]*>([\s\S]*?)<\/content\s*>/gi;
 
 function storyMetaRegexes(): RegExp[] {
-  return STORY_META_TAG_NAMES.map(tag =>
-    new RegExp('<' + tag + '(?=[\\s/>~])[^>]*>[\\s\\S]*?<\\/' + tag + '(?=[\\s/>~])[^>]*>', 'gi'),
+  return STORY_META_TAG_NAMES.map(
+    (tag) => new RegExp('<' + tag + '(?=[\\s/>~])[^>]*>[\\s\\S]*?<\\/' + tag + '(?=[\\s/>~])[^>]*>', 'gi'),
   );
 }
 
@@ -26,7 +26,7 @@ function stripStoryMetaBlocks(text: string): string {
 function unwrapStoryContent(text: string): string {
   const blocks = [...text.matchAll(RE_CONTENT)];
   return blocks.length
-    ? blocks.map(block => block[1]).join('\n\n')
+    ? blocks.map((block) => block[1]).join('\n\n')
     : text.replace(/<\/?content\b[^>]*>/gi, '');
 }
 
@@ -87,9 +87,7 @@ function clampToStoryBody(
   preserveImageTags: boolean,
   noiseReplacement = '',
 ): string {
-  const customTags = preserveImageTags
-    ? tags.filter(tag => tag.toLowerCase() !== 'bbi_image')
-    : tags;
+  const customTags = preserveImageTags ? tags.filter((tag) => tag.toLowerCase() !== 'bbi_image') : tags;
   let s = String(mes ?? '')
     .replace(RE_THINK_BLOCK, noiseReplacement)
     .replace(/<!--[\s\S]+?-->/g, noiseReplacement)
@@ -157,13 +155,13 @@ function rangesForRegex(source: string, pattern: RegExp): RemovalRange[] {
   const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
   const regex = new RegExp(pattern.source, flags);
   return [...source.matchAll(regex)]
-    .filter(match => match.index !== undefined && match[0].length > 0)
-    .map(match => ({ start: match.index ?? 0, end: (match.index ?? 0) + match[0].length }));
+    .filter((match) => match.index !== undefined && match[0].length > 0)
+    .map((match) => ({ start: match.index ?? 0, end: (match.index ?? 0) + match[0].length }));
 }
 
 function mergeRanges(ranges: RemovalRange[]): RemovalRange[] {
   const sorted = ranges
-    .filter(range => range.end > range.start)
+    .filter((range) => range.end > range.start)
     .sort((a, b) => a.start - b.start || a.end - b.end);
   const merged: RemovalRange[] = [];
   for (const range of sorted) {
@@ -210,7 +208,10 @@ function retainedLineText(source: string, line: SourceLineRange, ranges: Removal
     if (cursor >= line.end) break;
   }
   if (cursor < line.end) pieces.push(source.slice(cursor, line.end));
-  return pieces.join(' ').replace(/[ \t]+/g, ' ').trim();
+  return pieces
+    .join(' ')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
 }
 
 /** 句末标点:在这里断开,让一张图能钉在「那句话」之后而不是整段之后。 */
@@ -221,8 +222,6 @@ const WEAK_STOPS = new Set(['，', ',', '、', '：', ':']);
 const MIN_SEGMENT_CHARS = 4;
 /** 长于此长度的片段遇到弱断点也断开:模型一次要看的位置不宜过长。 */
 const MAX_SEGMENT_CHARS = 110;
-/** 单行最多切几段:再长就合并,避免长段正文产生几十个位置 ID 把 prompt 顶爆。 */
-const MAX_SEGMENTS_PER_LINE = 8;
 
 /**
  * 把一行切成若干「句子级」段,并带上每段在原行内的结束偏移。
@@ -266,7 +265,6 @@ function retainedLineSegments(
     const char = source[line.start + i];
     buffer += char;
     bufferEnd = i + 1;
-    if (out.length >= MAX_SEGMENTS_PER_LINE) continue;
     const trimmedLength = buffer.replace(/\s+/g, ' ').trim().length;
     if (SENTENCE_STOPS.has(char) && trimmedLength >= MIN_SEGMENT_CHARS) flush();
     else if (WEAK_STOPS.has(char) && trimmedLength >= MAX_SEGMENT_CHARS) flush();
@@ -312,9 +310,8 @@ function targetRemovalRanges(source: string, tags: string[]): RemovalRange[] {
 
   const bodyStart = Math.max(0, lastStart);
   const endMatch = masked.slice(bodyStart).match(/<\/bbs_end>/i);
-  const bodyEnd = endMatch?.index === undefined
-    ? source.length
-    : bodyStart + endMatch.index + endMatch[0].length;
+  const bodyEnd =
+    endMatch?.index === undefined ? source.length : bodyStart + endMatch.index + endMatch[0].length;
   if (bodyEnd < source.length) crop.push({ start: bodyEnd, end: source.length });
 
   // Match BaiBai Book's order: crop to the story time range before removing time tags.
@@ -323,10 +320,12 @@ function targetRemovalRanges(source: string, tags: string[]): RemovalRange[] {
   const body = masked.slice(bodyStart, bodyEnd);
   for (const tag of ['bbs_start', 'bbs_end']) {
     for (const regex of blockStripRegexes(tag)) {
-      timeTags.push(...rangesForRegex(body, regex).map(range => ({
-        start: bodyStart + range.start,
-        end: bodyStart + range.end,
-      })));
+      timeTags.push(
+        ...rangesForRegex(body, regex).map((range) => ({
+          start: bodyStart + range.start,
+          end: bodyStart + range.end,
+        })),
+      );
     }
   }
   return mergeRanges([...noise, ...crop, ...timeTags]);
@@ -340,22 +339,24 @@ export function prepareTargetText(mes: string, tags: string[]): PreparedTargetTe
   const source = String(mes ?? '');
   const ranges = targetRemovalRanges(source, tags);
   const segments = sourceLineRanges(source)
-    .flatMap(line =>
-      retainedLineSegments(source, line, ranges).map(piece => ({
+    .flatMap((line) =>
+      retainedLineSegments(source, line, ranges).map((piece) => ({
         sourceLine: line.index,
         charOffset: piece.end,
         text: piece.text,
       })),
     )
-    .filter(segment => !!segment.text)
+    .filter((segment) => !!segment.text)
     .map((segment, index) => ({ id: `P${index + 1}`, ...segment }));
   return {
-    promptText: segments.map(segment => `${segment.text} ⟦${segment.id}⟧`).join('\n\n'),
+    promptText: segments.map((segment) => `${segment.text} ⟦${segment.id}⟧`).join('\n\n'),
     segments,
   };
 }
 
 /** 不带位置标记的目标清洗结果，供调试/测试查看。 */
 export function cleanTargetText(mes: string, tags: string[]): string {
-  return prepareTargetText(mes, tags).segments.map(segment => segment.text).join('\n\n');
+  return prepareTargetText(mes, tags)
+    .segments.map((segment) => segment.text)
+    .join('\n\n');
 }
