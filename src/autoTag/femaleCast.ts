@@ -153,10 +153,6 @@ export function ensureFemaleSubjects(
       const candidates = names.map((name) => ({ name }));
       pick = closestMention(candidates, story, at)[0]?.name ?? '';
     }
-    if (!pick && names.length === 0) {
-      // 整楼都还没有任何女性档案：交给上层决定（通常整楼会因此被判无图）。
-      pick = '';
-    }
     const entry = entries.find((item) => item.name.trim() === pick);
     if (!pick) {
       dropped.push(`${image.position}（这一段没有女性角色在场）`);
