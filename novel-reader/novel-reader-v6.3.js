@@ -1,10 +1,10 @@
-// 酒馆小说导入与配图阅读器 v6.3
+// 酒馆小说导入与配图阅读器 v6.3.1(多楼层中断修复版)
 // 自定义分节、范围批选、顺序生图、待处理恢复与分节版本保护。
 // 手机系统完全挂起 WebView 时无法保证继续运行，返回后可恢复待处理任务。
 (function () {
     'use strict';
 
-    const VERSION = '6.3';
+    const VERSION = '6.3.1';
     const DB_NAME = 'TavernNovelReaderDB_v2';
     const STORE_BOOKS = 'books_store';
     const STORE_META = 'meta_store';
@@ -154,9 +154,16 @@
         if (isDead()) return true;
         if (!queueContext) return false;
         const ctx = getSTContext();
+        if (!ctx) return true;
         let id = null;
         try { id = ctx?.getCurrentChatId?.(); } catch (e) { }
-        return !ctx || ctx.chat !== queueContext.chat || id !== queueContext.chatId || currentBook?.id !== queueContext.bookId;
+        // 只比「聊天 id / 当前书 id」,不比 ctx.chat 的数组身份:
+        // 酒馆在保存、重载、虚拟列表重排后会换掉 chat 数组对象(或短暂返回空 id),
+        // 旧写法会把它当成「聊天已切换」,在后台静默中止整条队列——表现就是只出第一张图,后面全停在待处理。
+        // 楼层每轮都用 findFloorByChunk 实时重查,插件写回前也自己校验 chatId/swipe,不会写错楼。
+        if (queueContext.chatId && id && id !== queueContext.chatId) return true;
+        if (currentBook && currentBook.id !== queueContext.bookId) return true;
+        return false;
     }
     function updateQueueStatus(text) {
         queueStatus = text;
@@ -4139,15 +4146,22 @@
             catch(e){notify('error','队列中断：'+(e?.message||e));}
             finally {
                 checkpoint();
-                if(!queueContextChanged()) {
+                const aborted = queueContextChanged();
+                if(!aborted) {
                     remaining.forEach(i=>selectedChunkSet.add(i));
                     refreshPipelineView();
                     refreshHudMap();
                 }
                 queueRunning=false;queueStarting=false;queuePromise=null;
                 stopBgKeepAlive();pipelineMode=false;queueContext=null;queueProgress='';
-                updateQueueStatus('本轮完成 '+done+'/'+targets.length+' · 待处理 '+remaining.size+' 节'+(noImages?' · '+noImages+' 节无需配图':''));
-                recordPipeline('queue-finished',{completed:done,remaining:remaining.size});
+                if (aborted && remaining.size) {
+                    const why = isDead() ? '脚本已重载' : '聊天或小说已切换';
+                    recordPipeline('queue-aborted',{reason:why,completed:done,remaining:remaining.size});
+                    updateQueueStatus('队列中止（'+why+'）：本轮完成 '+done+'/'+targets.length+' · 待处理 '+remaining.size+' 节（点「恢复待处理」继续）');
+                } else {
+                    updateQueueStatus('本轮完成 '+done+'/'+targets.length+' · 待处理 '+remaining.size+' 节'+(noImages?' · '+noImages+' 节无需配图':''));
+                }
+                recordPipeline('queue-finished',{completed:done,remaining:remaining.size,aborted});
                 notify(remaining.size?'info':'success',queueStatus);
                 if(panelEl && panelTab==='toc')renderPanel();
             }
