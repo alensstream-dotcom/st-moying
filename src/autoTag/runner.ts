@@ -41,10 +41,12 @@ import { applyPositionedCharRefs, resolveCharAnchors, type PositionedCharOp } fr
 import {
   diagnoseCast,
   diagnoseContact,
+  diagnoseFemaleSubject,
   diagnosePropTarget,
   castRetryNote,
   type CastGap,
 } from '@/autoTag/castCheck';
+import { ensureFemaleSubjects, femaleCastNames } from '@/autoTag/femaleCast';
 import { prepareTargetText } from '@/autoTag/clean';
 import {
   buildCharReuseBlock,
@@ -875,6 +877,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             const segmentText = new Map(preparedTarget.segments.map((item) => [item.id, item.text]));
             const castGaps: CastGap[] = [];
             const seenCast = new Set<string>();
+            // 女性名单用于判定「画面里到底有没有女的」：库性别优先，正文指代兜底。
+            const femaleNames = femaleCastNames(
+              entriesBefore,
+              knownIdentities,
+              source,
+              candidate.images.flatMap((image) => (image.characters ?? []).map((c) => c.name)),
+            );
             for (const image of candidate.images) {
               const text = segmentText.get(image.position) ?? '';
               const aliasPresent = findCharAliases(entriesBefore, text).map((hit) => hit.name);
@@ -889,6 +898,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 ...diagnoseCast(text, image.tag, image.characters ?? [], present, profile.naiCharPrompts),
                 ...diagnosePropTarget(text, image.tag, charTagList),
                 ...diagnoseContact(text, image.tag, charTagList),
+                ...diagnoseFemaleSubject(text, image, femaleNames),
               ];
               for (const gap of found) {
                 const key = `${image.position}\u0000${gap.detail}`;
@@ -1076,6 +1086,23 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const previousDelta = readCharTagFloorDelta(message);
 
     plan.images.sort((a, b) => a.sourceLine - b.sourceLine || a.charOffset - b.charOffset);
+    if (!slot) {
+      // 女性主体兜底:模型偶尔会交只有男主/纯背景的图。这一段里能点名到女性就补进
+      // characters;实在没有女性的图直接丢掉——没有女主的插图对用户没有价值。
+      const guard = ensureFemaleSubjects(
+        plan.images,
+        preparedTarget.segments,
+        safeEntries,
+        planIdentities,
+        source,
+      );
+      if (guard.attached.length) diagnostic('female-cast:attached', { floor, notes: guard.attached });
+      if (guard.dropped.length) {
+        plan.images = guard.images;
+        console.warn('[墨影] 跳过没有女性主体的图片:', guard.dropped.join('；'));
+        toastr.warning(`已跳过 ${guard.dropped.length} 张没有女性角色的图`, '墨影');
+      }
+    }
     const activeEntries = applyCharTagOps(safeEntries, floorOps, floor, lockedNames);
     const costumeNotes: string[] = [];
     const costume =

@@ -59,7 +59,12 @@ export function countPresentNames(text: string, names: Iterable<string>): number
 }
 
 export interface CastGap {
-  kind: 'missing-actor' | 'wrong-count' | 'prop-without-target' | 'contact-unbound';
+  kind:
+    | 'missing-actor'
+    | 'wrong-count'
+    | 'prop-without-target'
+    | 'contact-unbound'
+    | 'missing-female';
   detail: string;
 }
 
@@ -252,12 +257,56 @@ export function diagnoseContact(text: string, tag: string, charTags: string[] = 
   ];
 }
 
+/**
+ * 画面里没有女性主体。
+ *
+ * 生成模型在「这一段主要在写男人/环境」时会交只有男主或纯背景的图。
+ * 这类图对用户没有价值：既没有代入感，也谈不上剧情插图。这里只做确定性判定：
+ * 图里既没有被认定为女性的命名角色、base tag 里也没有 girl 人数，就算缺女性主体。
+ * 正文这一段是否真有女性，决定重试话术是「把在场的补进画面」还是「换一段/少出一张」。
+ */
+export function diagnoseFemaleSubject(
+  text: string,
+  image: { tag: string; characters?: { name: string }[] },
+  femaleNames: readonly string[],
+): CastGap[] {
+  const girls = readCounts(image.tag ?? '').girls;
+  const hasFemaleChar = (image.characters ?? []).some(
+    character => !!character.name && femaleNames.includes(character.name),
+  );
+  if (girls > 0 || hasFemaleChar) return [];
+  const named = [...new Set(femaleNames.filter(name => name && (text ?? '').includes(name)))];
+  if (named.length) {
+    return [
+      {
+        kind: 'missing-female',
+        detail: `正文这一段里有女性角色（${named.join('、')}），画面里却没有她`,
+      },
+    ];
+  }
+  if (/她|少女|女人|女子|女孩|姑娘|女修|女士|小姐/.test(text ?? '')) {
+    return [
+      {
+        kind: 'missing-female',
+        detail: '正文这一段用的是女性指代（她），画面里却没有女性角色',
+      },
+    ];
+  }
+  return [
+    {
+      kind: 'missing-female',
+      detail: '正文这一段没有女性角色在场，不能为它出只有男性或纯背景的图',
+    },
+  ];
+}
+
 /** 重试话术。 */
 export function castRetryNote(gaps: CastGap[]): string {
   const lines = gaps.map(gap => `- ${gap.detail}`);
   const hasContact = gaps.some(gap => gap.kind === 'contact-unbound');
+  const hasFemale = gaps.some(gap => gap.kind === 'missing-female');
   return `<cast_retry>
-上一版的画面事实对不上正文,主要是人数、道具落点与接触绑定:
+上一版的画面事实对不上正文,主要是人数、道具落点、接触绑定与女性主体:
 ${lines.join('\n')}
 改法:
 - 人数:正文里有几个在场者就写几个,人数 tag 写成 2girls/1boy+2girls 这样,并给每个可见个体一个角色块;两个人只剩一个人时,画面就会退化成自慰。
@@ -265,6 +314,12 @@ ${lines.join('\n')}
     hasContact
       ? `
 - 接触:并排列出「手/道具」和「身体部位」不会让它们碰上,必须用一个绑定词把两者钉在一起(hand on cheek、brush on pussy、fingers inside her、hand pressing her back),并在 NAI V4.5/V5 角色块中用成对的 source#<动作> 与 target#<动作> 锁定施受方向;英文介词 on / against / into / around 或现在分词 pressing / holding / resting / writing 都算绑定。实在绑不住就改取景:close-up + hand focus,让画面里只留下这一段接触。`
+      : ''
+  }${
+    hasFemale
+      ? `
+- 女性主体:**每一格画面里至少要有一名女性角色**,她必须占据视觉重心;图片的 tag 里要有人数(1girl 或 2girls),并给她一个 characters 角色块。
+- 正文这一段明明有女性在场,就把她写进画面;这一段确实没有女性角色时,不要为它出图——换到本楼有女性在场的段落,或者直接少出一张。**任何情况下都不要交只有男主或纯背景的图**,那种图等于没画。`
       : ''
   }
 - 只改这些问题对应的部分,不过改动的地方保持原样。
