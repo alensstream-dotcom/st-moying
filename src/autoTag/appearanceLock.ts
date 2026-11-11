@@ -28,7 +28,7 @@ export function isAppearanceDescription(token: string): boolean {
     (TRAIT.test(token) || FANDOM.test(token.replace(/^[-+\d.]+::/, '')))
   );
 }
-export function appearanceParts(entry: CharTagEntry): string[] {
+function appearanceParts(entry: CharTagEntry): string[] {
   // A manual fandom swap must not mix the previous character's physical traits into the new face.
   const p = appearancePolicy(entry.name);
   const fields = isManualFandom(entry)

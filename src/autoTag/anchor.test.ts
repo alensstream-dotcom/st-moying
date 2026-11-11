@@ -45,7 +45,6 @@ describe('anchor resolution for images[].after', () => {
   it('falls back to the model position when the quote is not in the text', () => {
     const parsed = plan({ position: 'P2', after: '她回忆起了那段并不存在的往事。' });
     expect(parsed.images[0].position).toBe('P2');
-    expect(parsed.images[0].scene?.quote).toBe('她回忆起了那段并不存在的往事。');
   });
 
   it('still rejects a plan whose position is absent from the target', () => {

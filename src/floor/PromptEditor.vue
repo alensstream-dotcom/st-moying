@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-import { composeCamera, type ScenePlan } from '@/autoTag/scene';
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import type { Orientation } from '@/backends/size';
 import BbiTextarea from '@/components/BbiTextarea.vue';
@@ -26,8 +25,6 @@ import { containsTagMarkup, type ImageTagContent } from '@/st/imageTagRegex';
 const props = defineProps<{
   /** 打开时的原始内容(解析结果);草稿以此为基准比对「有没有真的改」。 */
   content: ImageTagContent;
-  continuity?: string[];
-  repairing?: boolean;
   /** 当前提示词下已有几张图(>1 时提示改提示词会收成一张)。 */
   historyCount: number;
   /** 后端是否已配置好(未配置时「应用并重新生成」不可点)。 */
@@ -35,7 +32,7 @@ const props = defineProps<{
   /** 忙碌中(写回正在进行):禁用底部按钮,避免连点写两次。 */
   busy?: boolean;
   /**
-   * 优化本图动作（LLM＋生图）在途(运行态在 floor/tagPlanState.ts,**不属于本弹窗**)。
+   * AI 重写提示词在途(运行态在 floor/tagPlanState.ts,**不属于本弹窗**)。
    * 关窗不中断重写,重开的弹窗照样看到它亮着 —— 故由调用方按 store 传进来。
    */
   rewriting?: boolean;
@@ -56,8 +53,6 @@ const emit = defineEmits<{
   (e: 'apply', value: ImageTagContent, regenerate: boolean): void;
   /** 请求 AI 重写这一张的提示词(落盘与出图由调用方做,本组件只负责把结果读回草稿)。 */
   (e: 'rewrite'): void;
-  (e: 'repair'): void;
-  (e: 'cancel-repair'): void;
   /** 取消在途的 AI 重写。 */
   (e: 'cancel-rewrite'): void;
   /** 草稿是否已改动(调用方据此决定关窗前要不要问「放弃修改?」)。 */
@@ -72,7 +67,6 @@ const emit = defineEmits<{
  */
 const open = ref(false);
 
-const scene = ref<ScenePlan | undefined>(props.content.scene ? structuredClone(props.content.scene) : undefined);
 const tag = ref(props.content.tag);
 const nl = ref(props.content.nl);
 const negative = ref(props.content.negative);
@@ -98,15 +92,11 @@ function oneLine(text: string): string {
 
 /** 草稿归一后的结果 —— 保存与「有没有改」都以它为准,两处不能各算一次。 */
 const draft = computed<ImageTagContent>(() => ({
-  scene: scene.value,
-  tag: composeCamera(oneLine(tag.value), scene.value),
+  tag: oneLine(tag.value),
   nl: oneLine(nl.value),
   negative: oneLine(negative.value),
   characters: characters.value
     .map(character => ({
-      ...character,
-      // Hand-edited prompts use legacy reconciliation, not a stale action draft.
-      actionTag: undefined, actionNl: undefined,
       name: oneLine(character.name),
       tag: oneLine(character.tag),
       nl: oneLine(character.nl),
@@ -133,7 +123,6 @@ function sameCharacters(a: ImageCharacterPrompt[], b: ImageCharacterPrompt[]): b
 const dirty = computed(() => {
   const next = draft.value;
   return (
-    JSON.stringify(next.scene) !== JSON.stringify(props.content.scene) ||
     next.tag !== props.content.tag ||
     next.nl !== props.content.nl ||
     next.negative !== props.content.negative ||
@@ -162,7 +151,7 @@ const error = computed(() => {
   return '';
 });
 
-const canApply = computed(() => !error.value && !props.busy && !props.rewriting && !props.repairing);
+const canApply = computed(() => !error.value && !props.busy && !props.rewriting);
 
 /**
  * AI 重写落盘后,把新提示词读回输入框。
@@ -175,7 +164,6 @@ const canApply = computed(() => !error.value && !props.busy && !props.rewriting 
 watch(
   () => props.content,
   next => {
-    scene.value = next.scene ? structuredClone(next.scene) : undefined;
     tag.value = next.tag;
     nl.value = next.nl;
     negative.value = next.negative;
@@ -251,33 +239,12 @@ onBeforeUnmount(() => {
       aria-label="编辑提示词"
     >
       <header class="bbi-modal-head">
-        <span class="bbi-modal-title">分镜与提示词</span>
+        <span class="bbi-modal-title">编辑提示词</span>
         <button class="bbi-icon-mini" type="button" title="关闭" @click="requestClose">
           <Icon name="close" />
         </button>
       </header>
 
-      <section v-if="scene" class="scene-editor">
-        <p class="scene-summary">{{ scene.summary || '当前剧情画面' }}</p>
-        <blockquote v-if="scene.quote">{{ scene.quote }}</blockquote>
-        <p v-if="scene.reason">入选原因：{{ scene.reason }}</p>
-        <p v-if="scene.mustShow">必须看清：{{ scene.mustShow }}</p>
-        <div class="scene-controls">
-          <label>景别<select v-model="scene.distance" class="bbi-input"><option value="">沿用提示词</option><option value="close">特写</option><option value="upper">上半身</option><option value="medium">七分身</option><option value="full">全身</option><option value="wide">远景</option></select></label>
-          <label>机位<select v-model="scene.angle" class="bbi-input"><option value="">沿用提示词</option><option value="front">正面</option><option value="side">侧面</option><option value="behind">背面</option><option value="above">俯视</option><option value="below">仰视</option><option value="shoulder">越肩</option><option value="pov">第一人称</option></select></label>
-        </div>
-        <p class="bbi-editor-note">调整镜头不会重选剧情或更换人物衣着；保存不调用 LLM，生成按当前渠道计费。</p>
-        <p v-for="note in scene.warnings" :key="note" class="bbi-editor-note">{{ note }}</p>
-      </section>
-      <details v-if="continuity?.length" class="scene-editor">
-        <summary>本图人物与衣物状态</summary>
-        <p v-for="line in continuity" :key="line">{{ line }}</p>
-      </details>
-      <div class="bbi-rewrite-row">
-        <button v-if="!repairing" class="bbi-btn bbi-btn-sm" :disabled="busy || rewriting || dirty" @click="emit('repair')">核对本图衣着（LLM）</button>
-        <button v-else class="bbi-btn bbi-btn-sm" @click="emit('cancel-repair')">取消衣着核对</button>
-        <span class="bbi-editor-note">仅修正本图，不自动重新生图。{{ dirty ? '请先保存草稿。' : '' }}</span>
-      </div>
       <!-- AI 重写:手改与 AI 改是同一件事的两种手段,故聚在同一个弹窗里。
            跑完直接落盘并出图(见 promptEditor.ts),结果回填到下面的输入框。 -->
       <div class="bbi-rewrite-row">
@@ -293,7 +260,7 @@ onBeforeUnmount(() => {
           "
           @click="rewrite"
         >
-          <Icon name="sparkles" /> 优化本图动作（LLM＋生图）
+          <Icon name="sparkles" /> AI 重写提示词
         </button>
         <template v-else>
           <span class="bbi-rewrite-busy">
@@ -312,7 +279,7 @@ onBeforeUnmount(() => {
       <!-- 已落盘却没关窗:下面的输入框与「用户自己打了一半」长得一样,不说清哪份已生效,
            用户会以为还得再点一次「应用」(或反过来以为草稿也存了)。 -->
       <p v-else-if="rewritten" class="bbi-editor-note">
-        修改已保存，下面显示当前提示词。还想再调整就直接改，改完点「应用」。
+        AI 重写完成，新提示词已保存并开始出图，下面填的就是它。还想再调整就直接改，改完点「应用」。
       </p>
 
       <div class="bbi-modal-field">
@@ -569,14 +536,4 @@ onBeforeUnmount(() => {
     flex: 1 1 100%;
   }
 }
-</style>
-
-<style scoped>
-.scene-editor { margin: 12px 0; padding: 14px; border-left: 3px solid var(--bbi-accent, #6e8bb2); background: var(--bbi-bg-secondary, rgba(128,128,128,.07)); line-height: 1.65; }
-.scene-editor p { margin: 6px 0; overflow-wrap: anywhere; }
-.scene-summary { font-weight: 650; }
-.scene-editor blockquote { margin: 8px 0; padding: 8px 12px; border-left: 2px solid currentColor; opacity: .8; max-height: 9em; overflow: auto; }
-.scene-controls { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
-.scene-controls label { display: grid; gap: 4px; }
-.scene-editor summary { cursor: pointer; }
 </style>

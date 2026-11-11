@@ -1,4 +1,3 @@
-import { characterKey, registerCharacterName } from './characterKey';
 import { appearancePolicy, blocksAppearanceChange, applyAppearancePolicies } from './appearancePolicy';
 import { getContext, type STMessage } from '@/st/context';
 import { reactive } from 'vue';
@@ -104,9 +103,10 @@ export const CHAR_AGE_BANDS: readonly CharAgeBand[] = [
 ];
 
 /** 反查:一个年龄段词对应的骨架伴生词(不在词表里返回空串)。 */
-export function charAgeBuild(_tag: string): string {
-  // Age does not imply a body shape. Existing user fields are preserved.
-  return '';
+export function charAgeBuild(tag: string): string {
+  const needle = tag.trim().toLowerCase();
+  if (!needle) return '';
+  return CHAR_AGE_BANDS.find((band) => needle.includes(band.tag))?.build ?? '';
 }
 
 const AGE_NOISE = /[，,、;；/]+/g;
@@ -149,7 +149,6 @@ export interface CharTagChangeRecord {
 }
 
 export interface CharTagEntry {
-  id?: string;
   fieldEvidence?: Partial<Record<CharTagField, string>>;
   name: string;
   fields: Record<CharTagField, string>;
@@ -330,7 +329,6 @@ function normalizeEntry(raw: unknown): CharTagEntry | null {
   const rawTag = typeof value.raw === 'string' ? value.raw.trim() : legacyTags;
   if (!rawTag && charFieldsEmpty(fields)) return null;
   return {
-    id: value.id || characterKey(name),
     name,
     fields,
     fieldEvidence: normalizeFields(value.fieldEvidence),
@@ -469,7 +467,6 @@ export function applyCharTagOps(
     if (op.kind === 'new') {
       if (out.some((entry) => entry.name === op.name)) continue;
       const entry: CharTagEntry = {
-        id: characterKey(op.name),
         name: op.name,
         fields: { ...op.fields },
         fieldEvidence: { ...op.fieldEvidence },
@@ -631,10 +628,7 @@ export function upsertCharTag(entry: CharTagEntry, oldName?: string, opts: Upser
   const name = entry.name.trim();
   if (!name || !buildEntryTag(entry)) return false;
   const previous = findCharTag(oldName ?? name);
-  if (oldName && oldName !== name && findCharTag(name)) return false;
   const next: CharTagEntry = {
-    id: previous?.id || entry.id || characterKey(oldName || name),
-    fieldEvidence: { ...entry.fieldEvidence },
     name,
     fields: normalizeFields(entry.fields),
     raw: entry.raw.trim(),
@@ -674,7 +668,6 @@ export function upsertCharTag(entry: CharTagEntry, oldName?: string, opts: Upser
     }
   }
 
-  registerCharacterName(name, oldName || name, next.id!);
   detachFromExistingFloors(oldName, name);
   if (oldName && oldName !== name) {
     const oldIndex = baseEntries.findIndex((candidate) => candidate.name === oldName);

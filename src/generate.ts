@@ -1,6 +1,3 @@
-import { registeredName } from '@/state/characterKey';
-import { compileScene } from '@/autoTag/compileScene';
-import { findClothingFrame } from '@/autoTag/outfitTimeline';
 import { applyWardrobeChoices, wardrobeChoiceRevision, suitNote } from '@/state/wardrobeChoice';
 import { renderAppearanceOverrides } from '@/state/appearancePolicy';
 import { lookSettings, fingerprint } from '@/state/characterStudio';
@@ -267,47 +264,165 @@ export async function generateImage(
 
   const isNai = status.backend === 'nai';
   const renderOverrides = renderAppearanceOverrides(charTagLib.entries);
-  input = { ...input, characters: input.characters?.map(c => ({ ...c, name: registeredName(c.name) })) };
   const manualFandoms = [
     ...new Map(
       [...charTagLib.entries.filter(isManualFandom), ...renderOverrides].map((e) => [e.name, e]),
     ).values(),
   ].filter((e) => input.characters?.some((c) => c.name === e.name));
   let appearanceNotes: string[] = [];
-  let costumeContext: CostumeContext | undefined;
-  const chat = getContext()?.chat ?? [];
-  const floor = input.storyFrame?.floor;
-  const saved = floor === undefined ? null : readClothingFloor(chat[floor], clothingRevision(chat, floor));
-  const frame = input.storyFrame ? findClothingFrame(saved, input.storyFrame.tag) : undefined;
-  if (frame || manualFandoms.length) {
-    const state = new Map((frame?.entries ?? []).map(e => [e.name, e]));
-    if (floor !== undefined) applyWardrobeChoices(state, chat[floor], saved?.manualChoiceRevision);
-    const profiles = (frame?.appearance ?? []).map(e => ({ ...e, fields: { ...e.fields } }));
-    for (const override of manualFandoms) {
-      const i = profiles.findIndex(e => e.name === override.name);
-      if (i < 0) profiles.push(override);
-      else profiles[i] = { ...profiles[i], fields: { ...profiles[i].fields, ...Object.fromEntries(Object.entries(override.fields).filter(([,v]) => v)) } };
-      // fandom is a full replacement (including deliberately blank old fields).
-      if (override.fields.fandom) profiles[profiles.findIndex(e => e.name === override.name)] = override;
+  if (input.storyFrame && input.characters?.length) {
+    const chat = getContext()?.chat ?? [];
+    const saved = readClothingFloor(
+      chat[input.storyFrame.floor],
+      clothingRevision(chat, input.storyFrame.floor),
+    );
+    const frame = saved?.frames.find((f) => f.tag === input.storyFrame!.tag);
+    if (frame?.appearance?.length) {
+      const image = {
+        position: '',
+        sourceLine: frame.sourceLine,
+        charOffset: frame.charOffset,
+        tag: input.prompt,
+        nl: input.nl || '',
+        negative: input.negative || '',
+        size: input.size || ('portrait' as const),
+        characters: input.characters.map((c) => ({ ...c })),
+      };
+      appearanceNotes.push(
+        ...enforceAppearance(
+          image,
+          frame.appearance,
+          !!input.nl || image.characters.some((c) => !!c.nl),
+          status.supportsCharacters,
+        ),
+      );
+      input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
     }
+  }
+
+  if (manualFandoms.length && input.characters?.length) {
     const image = {
-      scene: frame?.scene, position: '', sourceLine: frame?.sourceLine ?? 0, charOffset: frame?.charOffset ?? 0,
-      tag: input.prompt, nl: input.nl || '', negative: input.negative || '',
-      size: input.size || ('portrait' as const), characters: (input.characters ?? []).map(c => ({ ...c })),
+      position: '',
+      sourceLine: 0,
+      charOffset: 0,
+      tag: input.prompt,
+      nl: input.nl ?? '',
+      negative: input.negative ?? '',
+      size: input.size ?? ('portrait' as const),
+      characters: input.characters.map((c) => ({ ...c })),
     };
-    costumeContext = frame?.costume;
-    if (costumeContext) appearanceNotes.push(...removeUnbackedCostume(image, state, costumeContext));
-    appearanceNotes.push(...compileScene(image, profiles, state, !!input.nl || image.characters.some(c => !!c.nl), status.supportsCharacters));
-    appearanceNotes.push(...[...state.values()].filter(e => e.suitMode).map(suitNote));
-    input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
-  } else if (input.storyFrame) {
-    appearanceNotes.push('本图缺少有效时点快照：保留已保存提示词，不套用后续楼层衣着；可修正本图状态。');
+    appearanceNotes.push(
+      ...enforceAppearance(
+        image,
+        manualFandoms,
+        !!input.nl || image.characters.some((c) => !!c.nl),
+        status.supportsCharacters,
+      ),
+    );
+    appearanceNotes.push(
+      ...manualFandoms.map(
+        (e) =>
+          `用户外貌覆盖：${e.name} → ${e.fields.fandom || Object.values(e.fields).filter(Boolean).join(', ')}`,
+      ),
+    );
+    input = {
+      ...input,
+      prompt: image.tag,
+      nl: image.nl,
+      characters: image.characters,
+    };
   }
   const identityFacts = currentIdentityFacts();
-  if (input.characters?.some(c => isMaleIdentity(c.name, identityFacts))) {
-    const image = { position: '', sourceLine: 0, charOffset: 0, tag: input.prompt, nl: input.nl || '', negative: input.negative || '', size: input.size || ('portrait' as const), characters: input.characters.map(c => ({ ...c })) };
-    appearanceNotes.push(...enforceKnownMaleIdentity(image, allCharacterRecords(), identityFacts, status.supportsCharacters));
-    input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
+  if (input.characters?.some((c) => isMaleIdentity(c.name, identityFacts))) {
+    const image = {
+      position: '',
+      sourceLine: 0,
+      charOffset: 0,
+      tag: input.prompt,
+      nl: input.nl ?? '',
+      negative: input.negative ?? '',
+      size: input.size ?? ('portrait' as const),
+      characters: input.characters.map((c) => ({ ...c })),
+    };
+    appearanceNotes.push(
+      ...enforceKnownMaleIdentity(image, allCharacterRecords(), identityFacts, status.supportsCharacters),
+    );
+    input = {
+      ...input,
+      prompt: image.tag,
+      nl: image.nl,
+      characters: image.characters,
+    };
+  }
+  let costumeContext: CostumeContext | undefined;
+  if (input.storyFrame) {
+    const chat = getContext()?.chat ?? [],
+      floor = input.storyFrame.floor;
+    const saved = readClothingFloor(chat[floor], clothingRevision(chat, floor));
+    const frame = saved?.frames.find((f) => f.tag === input.storyFrame!.tag);
+    if (frame) {
+      costumeContext = frame.costume;
+      const state = new Map(frame.entries.map((e) => [e.name, e]));
+      const image = {
+        position: '',
+        sourceLine: frame.sourceLine,
+        charOffset: frame.charOffset,
+        tag: input.prompt,
+        nl: input.nl ?? '',
+        negative: input.negative ?? '',
+        size: input.size ?? ('portrait' as const),
+        characters: (input.characters ?? []).map((c) => ({ ...c })),
+      };
+      if (frame.costume) appearanceNotes.push(...removeUnbackedCostume(image, state, frame.costume));
+      enforceClothing(
+        image,
+        state,
+        !!input.nl || image.characters.some((c) => !!c.nl),
+        status.supportsCharacters,
+      );
+      input = {
+        ...input,
+        prompt: image.tag,
+        nl: image.nl,
+        characters: image.characters,
+      };
+    }
+  }
+  if (input.storyFrame && input.characters?.length) {
+    const chat = getContext()?.chat ?? [],
+      floor = input.storyFrame.floor;
+    const saved = readClothingFloor(chat[floor], clothingRevision(chat, floor));
+    const frame = saved?.frames.find((f) => f.tag === input.storyFrame!.tag);
+    const exactState = new Map((frame?.entries || []).map((e) => [e.name, e]));
+    applyWardrobeChoices(exactState, chat[floor], saved?.manualChoiceRevision);
+    const current = clothingBefore(chat, floor + 1, charTagLib.entries),
+      bound = new Map();
+    for (const c of input.characters) {
+      const record =
+        exactState.get(c.name) ??
+        (current.get(c.name)?.suitMode === 'always' ? current.get(c.name) : undefined);
+      if (record?.suitMode) bound.set(c.name, record);
+    }
+    if (bound.size) {
+      const image = {
+        position: '',
+        sourceLine: 0,
+        charOffset: 0,
+        tag: input.prompt,
+        nl: input.nl ?? '',
+        negative: input.negative ?? '',
+        size: input.size ?? ('portrait' as const),
+        characters: input.characters.map((c) => ({ ...c })),
+      };
+      enforceClothing(
+        image,
+        bound,
+        !!input.nl || image.characters.some((c) => !!c.nl),
+        status.supportsCharacters,
+      );
+      appearanceNotes.push(...[...bound.values()].map((e) => e.name + '：' + suitNote(e)));
+      input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };
+    }
   }
   const characters = input.characters ?? [];
   // 支持与否由后端说了算:ComfyUI 恒不支持;NAI 看模型是否 4.5/V5

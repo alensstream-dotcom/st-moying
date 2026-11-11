@@ -1,4 +1,3 @@
-import { queueNovelPlan } from './planningQueue';
 import { requestNovelFloorTags } from '@/autoTag/runner';
 import { clothingTrace } from '@/autoTag/outfitTimeline';
 import { clearAutoGenerateForFloor } from '@/floor/autoGenerate';
@@ -121,8 +120,7 @@ async function planFloor(floor: number): Promise<PlanResult> {
   const sourceHash = promptHash(stripImageTags(at.message.mes));
   const previous = at.message.extra?.bbiNovelPlan as { status?: string; sourceHash?: string } | undefined;
   if (previous?.status === 'no-images' && previous.sourceHash === sourceHash) return { status: 'no-images', tagCount: 0 };
-  const task = queueNovelPlan(at.chatId, floor, async (): Promise<PlanResult> => {
-    at.assert();
+  const task = (async (): Promise<PlanResult> => {
     const result = await requestNovelFloorTags(floor);
     const current = at.assert();
     const savedTags = parseImageTags(current.mes);
@@ -133,7 +131,7 @@ async function planFloor(floor: number): Promise<PlanResult> {
     await at.ctx.saveChat();
     markDirty(floor, at);
     return { status: result.status, tagCount: savedTags.length };
-  });
+  })();
   planning.set(key, task);
   try { return await task; } finally { if (planning.get(key) === task) planning.delete(key); }
 }

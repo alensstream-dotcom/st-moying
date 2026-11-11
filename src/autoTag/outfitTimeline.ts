@@ -1,5 +1,3 @@
-import { registeredName } from '@/state/characterKey';
-import { type ScenePlan } from './scene';
 import { characterAliases } from '@/state/characterAliases';
 import { applyWardrobeChoices, wardrobeChoiceRevision } from '@/state/wardrobeChoice';
 import type { CostumeContext, CostumeFloor } from './costumeContext';
@@ -29,7 +27,6 @@ export interface ClothingRecord {
   source: string;
 }
 export interface ClothingChange {
-  timeline?: string;
   invalidReason?: string;
   parseNote?: string;
   reportedName?: string;
@@ -56,7 +53,6 @@ export interface ClothingFloor {
   changes: ClothingChange[];
   rejected: string[];
   frames: Array<{
-    scene?: ScenePlan;
     tag: string;
     sourceLine: number;
     charOffset: number;
@@ -70,7 +66,7 @@ export const CLOTHING_PROTOCOL = `服装连续性补充协议（本节替代“�
 最终 JSON 增加 outfitChanges 数组。没有变化就 []；即使 images=[]，正文里的穿脱变化也必须报告。
 每项 {name,position,operation,evidence,subjectEvidence,pieces:[{id,design,state}]}，position 用本节 P 编号；name 用人物库原名。evidence 必须逐字引用实际穿脱动作句，事件在这句动作完成处生效；不要只给楼层最后状态。动作句使用“她”时 subjectEvidence 另引前文明确主语的原文，不能用扩大 evidence 到楼尾的方式补姓名。先记录初始穿着，再按发生顺序记录每次脱、半脱、复穿；第一张发生在脱衣前就必须穿着，后两张发生在脱衣后必须取脱后状态。
 operation=init：仅首次没有穿搭时建立整套；明确剧情用原文证据，无描写时可以一次性补全，evidence=""，后续直接继承。
-operation=patch：只改已有衣物状态，design 留空，必须引用原文动作，证据引用动作句；代词归属另填 subjectEvidence，不扩大动作引文。
+operation=patch：只改已有衣物状态，design 留空，必须引用原文动作，证据需包含角色名（代词动作连同此前姓名一起引用）。
 operation=add：剧情明确加穿一件衣物，只新增部件，不能重置其他衣服。
 operation=change：只有明确换装/穿回等事件才整套替换，不能因为时间/场景跳跃、特写或没提衣服就 change。
 pieces 每件衣物独立 ID，外套、衬衣、内衣、裙子、内裤、袜子必须拆开，不能整套合成一个部件。穿脱时只 patch 对应衣物；未提及的部件和字段省略，不输出默认 normal/worn/closed，不用 unknown 覆盖已知状态。脱去外套不等于上身全裸。半脱优先组合 location=worn、单侧袖口 off_arm、fastening=open、arrangement=lowered 等具体字段，只有衣物完全离身才 removed。pieces 的 id 持续使用账本中的 ID。design 用逗号分隔的独立服装标签，如 white shirt, collared shirt, long sleeves；优先逐字使用新版衣橱候选，不拼形容词长句，不含脸/发色/体型/画风/穿脱状态。
@@ -130,7 +126,6 @@ export function clothingRevision(chat: STMessage[], beforeFloor: number): string
 export function readClothingFloor(
   message: STMessage | undefined,
   upstreamHash?: string,
-  summaryOnly = false,
 ): ClothingFloor | null {
   const raw = message?.extra?.[BBI_OUTFIT_EXTRA_KEY] as ClothingFloor | undefined;
   return raw?.v === 2 &&
@@ -140,15 +135,9 @@ export function readClothingFloor(
     raw.swipe === (message?.swipe_id ?? 0) &&
     raw.sourceHash === narrativeHash(message?.mes ?? '') &&
     (upstreamHash === undefined || raw.upstreamHash === upstreamHash)
-    ? copy(summaryOnly ? { ...raw, start: [], frames: [], changes: [], rejected: [] } : raw)
+    ? copy(raw)
     : null;
 }
-/** IDs survive hand edits; exact-tag fallback is only for pre-scene records. */
-export function findClothingFrame(saved: ClothingFloor | null | undefined, tag: string) {
-  const id = parseImageTagContent(tag).scene?.id;
-  return saved?.frames.find(f => id ? (f.scene?.id || parseImageTagContent(f.tag).scene?.id) === id : f.tag === tag);
-}
-
 function legacyRecord(name: string, design: string, wear: string, state: string): ClothingRecord {
   // Preserve legacy uncertainty; never turn a crop or omitted state into 'fully dressed'.
   return {
@@ -164,8 +153,6 @@ function legacyRecord(name: string, design: string, wear: string, state: string)
     ],
   };
 }
-type WardrobeCheckpoint = { prefix: string; seed: string; entries: Array<[string, ClothingRecord]> };
-const checkpoints = new WeakMap<STMessage[], Map<number, WardrobeCheckpoint>>();
 export function clothingBefore(
   chat: STMessage[],
   beforeFloor: number,
@@ -181,25 +168,14 @@ export function clothingBefore(
           (!e.history.some((h) => h.field === 'outfit') ||
             [...e.history].reverse().find((h) => h.field === 'outfit')?.floor === -1),
       });
-  const end = Math.min(beforeFloor, chat.length);
-  const seed = JSON.stringify([...state]) + JSON.stringify(entries.map(e => [e.name, registeredName(e.name)]));
-  const prefixes = [''];
-  for (let i = 0; i < end; i++) prefixes.push(continuityHash(prefixes[i] + contribution(chat[i])));
-  const cache = checkpoints.get(chat) ?? new Map<number, WardrobeCheckpoint>();
-  checkpoints.set(chat, cache);
-  let start = 0;
-  for (const [index, cached] of cache) {
-    if (index <= end && index > start && cached.seed === seed && cached.prefix === prefixes[index]) start = index;
-  }
-  if (start) { state.clear(); for (const [name, record] of copy(cache.get(start)!.entries)) state.set(name, record); }
-  let hash = prefixes[start];
-  for (let floor = start; floor < end; floor++) {
+  let hash = '';
+  for (let floor = 0; floor < Math.min(beforeFloor, chat.length); floor++) {
     const message = chat[floor],
       raw = message.extra?.[BBI_OUTFIT_EXTRA_KEY] as { v?: number } | undefined;
-    const saved = readClothingFloor(message, hash, true);
+    const saved = readClothingFloor(message, hash);
     if (saved) {
       if (!saved.delta) state.clear();
-      for (const entry of saved.entries) { entry.name = registeredName(entry.name); state.set(entry.name, entry); }
+      for (const entry of saved.entries) state.set(entry.name, entry);
     } else if (raw?.v !== 2) {
       const old = readOutfitState(message);
       if (old?.swipe === (message.swipe_id ?? 0)) {
@@ -221,11 +197,7 @@ export function clothingBefore(
       }
     }
     applyWardrobeChoices(state, message, saved?.manualChoiceRevision);
-    hash = prefixes[floor + 1];
-    if ((floor + 1) % 32 === 0 || floor + 1 === end) {
-      cache.set(floor + 1, { prefix: hash, seed, entries: copy([...state]) });
-      while (cache.size > 16) cache.delete(cache.keys().next().value!);
-    }
+    hash = continuityHash(hash + contribution(message));
   }
   return state;
 }
@@ -318,7 +290,6 @@ export function parseClothingChanges(
       }
       return [
         {
-          timeline: /^memory:P\d+$/.test(String(item.timeline)) ? String(item.timeline) : 'main',
           invalidReason,
           parseNote,
           reportedName: text(item.name),
@@ -384,17 +355,7 @@ export function unreportedClothingActions(
   }
   return [...new Set(missing)].slice(0, 8);
 }
-export function acceptClothingChanges(changes: ClothingChange[], source: string, before: ClothingState, entries: CharTagEntry[]) {
-  const scopes = [...new Set(changes.map(c => c.timeline || 'main'))];
-  const result: { changes: ClothingChange[]; rejected: string[] } = { changes: [], rejected: [] };
-  for (const scope of scopes) {
-    const group = acceptClothingGroup(changes.filter(c => (c.timeline || 'main') === scope), source, scope === 'main' ? before : new Map(), entries);
-    result.changes.push(...group.changes); result.rejected.push(...group.rejected);
-  }
-  result.changes.sort((a,b) => a.sourceLine-b.sourceLine || a.charOffset-b.charOffset);
-  return result;
-}
-function acceptClothingGroup(
+export function acceptClothingChanges(
   changes: ClothingChange[],
   source: string,
   before: ClothingState,
@@ -597,10 +558,9 @@ export function clothingAt(
   scope: string,
   line = Infinity,
   offset = Infinity,
-  timeline = 'main',
 ): ClothingState {
-  const result = new Map(copy(timeline === 'main' ? [...before] : []).map(([k, v]) => [k, v]));
-  for (const c of changes) if ((c.timeline || 'main') === timeline && reached(c, line, offset)) applyOne(result, c, scope + timeline);
+  const result = new Map(copy([...before]).map(([k, v]) => [k, v]));
+  for (const c of changes) if (reached(c, line, offset)) applyOne(result, c, scope);
   return result;
 }
 export function clothingBlock(state: ClothingState): string {
@@ -611,7 +571,7 @@ export function clothingBlock(state: ClothingState): string {
 }
 export function clothingTrace(message: STMessage | undefined, rawTag: string): string[] {
   const floor = readClothingFloor(message),
-    frame = findClothingFrame(floor, rawTag);
+    frame = floor?.frames.find((f) => f.tag === rawTag);
   if (!floor || !frame) return [];
   const cast = parseImageTagContent(rawTag).characters.map((c) => c.name);
   const eraLabels = { ancient: '古代', modern: '现代', future: '未来', mixed: '混合时代', unknown: '未确定' };
@@ -656,7 +616,7 @@ export function clothingTrace(message: STMessage | undefined, rawTag: string): s
   return [
     '本图按原文位置独立记录衣物状态，不使用楼层末态',
     ...floor.changes
-      .filter((c) => (c.timeline || 'main') === (frame.scene?.timeline || 'main') && cast.includes(c.name) && reached(c, frame.sourceLine, frame.charOffset))
+      .filter((c) => cast.includes(c.name) && reached(c, frame.sourceLine, frame.charOffset))
       .map((c) => `本图前已发生：${c.name} · ${c.evidence || '首次穿搭补全'}`),
     ...(frame.costume
       ? [
@@ -667,7 +627,7 @@ export function clothingTrace(message: STMessage | undefined, rawTag: string): s
       .filter((e) => cast.includes(e.name))
       .map(
         (e) =>
-          `${e.name} · ${e.pieces
+          `${e.name} · ${e.outfitId} · ${e.pieces
             .map(
               (p) =>
                 `${p.design || p.id} [${Object.entries(p.state)

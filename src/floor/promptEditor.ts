@@ -1,8 +1,3 @@
-import { repairSceneClothing } from './sceneRepair';
-import { clothingTrace } from '@/autoTag/outfitTimeline';
-import { readClothingFloor, findClothingFrame, clothingRevision } from '@/autoTag/outfitTimeline';
-import { BBI_OUTFIT_EXTRA_KEY } from '@/autoTag/outfitState';
-import { sceneId, readScene } from '@/autoTag/scene';
 import { h, render } from 'vue';
 
 import PromptEditor from '@/floor/PromptEditor.vue';
@@ -107,14 +102,7 @@ async function writeBack(
     return false;
   }
 
-  const previous = parseImageTagContent(at.rawTag);
-  content = { ...content, scene: content.scene || previous.scene };
-  const saved = readClothingFloor(message, clothingRevision(context.chat, at.messageId));
-  const frame = findClothingFrame(saved, at.rawTag);
-  if (frame && !content.scene?.id) content.scene = { ...readScene({})!, id: sceneId() };
   const nextTag = serializeImageTag(content);
-  if (frame) { frame.tag = nextTag; frame.scene = content.scene; }
-  const expectedLedger = JSON.stringify(message.extra?.[BBI_OUTFIT_EXTRA_KEY]);
   // 标记必须挂在写回**之前**:写回即触发重水合、卡片挂载时消费标记(同 autoTag/runner.ts)。
   // force 模式无条件开跑 —— 用户点的就是「重新生成」,即便这条提示词以前出过图。
   if (regenerate) {
@@ -129,13 +117,12 @@ async function writeBack(
         // 弹窗可能开着好几分钟。身份 CAS 只认聊天/楼层/swipe,**刻意不比对正文内容**
         // (那是与别的改正文插件共存的关键),所以「tag 数变了 / 这条 tag 被别人改了」
         // 拦不住,只能在这里按原文自己核对:seq 指的还是不是同一条。
-        if (parseImageTags(currentText)[at.seq] !== at.rawTag || JSON.stringify(message.extra?.[BBI_OUTFIT_EXTRA_KEY]) !== expectedLedger) return null;
+        if (parseImageTags(currentText)[at.seq] !== at.rawTag) return null;
         return replaceImageTagAt(currentText, at.seq, nextTag);
       },
       at.chatId,
       at.swipeId,
       message,
-      frame && saved ? [{ key: BBI_OUTFIT_EXTRA_KEY, value: saved }] : undefined,
     );
   } catch (error) {
     // 撤销标记:只取回自己这一枚,不能用 clearAutoGenerateForFloor(会连累同楼兄弟槽位)
@@ -191,7 +178,6 @@ export function openPromptEditor(options: PromptEditorOptions): void {
   const container = document.createElement('div');
   root.appendChild(container);
   let busy = false;
-  let repairController: AbortController | undefined;
   /** 草稿是否已改动:由组件 emit('dirty') 推上来。 */
   let dirty = false;
   /** 已请求关闭:置上后重渲染一次让组件播离场动画,LEAVE_MS 后真卸载。 */
@@ -231,7 +217,6 @@ export function openPromptEditor(options: PromptEditorOptions): void {
     if (closeCurrent !== close) return; // 已被后来者替换,不重复清理
     closeCurrent = null;
     // 先让组件播离场动画(ModalMask 的 Transition 要求容器仍挂着),再真卸载
-    repairController?.abort();
     closing = true;
     paint();
     setTimeout(() => {
@@ -354,18 +339,6 @@ export function openPromptEditor(options: PromptEditorOptions): void {
     render(
       h(PromptEditor, {
         content,
-        continuity: clothingTrace(getContext()?.chat?.[options.at.messageId], rawTag),
-        repairing: !!repairController,
-        onRepair: async () => {
-          if (busy || dirty || repairController || isTagPlanning(planKey)) return;
-          const at = getContext();
-          if (at?.getCurrentChatId?.() !== options.at.chatId) { toastr.warning('聊天已切换'); return; }
-          const control = new AbortController(); repairController = control; paint();
-          try { await repairSceneClothing(options.at.messageId, options.at.seq, control.signal); refreshFromMessage(); }
-          catch (e) { if (!control.signal.aborted) toastr.error(e instanceof Error ? e.message : String(e), '衣着核对'); }
-          finally { repairController = undefined; paint(); }
-        },
-        onCancelRepair: () => repairController?.abort(),
         historyCount: options.historyCount,
         configured: options.configured,
         busy,

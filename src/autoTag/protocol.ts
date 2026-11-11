@@ -1,4 +1,3 @@
-import { readScene, readPlacement, type ScenePlan } from './scene';
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import type { TargetSegment } from '@/autoTag/clean';
 import { parseClothingChanges, type ClothingChange } from './outfitTimeline';
@@ -12,18 +11,12 @@ import {
 } from '@/state/charTags';
 
 export interface ImageCharacterPrompt {
-  characterId?: string;
-  center?: { x: number; y: number };
-  negative?: string;
-  actionTag?: string;
-  actionNl?: string;
   name: string;
   tag: string;
   nl: string;
 }
 
 export interface ImageInsertion {
-  scene?: ScenePlan;
   /** 模型选择的目标正文位置 ID。 */
   position: string;
   /** 位置 ID 对应的原始物理行(0-based，仅插件内部使用)。 */
@@ -45,7 +38,6 @@ export interface ImageInsertion {
 }
 
 export interface ImagePlan {
-  wardrobeInitial?: unknown;
   costumeContexts?: unknown;
   identities?: IdentityClaim[];
   outfitChanges?: ClothingChange[];
@@ -176,12 +168,7 @@ function sanitizeCharacters(value: unknown, imageIndex: number): ImageCharacterP
       const name = sanitizeContent(item.name, `characters[${index}].name`, imageIndex);
       const tag = sanitizeContent(item.tag ?? item.prompt, `characters[${index}].tag`, imageIndex);
       const nl = sanitizeContent(item.nl, `characters[${index}].nl`, imageIndex);
-      if (name && tag) characters.push({ name, tag, nl,
-        center: readPlacement(item.center),
-        negative: sanitizeContent(item.negative, 'character.negative', imageIndex),
-        actionTag: typeof item.actionTag === 'string' ? sanitizeContent(item.actionTag, 'actionTag', imageIndex) : undefined,
-        actionNl: typeof item.actionNl === 'string' ? sanitizeContent(item.actionNl, 'actionNl', imageIndex) : undefined,
-      });
+      if (name && tag) characters.push({ name, tag, nl });
     } catch {
       // A malformed character prompt must not discard an otherwise valid image plan.
     }
@@ -189,17 +176,15 @@ function sanitizeCharacters(value: unknown, imageIndex: number): ImageCharacterP
   return characters;
 }
 
+/**
+ * position 只做归一(大小写/空格),格式校验交给下面的可选位置表——
+ * 这样"没给 position"和"给了但不在可选位置里"能给出不同的错误文案。
+ */
 function readPosition(value: unknown): string {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
 }
 
-/**
- * 锚点引用句的比较口径：位置标记、空白、标点和全/半角差异一律不计，英文大小写不计。
- *
- * 模型抄原句时最常做的手脚就是这些——顺手带上前一句的 ⟦P7⟧、把「，」写成「,」、
- * 把引号换成另一种、或者干脆省掉句尾标点。逐字比对会把这些全部判成「不可定位」，
- * 于是整次生图因为一个引号而报销；比对只保留汉字/字母/数字后，落位靠内容而不是排版。
- */
+/** 引用句里常夹带 ⟦P7⟧ 位置标记、全半角标点差异;比对前统一去掉,只比实义字。 */
 function compactAnchor(value: string): string {
   return value
     .replace(/⟦[^⟧]*⟧/g, '')
@@ -208,89 +193,71 @@ function compactAnchor(value: string): string {
     .toLowerCase();
 }
 
-/** 引用句横跨的段数上限：模型把「动作 + 台词」抄成一句时，句号两侧会各占一段。 */
 const MAX_ANCHOR_SPAN = 4;
-/** 紧凑口径下短于此长度的引用句不足以定位——它会命中一大片段落。 */
 const MIN_ANCHOR_CHARS = 2;
 
 interface AnchorRange {
-  /** 引用句起点所在段的下标。 */
   start: number;
-  /** 引用句终点所在段的下标——图片插在这一段之后。 */
   end: number;
 }
 
+/** 在升序的段起点表里找 offset 落在哪一段(二分)。 */
 function findPieces(starts: number[], offset: number): number {
-  let low = 0;
-  let high = starts.length - 1;
-  while (low < high) {
-    const middle = (low + high + 1) >> 1;
-    if (starts[middle] <= offset) low = middle;
-    else high = middle - 1;
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid] <= offset) lo = mid;
+    else hi = mid - 1;
   }
-  return low;
+  return lo;
 }
 
 /**
- * 在目标正文里找出引用句可以落在的位置。
- *
- * 先把各段紧凑化后首尾相连，再用 indexOf 逐个找出所有出现位置，并折算回「从哪段到哪段」。
- * 这样单段内命中、跨段命中（引用句把两句连读）走的是同一套逻辑；返回的 end 段就是锚点。
+ * 在整楼正文里定位模型引用的 after。定位到就返回它覆盖的段区间(可能跨一两句),
+ * 定位不到返回 null —— 调用方随后退回直接用 position,不再因为引用句抄歪而整楼报错。
  */
 function locatableAnchor(
   after: string,
   segments: TargetSegment[],
   preferred?: TargetSegment,
 ): AnchorRange | null {
-  const quote = compactAnchor(after);
-  if (quote.length < MIN_ANCHOR_CHARS) return null;
-  const pieces: Array<{ index: number; text: string }> = [];
-  segments.forEach((segment, index) => {
-    const text = compactAnchor(segment.text);
-    if (text) pieces.push({ index, text });
-  });
-  if (!pieces.length) return null;
-
+  const needle = compactAnchor(after);
+  if (needle.length < MIN_ANCHOR_CHARS) return null;
+  const pieces: string[] = [];
   const starts: number[] = [];
-  let cursor = 0;
-  for (const piece of pieces) {
-    starts.push(cursor);
-    cursor += piece.text.length;
+  let offset = 0;
+  for (const segment of segments) {
+    const piece = compactAnchor(segment.text);
+    pieces.push(piece);
+    starts.push(offset);
+    offset += piece.length;
   }
-  const joined = pieces.map((piece) => piece.text).join('');
-
-  const ranges: AnchorRange[] = [];
-  for (let at = joined.indexOf(quote); at >= 0; at = joined.indexOf(quote, at + 1)) {
-    const start = findPieces(starts, at);
-    const end = findPieces(starts, at + quote.length - 1);
-    // 过长的引用句多半是模型抄了整段而不是一个瞬间，跨段太多时宁可退回 position
-    if (end - start + 1 > MAX_ANCHOR_SPAN) continue;
-    ranges.push({ start: pieces[start].index, end: pieces[end].index });
+  const haystack = pieces.join('');
+  const hits: AnchorRange[] = [];
+  let from = haystack.indexOf(needle);
+  while (from >= 0 && hits.length < 12) {
+    const start = findPieces(starts, from);
+    const end = findPieces(starts, from + needle.length - 1);
+    if (end - start + 1 <= MAX_ANCHOR_SPAN) hits.push({ start, end });
+    from = haystack.indexOf(needle, from + 1);
   }
-  if (!ranges.length) return null;
-
+  if (!hits.length) return null;
   const preferredIndex = preferred ? segments.indexOf(preferred) : -1;
-  const span = (range: AnchorRange) => range.end - range.start;
   if (preferred && preferredIndex >= 0) {
-    // 模型自己给的 position 落在某次命中里：它和引用句互相印证，直接采信
-    const confirmed = ranges.find((range) => range.start <= preferredIndex && preferredIndex <= range.end);
-    if (confirmed) return confirmed;
-    // 同一物理行上的命中优先于别处：位置偏了半句比偏到整段之外更可能
-    const sameLine = ranges
-      .filter((range) => segments[range.end].sourceLine === preferred.sourceLine)
-      .sort((a, b) => span(a) - span(b) || a.end - b.end);
-    if (sameLine.length) return sameLine[0];
-    // 其余命中取离模型给的位置最近、跨度最小的那个
-    return ranges.sort(
-      (a, b) =>
-        Math.abs(a.end - preferredIndex) - Math.abs(b.end - preferredIndex) ||
-        span(a) - span(b) ||
-        a.end - b.end,
-    )[0];
+    const covering = hits.find((hit) => hit.start <= preferredIndex && preferredIndex <= hit.end);
+    if (covering) return covering;
+    const line = segments[preferredIndex].sourceLine;
+    const sameLine = hits.find((hit) => segments[hit.start].sourceLine === line);
+    if (sameLine) return sameLine;
   }
-  return ranges.sort((a, b) => span(a) - span(b) || a.end - b.end)[0];
+  const anchorIndex = preferredIndex >= 0 ? preferredIndex : null;
+  return hits.sort((a, b) => {
+    const da = anchorIndex === null ? 0 : Math.abs(a.start - anchorIndex);
+    const db = anchorIndex === null ? 0 : Math.abs(b.start - anchorIndex);
+    return da - db || a.end - a.start - (b.end - b.start) || a.start - b.start;
+  })[0];
 }
-
 
 /**
  * 解析并严格校验模型给出的“目标位置 ID + 提示词”列表。tag 必填;nl/negative 选填。
@@ -317,30 +284,25 @@ export function parseImagePlan(
   const images: ImageInsertion[] = [];
   const rejected: string[] = [];
   for (let index = 0; index < parsed.images.length; index += 1) {
-    // 单张坏图不再作废整楼:模型偶尔漏 tag、把 position 数到正文外、或把对象写成字符串。
-    // 用户要的是这一节有图,丢掉坏的一条比整楼失败两轮更接近目的;全坏才抛错交给 runner 重试。
+    const item = parsed.images[index];
     try {
-      const item = parsed.images[index];
       if (!item || typeof item !== 'object' || Array.isArray(item)) {
         throw new Error('不是对象');
       }
       const entry = item as Record<string, unknown>;
       let position = readPosition(entry.position ?? entry.id);
+      if (!position) throw new Error('position 为空');
+      if (!/^P\d+$/.test(position)) throw new Error(`position=${position} 不是 P编号`);
       let segment = segmentById.get(position);
       const after = typeof entry.after === 'string' ? entry.after.replace(/\s+/g, ' ').trim() : '';
-      // 引用句能定位就以引用句为准（它比模型自己数的 P 编号更接近「剧情已发生的那句话」）；
-      // 定位不到时退回模型给的 position——一个引号抄歪不该让整次生图失败，
-      // 图片落在它自己选的那个位置，仍然比什么都不出更接近用户要的。
+      // 能定位到引用句就以它为准(容许标记/标点差异与跨句);定位不到就退回模型给的 position。
       const anchor = after ? locatableAnchor(after, segments, segment) : null;
       if (anchor) {
         segment = segments[anchor.end];
         position = segment.id;
       } else if (!segment) {
-        if (!position) throw new Error('position 为空');
-        if (!/^P\d+$/.test(position)) throw new Error(`position=${position} 不是 P编号`);
         throw new Error(`position=${position} 不在目标正文可选位置中`);
       }
-      if (!segment) throw new Error(`position=${position} 不在目标正文可选位置中`);
       const sourceLine = segment.sourceLine;
       // 兼容模型按旧协议/习惯返回 prompt 键的情况
       const tag = sanitizeContent(entry.tag ?? entry.prompt, 'tag', index);
@@ -351,7 +313,6 @@ export function parseImagePlan(
       // 兼容模型按习惯返回 orientation / aspect 键
       const size = normalizeOrientation(entry.size ?? entry.orientation ?? entry.aspect);
       images.push({
-        scene: { ...readScene(entry.scene ?? {})!, id: '', quote: after },
         position,
         sourceLine,
         charOffset: segment.charOffset ?? 0,
@@ -362,22 +323,21 @@ export function parseImagePlan(
         size,
       });
     } catch (error) {
+      // 单张图落不了位不该毁掉整楼:记下原因、丢掉这一张,其余照常落位。
       const reason = error instanceof Error ? error.message : String(error);
-      rejected.push(`images[${index}]: ${reason}`);
+      rejected.push(`images[${index}] ${reason}`);
       console.warn(`[墨影] 丢弃本楼第 ${index + 1} 张图片：${reason}`);
     }
   }
-  // 全坏说明模型完全没按协议落位(常见于换行/编号错位),这次输出没有可用的图,交给 runner 重试。
   if (!images.length && rejected.length) {
     throw new Error(`AI 给出的 ${rejected.length} 张图片都没有可落地的位置（${rejected[0]}）`);
   }
 
-  const limitedImages = images.slice(0, normalizedMax).sort((a, b) => a.sourceLine - b.sourceLine || a.charOffset - b.charOffset);
+  const limitedImages = images.slice(0, normalizedMax);
   if (limitedImages.length < normalizedMin) {
     throw new Error(`AI 返回了 ${limitedImages.length} 张图片，少于设置的最少图片数 ${normalizedMin}`);
   }
   return {
-    wardrobeInitial: parsed.wardrobeInitial,
     images: limitedImages,
     changes: parseChanges(parsed.changes, positions, segmentById),
     costumeContexts: parsed.costumeContexts,

@@ -40,10 +40,9 @@ const props = defineProps<{
   adoptable?: boolean;
   rerollable?: boolean;
   hairLockable?: boolean;
-  capturable?: boolean;
 }>();
 
-const emit = defineEmits<{ close: []; delete: []; adopt: []; reroll: []; lockHair: []; capture: [] }>();
+const emit = defineEmits<{ close: []; delete: []; adopt: []; reroll: []; lockHair: [] }>();
 
 /** 适应屏幕 ↔ 原始尺寸。 */
 const zoomed = ref(false);
@@ -147,7 +146,6 @@ const promptText = computed(() => (props.prompt ?? '').trim());
     <!-- 遮罩自身承接关闭点击;图片与操作栏 stop 掉,避免误关 -->
     <div class="bbi-lightbox" @click="emit('close')">
       <div class="bbi-lightbox__bar" @click.stop>
-        <button v-if="capturable" class="bbi-lb-btn bbi-lb-btn--text" @click="emit('capture')">识别并固定外貌</button>
         <button
           v-if="hairLockable"
           class="bbi-lb-btn bbi-lb-btn--text"
@@ -160,9 +158,9 @@ const promptText = computed(() => (props.prompt ?? '').trim());
           v-if="adoptable"
           class="bbi-lb-btn bbi-lb-btn--text"
           @click="emit('adopt')"
-          title="仅设为角色展示图，不改变外貌标签"
+          title="保存图中人物的标签与头像，不训练模型"
         >
-          设为定妆展示图
+          保存角色形象
         </button>
         <button
           v-if="rerollable"

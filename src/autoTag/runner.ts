@@ -1,8 +1,3 @@
-import { restoreWardrobeInitial } from './wardrobeInitial';
-import { repairClothingEvents } from './clothingRepair';
-import { compileScene } from './compileScene';
-import { sceneId, composeCamera } from './scene';
-import { findClothingFrame } from './outfitTimeline';
 import { recoverProfileFields } from './profileRecovery';
 import {
   appearancePolicyRevision,
@@ -542,7 +537,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         ? new Map<string, import('./outfitTimeline').ClothingRecord>(
             JSON.parse(JSON.stringify([...wardrobe])),
           )
-        : slot && savedWardrobe && findClothingFrame(savedWardrobe, slotRawTag ?? '') === savedWardrobe.frames[slot.seq]
+        : slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
           ? new Map(savedWardrobe.frames[slot.seq].entries.map((e) => [e.name, e]))
           : slot && slotRawTag
             ? savedImageClothing(
@@ -550,12 +545,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 wardrobe,
               )
             : null;
-    const precedingFloors = context.chat.slice(0, floor).map((m, i) => ({ m, i })).filter(({m}) => isAiStoryMessage(m));
-    const lastStory = precedingFloors.at(-1);
-    const hasGap = !!lastStory && !readClothingFloor(lastStory.m, clothingRevision(context.chat, lastStory.i));
-    const initialContext = hasGap ? precedingFloors.slice(-6).map(({m}) => stripImageTags(m.mes).slice(-6000)).join('\n\n') : '';
     const outfitBlock = clothingBlock(slotWardrobe ?? wardrobe);
-
     const costumeRequest: CostumeRequest = { inherited: costumeBefore(context.chat, floor) };
     const messages = await buildAutoTagMessages(
       context,
@@ -572,7 +562,6 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       costumeRequest,
     );
     costumeRequest.story = source;
-    if (hasGap && !slot) messages.push({ role: 'system', content: '【跳楼初态恢复】此前存在未分析或失效楼层。可额外返回 wardrobeInitial:[{name,evidence,subjectEvidence,pieces}]，只从以下前文的最近明确衣着描述恢复本楼开始状态，字段同 init。引文必须属于以下前文且归属明确，不能引用本楼后续动作，不能把回忆/假设当现实。没有明确描述就不返回这一人，保留已有值并标记不确定。人工绑定不可覆盖。这里只恢复初态，不构造本楼穿脱事件。前文：\n' + initialContext });
     const channel = getTagGenChannel();
     messages.push({
       role: 'system',
@@ -663,7 +652,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           const candidate = parseImagePlan(
             text,
             preparedTarget.segments,
-            promptOptions.minImages,
+            salvaged ? 0 : promptOptions.minImages,
             promptOptions.maxImages,
             source,
           );
@@ -773,10 +762,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // valid floor image plan or force repeated paid analysis of a random jump.
           // 单槽重写忽略本次 changes,不校验建档 nl —— 校验它会为一份会被丢弃的
           // changes 白白消耗重试次数。NAI 关了自然语言时协议不要 nl,也就不验。
-          for (const change of candidate.changes) {
-            if (change.field === 'new' && !change.nl?.trim()) {
-              try { change.nl = Object.values(JSON.parse(change.value)).filter(Boolean).join(', '); } catch { change.nl = ''; }
-            }
+          if (
+            !slot &&
+            profile.naiCharPrompts &&
+            profile.nl &&
+            candidate.changes.some((change) => change.field === 'new' && !change.nl?.trim())
+          ) {
+            throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
           }
           // 空 images:协议上算正常返回,旧版直接放行,于是模型一句「没有值得插图的画面」
           // 就能让整楼不生、阅读器干等超时。这里在还有重试次数时把它当可纠错误,
@@ -791,15 +783,125 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             retryNote = EMPTY_PLAN_RETRY_NOTE;
             throw new Error('返回了空 images');
           }
-          // Aesthetic choices never invalidate a valid floor or consume another whole-floor call.
-          // Persist recommendations with the scene for review instead.
-          for (const image of candidate.images) {
-            if (!image.scene) continue;
-            const diag = diagnoseShot(image.tag, image.characters.map(c => c.tag));
-            if (!image.scene.distance || !image.scene.angle) {
-              image.scene.warnings.push('镜头信息不完整，保留原提示词；可在分镜中调整构图');
+          // 落位重复:两张图挤在同一段,画出来是同一瞬间拍两遍。仅当可选位置
+          // 够分时才纠(席位数少于图数时重叠是必然的)。同样只在还有重试次数时纠。
+          if (attempt < retries) {
+            const dups = duplicatePositions(candidate.images, preparedTarget.segments.length);
+            if (dups.length) {
+              retryNote = duplicatePositionNote(dups);
+              throw new Error(`落位重复(${dups.join('、')})`);
             }
-            image.tag = composeCamera(image.tag, image.scene);
+          }
+          // 落位紧邻:当正文句子充裕时,两张图落在紧挨着的前后两句话(如 P5 与 P6),
+          // 属于同一自然段的同一瞬间,会导致插图紧贴且画面雷同。
+          if (!slot && attempt < retries) {
+            const adj = adjacentPositions(candidate.images, preparedTarget.segments.length);
+            if (adj.length) {
+              retryNote = adjacentPositionNote(adj);
+              throw new Error(`落位紧邻(${adj.map(([a, b]) => `${a}-${b}`).join('、')})`);
+            }
+          }
+          // 景别过远:正文点名了具体部位,画面却拍成远景。这条排在缺项检查之前——
+          // 缺景别词只是「画面会平」,景别过远是「这张图白拍」,前者由后者一并带上。
+          // 同样只在还有重试次数时纠,没次数就放行。
+          if (attempt < retries) {
+            const segmentText = new Map(preparedTarget.segments.map((item) => [item.id, item.text]));
+            const prevSegText = (pos: string): string => {
+              const m = /^P(\d+)$/i.exec(pos.trim());
+              if (!m) return '';
+              const n = Number.parseInt(m[1], 10);
+              return n > 1 ? (segmentText.get(`P${n - 1}`) ?? '') : '';
+            };
+            const seenGap = new Set<string>();
+            const farGaps = candidate.images
+              .map((image) => {
+                const gap = diagnoseDistance(
+                  segmentText.get(image.position) ?? '',
+                  image.tag,
+                  (image.characters ?? []).map((character) => character.tag),
+                  prevSegText(image.position),
+                );
+                if (!gap) return null;
+                const key = `${image.position}\u0000${gap.suggest}`;
+                if (seenGap.has(key)) return null;
+                seenGap.add(key);
+                return { position: image.position, ...gap };
+              })
+              .filter((gap): gap is NonNullable<typeof gap> => !!gap);
+            if (farGaps.length) {
+              retryNote = distanceRetryNote(farGaps);
+              throw new Error(
+                `景别过远(${farGaps.map((gap) => `${gap.position} 应 ${gap.suggest}`).join('、')})`,
+              );
+            }
+          }
+          // 画面事实闭环:人数与道具落点。
+          // 「两个男的一个女的」画成一个人长双头肉棒、「毛笔在阴部写字」只画毛笔不画落点,
+          // 都是可判定的确定错,而且这类错图一眼废。排在构图缺项之前(缺项只是画面平)。
+          // 单槽重写不改画面事实,跳过。
+          if (!slot && attempt < retries) {
+            const segmentText = new Map(preparedTarget.segments.map((item) => [item.id, item.text]));
+            const castGaps: CastGap[] = [];
+            const seenCast = new Set<string>();
+            for (const image of candidate.images) {
+              const text = segmentText.get(image.position) ?? '';
+              const aliasPresent = findCharAliases(entriesBefore, text).map((hit) => hit.name);
+              const present = [
+                ...new Set([
+                  ...[...entriesBefore].map((entry) => entry.name).filter((name) => text.includes(name)),
+                  ...aliasPresent,
+                ]),
+              ];
+              const charTagList = (image.characters ?? []).map((character) => character.tag);
+              const found = [
+                ...diagnoseCast(text, image.tag, image.characters ?? [], present, profile.naiCharPrompts),
+                ...diagnosePropTarget(text, image.tag, charTagList),
+                ...diagnoseContact(text, image.tag, charTagList),
+              ];
+              for (const gap of found) {
+                const key = `${image.position}\u0000${gap.detail}`;
+                if (seenCast.has(key)) continue;
+                seenCast.add(key);
+                castGaps.push(gap);
+              }
+            }
+            if (castGaps.length) {
+              retryNote = castRetryNote(castGaps);
+              throw new Error(`画面事实不符(${castGaps.map((gap) => gap.kind).join('、')})`);
+            }
+          }
+          // 服装账本:衣服明明没变,穿脱程度却跳了(半脱→全裸、已脱→又穿回),
+          // 或者正文没写换装,整套衣服被换成另一套。
+          // 这条最伤连续性,而且模型自己看不出来——它没有上一层的画面。
+          // 构图缺项:只在还有重试次数时纠一次。没次数了就放行——
+          // 交一张景别平庸的图,好过因为「没写机位」整楼不生。
+          if (attempt < retries) {
+            const gaps = [
+              ...new Set(
+                candidate.images
+                  .map((image) =>
+                    diagnoseShot(
+                      image.tag,
+                      (image.characters ?? []).map((character) => character.tag),
+                    ),
+                  )
+                  .filter((diag) => !diag.softOnly)
+                  .flatMap((diag) => diag.missing),
+              ),
+            ];
+            if (gaps.length) {
+              retryNote = shotRetryNote(gaps);
+              throw new Error(`构图缺项(${gaps.join('、')})`);
+            }
+            if (!slot) {
+              const monoGaps = diagnoseMonotonousShots(candidate.images);
+              if (monoGaps.length) {
+                retryNote = monotonousShotRetryNote(monoGaps);
+                throw new Error(
+                  `构图雷同(${monoGaps.map((g) => `${g.positions.join('/')} 均为 ${g.signature}`).join('、')})`,
+                );
+              }
+            }
           }
           parsed.plan = candidate;
         };
@@ -901,14 +1003,48 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       if (accepted) op.fields.sex = '1girl';
       return accepted;
     });
-    // New appearances come from the single story analysis. No age/body or six-face templates.
+    // Fill only absent face dimensions on new original profiles, then persist them.
+    // Existing appearances and manual fandom choices are never rerolled here.
+    const faceOptions = [
+      ['tsurime', 'thin eyebrows', 'oval face'],
+      ['tareme', 'thick eyebrows', 'round face'],
+      ['narrow eyes', 'thin eyebrows', 'angular face'],
+      ['tsurime', 'thick eyebrows', 'round face'],
+      ['tareme', 'thin eyebrows', 'oval face'],
+      ['narrow eyes', 'thick eyebrows', 'oval face'],
+    ];
+    const usedFaces = new Set(safeEntries.map((e) => e.fields.extra));
+    for (const item of maleGuarded) {
+      const op = item.op;
+      if (op.kind !== 'new' || op.fields.fandom) continue;
+      let index = [...op.name].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0) % faceOptions.length;
+      for (let n = 0; n < faceOptions.length && usedFaces.has(faceOptions[index].join(', ')); n++)
+        index = (index + 1) % faceOptions.length;
+      op.fields.extra = op.fields.extra.replace(
+        /\b(?:beautiful|gorgeous|perfect|pretty|detailed) face\b/gi,
+        '',
+      );
+      const parts = op.fields.extra
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const all = [op.fields.eyes, op.fields.extra].join(', ');
+      const patterns = [
+        /tsurime|tareme|narrow eyes|wide eyes|eye shape|almond/i,
+        /eyebrows/i,
+        /face|jaw|chin|cheek/i,
+      ];
+      faceOptions[index].forEach((tag, i) => {
+        if (!patterns[i].test(all)) parts.push(tag);
+      });
+      op.fields.extra = [...new Set(parts)].join(', ');
+      usedFaces.add(op.fields.extra);
+    }
     const floorOps = maleGuarded.map((item) => item.op);
     const previousDelta = readCharTagFloorDelta(message);
 
     plan.images.sort((a, b) => a.sourceLine - b.sourceLine || a.charOffset - b.charOffset);
     const activeEntries = applyCharTagOps(safeEntries, floorOps, floor, lockedNames);
-    const initialNotes = !slot && hasGap ? restoreWardrobeInitial(plan.wardrobeInitial, initialContext, wardrobe, activeEntries) : [];
-    if (hasGap) initialNotes.push('此前存在未分析区间；本图只依据已有账本和最近前文，无法确认的衣着为暂定。');
     const costumeNotes: string[] = [];
     const costume =
       slot && savedWardrobe?.costume
@@ -925,7 +1061,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           change.charOffset,
         );
       }
-    let accepted = acceptClothingChanges(
+    const accepted = acceptClothingChanges(
       slot ? [] : (plan.outfitChanges ?? []).filter((c) => wardrobe.get(c.name)?.suitMode !== 'always'),
       source,
       wardrobe,
@@ -937,8 +1073,6 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           (note) => '待核对的穿脱动作：' + note,
         ),
       );
-    if (!slot && accepted.rejected.length && settings.autoTag.retryCount > 0)
-      accepted = await repairClothingEvents(source, preparedTarget.segments, wardrobe, activeEntries, plan.outfitChanges ?? [], controller.signal);
     if (accepted.rejected.length)
       toastr.warning(
         '部分服装变化无法确认，已记录原因并保留既有状态；本楼继续生成图片。可在图片说明中核对。',
@@ -978,24 +1112,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const scope = `${chatId}|${floor}|${swipeId ?? 0}|${expectedStory}`;
     const frames: ClothingFloor['frames'] = [];
     const completion: ClothingState = new Map();
-    const memoryCompletions = new Map<string, ClothingState>();
     const visualNotes: string[] = [
-      ...initialNotes,
       ...accepted.rejected,
       ...appearanceChangeNotes,
       ...costumeNotes,
       ...costumeRepairs.notes,
     ];
-    for (const image of plan.images) {
-      if (!image.scene) continue;
-      const oldScene = slotRawTag ? parseImageTagContent(slotRawTag).scene : undefined;
-      image.scene.id = slot && oldScene?.id ? oldScene.id : sceneId();
-      image.scene.warnings.push(...initialNotes, ...accepted.rejected.filter(note => image.characters.some(c => note.includes(c.name))));
-      if (slot && oldScene) {
-        image.scene.quote = oldScene.quote;
-        image.scene.timeline = oldScene.timeline;
-      }
-    }
     // @占位符按正文位置替换：变化前图片用旧档，变化位置及之后用新档。
     const unknownNames = new Set<string>();
     for (const image of plan.images) {
@@ -1070,15 +1192,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         floor,
         lockedNames,
       );
-
+      visualNotes.push(
+        ...enforceAppearance(image, entriesAt, profile.nl, profile.naiCharPrompts, planIdentities),
+      );
       visualNotes.push(
         ...enforceKnownMaleIdentity(image, libraryAtStart, planIdentities, profile.naiCharPrompts),
       );
-      const timeline = image.scene?.timeline || 'main';
-      const at = slotWardrobe ?? clothingAt(wardrobe, accepted.changes, scope, image.sourceLine, image.charOffset, timeline);
-      if (!memoryCompletions.has(timeline)) memoryCompletions.set(timeline, new Map());
-      const sceneCompletion = timeline === 'main' ? completion : memoryCompletions.get(timeline)!;
-      for (const [name, entry] of sceneCompletion) if (!at.has(name)) at.set(name, entry);
+      const at =
+        slotWardrobe ?? clothingAt(wardrobe, accepted.changes, scope, image.sourceLine, image.charOffset);
+      for (const [name, entry] of completion) if (!at.has(name)) at.set(name, entry);
       const frameCostume =
         (slot && savedWardrobe?.frames[slot.seq]?.costume) ||
         costumeAt(costume, image.sourceLine, image.charOffset);
@@ -1104,10 +1226,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       visualNotes.push(...removeUnbackedCostume(image, at, frameCostume));
       for (const [name, entry] of at)
         if (!wardrobe.has(name) && !accepted.changes.some((c) => c.name === name))
-          sceneCompletion.set(name, entry);
-      visualNotes.push(...compileScene(image, entriesAt, at, profile.nl, profile.naiCharPrompts));
+          completion.set(name, entry);
+      enforceClothing(image, at, profile.nl, profile.naiCharPrompts);
       frames.push({
-        scene: image.scene,
         tag: serializeImageTag(image),
         sourceLine: image.sourceLine,
         charOffset: image.charOffset,
@@ -1207,14 +1328,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       legacyBackup: previousWardrobe?.v === 2 ? previousWardrobe.legacyBackup : previousWardrobe,
     };
     const rewrittenWardrobe =
-      slot && savedWardrobe && findClothingFrame(savedWardrobe, slotRawTag ?? '') === savedWardrobe.frames[slot.seq]
+      slot && savedWardrobe && savedWardrobe.frames[slot.seq]?.tag === slotRawTag
         ? {
             ...savedWardrobe,
             frames: savedWardrobe.frames.map((frame, index) =>
               index === slot.seq && plan.images[0]
                 ? {
                     ...frame,
-                    scene: plan.images[0].scene,
                     tag: serializeImageTag(plan.images[0]),
                     entries: frames[0]?.entries ?? frame.entries,
                     appearance: frames[0]?.appearance ?? frame.appearance,

@@ -1,4 +1,3 @@
-import { registeredName } from '@/state/characterKey';
 import { characterAliases } from '@/state/characterAliases';
 import { currentIdentityFacts, type IdentityFact } from '@/state/characterIdentity';
 /**
@@ -347,7 +346,7 @@ export function resolveCanonicalCharName(
   entries: readonly CharTagEntry[],
   facts: IdentityFact[] = currentIdentityFacts(),
 ): string {
-  const trimmed = registeredName(rawName.trim());
+  const trimmed = rawName.trim();
   if (!trimmed || !entries.length) return trimmed;
   for (const entry of entries) {
     if (entry.name.trim() === trimmed) return entry.name.trim();
