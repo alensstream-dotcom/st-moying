@@ -22,6 +22,7 @@ import {
   assessIdentityClaims,
   currentIdentityFacts,
   eligibleIdentityEntries,
+  femaleStoryFact,
   enforceKnownMaleIdentity,
   identityContextHash,
   identityFactFor,
@@ -30,6 +31,7 @@ import {
   identityStoryHash,
   mayCreateHeroine,
   mergeIdentityFacts,
+  type IdentityFact,
   type IdentitySources,
 } from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
@@ -659,10 +661,38 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 称呼归并与外貌兜底:模型若在 characters[].name 或 changes[].name 里写了已建档角色的
           // 别称/尊称/简称(如把「风千华」写成「风阿姨」「千华」),先唯一归并回档案主名,
           // 并在因换称呼漏抄固定外貌时把档案核心外貌字段补进 character.tag。
-          const candidateFacts = mergeIdentityFacts([
+          let candidateFacts = mergeIdentityFacts([
             ...knownIdentities,
             ...assessIdentityClaims(candidate.identities ?? [], identitySources, knownIdentities),
           ]);
+          // 模型的性别证据常被改写成非逐字引用，assessIdentityClaims 判 unknown 后
+          // changes.new 被丢掉，女主永远进不了角色库，同楼每张图只能各自现编外貌。
+          // 这里用正文原句再做一层保守取证：名字所在句只出现「她」等女性指代即入档。
+          if (!slot) {
+            const tagsByName = new Map<string, string>();
+            for (const image of candidate.images)
+              for (const character of image.characters)
+                tagsByName.set(
+                  character.name,
+                  `${tagsByName.get(character.name) ?? ''} ${character.tag ?? ''} ${character.nl ?? ''}`,
+                );
+            const names = new Set<string>([
+              ...candidate.changes.filter((change) => change.field === 'new').map((c) => c.name),
+              ...tagsByName.keys(),
+            ]);
+            const recovered: IdentityFact[] = [];
+            for (const name of names) {
+              if (!name || isMaleIdentity(name, candidateFacts)) continue;
+              if (identityFactFor(name, candidateFacts)?.gender === 'female') continue;
+              // 模型自己把角色块写成男性描述时不再追加女性事实，避免把男配拉进库。
+              const tags = tagsByName.get(name) ?? '';
+              if (/\b(?:\d+\s*boys?|boys?|man|men|male)\b/i.test(tags) && !/\b(?:girls?|women?|female)\b/i.test(tags))
+                continue;
+              const guess = femaleStoryFact(name, source);
+              if (guess) recovered.push(guess);
+            }
+            if (recovered.length) candidateFacts = mergeIdentityFacts([...candidateFacts, ...recovered]);
+          }
           for (const change of candidate.changes)
             if (change.field === 'new' && !candidate.identities?.some((c) => c.name === change.name)) {
               (candidate.identities ??= []).push({

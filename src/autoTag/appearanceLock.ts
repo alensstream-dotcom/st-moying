@@ -1,6 +1,7 @@
 import { appearancePolicy, applyAppearancePolicies } from '@/state/appearancePolicy';
 import { CHAR_TAG_FIELDS, isManualFandom, type CharTagEntry } from '@/state/charTags';
 import { resolveCanonicalCharName } from './charReuse';
+import { recoverProfileFields } from './profileRecovery';
 import type { ImageInsertion } from './protocol';
 import { currentIdentityFacts, isMaleIdentity, type IdentityFact } from '@/state/characterIdentity';
 
@@ -29,6 +30,19 @@ export function isAppearanceDescription(token: string): boolean {
   );
 }
 function appearanceParts(entry: CharTagEntry): string[] {
+  return appearancePartsFrom(effectiveEntry(entry));
+}
+/**
+ * 老库/手填库常常只存了 raw 整串 tag、结构化字段全空。过去这里直接返回空，
+ * 于是「明明建了档案，同楼每张图还是各画各的」。字段为空时从 raw 还原一次。
+ */
+function effectiveEntry(entry: CharTagEntry): CharTagEntry {
+  if (Object.values(entry.fields).some((value) => value && value.trim())) return entry;
+  const raw = entry.raw.trim();
+  if (!raw || isManualFandom(entry)) return entry;
+  return { ...entry, fields: recoverProfileFields(raw) };
+}
+function appearancePartsFrom(entry: CharTagEntry): string[] {
   // A manual fandom swap must not mix the previous character's physical traits into the new face.
   const p = appearancePolicy(entry.name);
   const fields = isManualFandom(entry)
@@ -58,6 +72,7 @@ function appearanceParts(entry: CharTagEntry): string[] {
 
 function ownsTrait(entry: CharTagEntry, token: string): boolean {
   if (!isAppearanceDescription(token)) return false;
+  entry = effectiveEntry(entry);
   if (isManualFandom(entry) || entry.fields.fandom) return true;
   const f = entry.fields;
   return !!(
@@ -74,6 +89,7 @@ function ownsTrait(entry: CharTagEntry, token: string): boolean {
   );
 }
 function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: string[]): string {
+  entry = effectiveEntry(entry);
   const locked = isManualFandom(entry);
   const plain = (s: string) => s.replace(/^[-+\d.]+::/, '').replace(/::/g, '');
   let result = original.trim();

@@ -223,6 +223,44 @@ export function assessIdentityClaims(
   }
   return mergeIdentityFacts(facts);
 }
+const FEMALE_PRONOUNS =
+  /她|女性|女子|女孩|女生|少女|姑娘|女人|女修|师姐|师妹|女士|小姐|女仆|母亲|妻子|姐姐|妹妹|夫人|太太/;
+const MALE_PRONOUNS =
+  /他|男性|男人|男子|男孩|男生|少年|男修|师兄|师弟|先生|公子|少爷|父亲|兄弟|丈夫|哥哥|弟弟/;
+const SENTENCE_EDGE = /[。！？!?…\n]/;
+function sentenceAround(text: string, index: number): string {
+  let start = index;
+  while (start > 0 && !SENTENCE_EDGE.test(text[start - 1])) start--;
+  let end = index;
+  while (end < text.length && !SENTENCE_EDGE.test(text[end])) end++;
+  return text.slice(start, end).trim();
+}
+/**
+ * 从正文原句里给角色补一条保守的性别事实。
+ *
+ * 模型的 identities.evidence 经常被改写/截断，assessIdentityClaims 的逐字引用
+ * 校验直接判 unknown，于是可辨认的女主永远建不了档 —— 同楼每张图自然各编一套
+ * 外貌。这里在名字所在的句子里找「只有她、没有他」的原文窗口，作为逐字可核验的
+ * 证据；只做加法，取证失败就返回 null，交给原有审核逻辑。
+ */
+export function femaleStoryFact(name: string, story: string): IdentityFact | null {
+  const needle = name.trim();
+  if (needle.length < 2 || !story) return null;
+  for (let index = story.indexOf(needle); index >= 0; index = story.indexOf(needle, index + needle.length)) {
+    const quote = sentenceAround(story, index);
+    if (quote.length < needle.length + 1) continue;
+    if (!FEMALE_PRONOUNS.test(quote) || MALE_PRONOUNS.test(quote)) continue;
+    return {
+      name,
+      gender: 'female',
+      heroine: false,
+      source: 'story',
+      evidence: quote,
+      reason: '正文该角色名所在语句只出现「她」等女性指代，判定为女性',
+    };
+  }
+  return null;
+}
 export function mergeIdentityFacts(facts: IdentityFact[]): IdentityFact[] {
   const groups = new Map<string, IdentityFact[]>();
   for (const f of facts) if (f?.name) groups.set(f.name, [...(groups.get(f.name) ?? []), f]);
