@@ -57,6 +57,8 @@ import { BBI_OUTFIT_EXTRA_KEY } from '@/autoTag/outfitState';
 import {
   CLOTHING_PROTOCOL,
   acceptClothingChanges,
+  adoptChangedClothing,
+  synthesiseSceneClothing,
   unreportedClothingActions,
   clothingAt,
   clothingBefore,
@@ -1092,11 +1094,37 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         );
       }
     const accepted = acceptClothingChanges(
-      slot ? [] : (plan.outfitChanges ?? []).filter((c) => wardrobe.get(c.name)?.suitMode !== 'always'),
+      slot
+        ? []
+        : (plan.outfitChanges ?? []).filter(
+            (c) => wardrobe.get(c.name)?.suitMode !== 'always' || c.operation === 'patch',
+          ),
       source,
       wardrobe,
       activeEntries,
     );
+    const scope = `${chatId}|${floor}|${swipeId ?? 0}|${expectedStory}`;
+    if (!slot) {
+      // 剧情场景补账本：洗澡/全裸/亲密情节即使没逐件写脱衣，也按常识落状态，
+      // 否则旧账本会把画面按「全套穿着」强行覆盖回去。
+      const scene = synthesiseSceneClothing(source, activeEntries, wardrobe, accepted.changes);
+      accepted.changes.push(...scene.changes);
+      accepted.rejected.push(...scene.notes);
+      // 剧情明确换装但模型只写了 patch/漏报时，采纳图片里的新衣物，避免画面停在旧套装。
+      for (const image of plan.images) {
+        const stateAtImage = clothingAt(
+          wardrobe,
+          accepted.changes,
+          scope,
+          image.sourceLine,
+          image.charOffset,
+        );
+        const adopted = adoptChangedClothing(image, stateAtImage, source);
+        accepted.changes.push(...adopted.changes);
+        accepted.rejected.push(...adopted.notes);
+      }
+      accepted.changes.sort((a, b) => a.sourceLine - b.sourceLine || a.charOffset - b.charOffset);
+    }
     if (!slot)
       accepted.rejected.push(
         ...unreportedClothingActions(source, accepted.changes, activeEntries, wardrobe).map(
@@ -1139,7 +1167,6 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       ]);
       repairCostumeState(eventState, costumeAt(costume, c.sourceLine, c.charOffset), costumeRepairs);
     }
-    const scope = `${chatId}|${floor}|${swipeId ?? 0}|${expectedStory}`;
     const frames: ClothingFloor['frames'] = [];
     const completion: ClothingState = new Map();
     const visualNotes: string[] = [
