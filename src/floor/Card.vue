@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { openAppearanceCapture } from '@/floor/appearanceCapture';
 import { openHairLock } from '@/floor/hairLock';
 import { setAppearancePolicy } from '@/state/appearancePolicy';
 import { CHAR_TAG_FIELDS, recomputeCharTags, upsertCharTag, findCharTag } from '@/state/charTags';
@@ -87,6 +88,7 @@ type Phase = 'pending' | 'queued' | 'generating' | 'ready' | 'stale' | 'error';
 
 const key = computed(() => slotKey(props.chatId, props.messageId, props.swipeId, props.seq));
 const hash = computed(() => promptHash(props.tag));
+const scene = computed(() => parseImageTagContent(props.tag).scene);
 
 /**
  * 文件仍在的那部分历史。**卡片一律用它,不用 props.history**。
@@ -360,6 +362,7 @@ function openImage(): void {
   const hairCast = parseImageTagContent(entry.prompt).characters.map((c) => ({ name: c.name, tag: c.tag }));
   const hairSrc = entry.path;
   openLightbox({
+    onCapture: hairCast.some(c => findCharTag(c.name)) ? () => openAppearanceCapture({ src: hairSrc, cast: hairCast, chat: openedChat }) : undefined,
     onLockHair: hairCast.length
       ? () => openHairLock({ src: hairSrc, cast: hairCast, chat: openedChat })
       : undefined,
@@ -392,6 +395,7 @@ function openEditor(): void {
       rawTag: props.tag,
     },
     content: {
+      scene: parseImageTagContent(props.tag).scene,
       tag: props.prompt,
       nl: props.nl,
       negative: props.negative,
@@ -473,19 +477,8 @@ async function useAsPortrait(photo = shownEntry.value, expectedChat = getContext
     if (chat !== getContext()?.getCurrentChatId?.()) return;
     if (JSON.stringify(findCharTag(name)?.fields) !== JSON.stringify(entry.fields))
       throw new Error('保存期间角色档案已变化，请重新选择图片');
-    const appearance = imageAppearance(entry, cast[0].tag);
-    if (!upsertCharTag(appearance, name, { recordChanges: true })) throw new Error('无法保存该图人物标签');
-    setAppearancePolicy(name, {
-      mode: appearance.fields.fandom ? 'fandom' : 'manual',
-      fields: appearance.fields.fandom
-        ? { fandom: appearance.fields.fandom }
-        : Object.fromEntries(
-            CHAR_TAG_FIELDS.filter((f) => f !== 'outfit').map((f) => [f, appearance.fields[f]]),
-          ),
-    });
-    recomputeCharTags();
-    adoptLook(appearance, key);
-    toastr.success('已保存这张图的人物标签与头像；未训练模型，图片参考默认关闭', '墨影');
+    adoptLook(entry, key);
+    toastr.success('已设为定妆展示图，外貌标签保持不变；如需固定图中实际特征，请使用“识别并固定外貌”', '墨影');
   } catch (e) {
     toastr.error(e instanceof Error ? e.message : String(e), '立绘保存失败');
   }
@@ -667,7 +660,7 @@ onMounted(() => {
               <button
                 v-if="shownEntry && characters.length === 1"
                 class="bbi-fab"
-                title="保存这张图的人物标签与头像（不自动开启图片参考）"
+                title="设为定妆展示图（不修改外貌标签）"
                 @click="
                   menuOpen = false;
                   useAsPortrait();
@@ -690,7 +683,7 @@ onMounted(() => {
               <button
                 class="bbi-fab"
                 type="button"
-                title="编辑提示词"
+                title="分镜、构图与提示词"
                 @click="
                   menuOpen = false;
                   openEditor();
@@ -747,6 +740,15 @@ onMounted(() => {
           图片文件已删除(在图库里删掉了);可点上方重新生成
         </p>
 
+        <details v-if="scene" class="bbi-scene-detail">
+          <summary>{{ scene.warnings.length ? '分镜 · 待核对' : '查看本图分镜' }}</summary>
+          <p><strong>{{ scene.summary || '当前剧情画面' }}</strong></p>
+          <blockquote>{{ scene.quote }}</blockquote>
+          <p v-if="scene.reason">为什么画这里：{{ scene.reason }}</p>
+          <p v-if="scene.mustShow">画面重点：{{ scene.mustShow }}</p>
+          <p v-for="note in scene.warnings" :key="note">{{ note }}</p>
+          <button class="bbi-figure__retry" :disabled="busy || planning" @click="openEditor">调整构图／核对衣着</button>
+        </details>
         <!-- 提示词面板:悬浮 文本按钮唤起,复制按钮跟着面板走 -->
         <div v-if="promptOpen && promptText" class="bbi-figure__prompt-box">
           <pre class="bbi-figure__prompt">{{ promptText }}</pre>

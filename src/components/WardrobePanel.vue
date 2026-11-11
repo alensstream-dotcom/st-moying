@@ -685,8 +685,8 @@ onUnmounted(() => {
             </select>
             <p v-else>{{ actor }}</p>
             <select v-model="mode" class="bbi-input">
-              <option value="style">锁款式，剧情允许穿脱／明确换装</option>
-              <option value="always">始终使用整套，忽略剧情换装与穿脱</option>
+              <option value="style">固定款式，穿着状态跟随剧情（推荐）</option>
+              <option value="always">固定整套及穿着状态，忽略剧情变化</option>
             </select>
             <p>
               从第 {{ floor }} 楼起生效。{{

@@ -1,3 +1,4 @@
+import { readScene, readPlacement, type ScenePlan } from '@/autoTag/scene';
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import { getContext } from '@/st/context';
@@ -171,7 +172,7 @@ export function stripImageTags(mes: string): string {
  * 内容里混进一个 `</bbi_image>` 就会让 tag 提前截断、后半截漏进 DOM 与提示词，
  * 正好破掉「tag 永不进 DOM、永不进提示词」这条不变式。
  */
-export const FORBIDDEN_SUBTAG = /<\/?(?:bbi_image|tag|nl|negative|characters|size)\b/i;
+export const FORBIDDEN_SUBTAG = /<\/?(?:bbi_image|tag|nl|negative|characters|size|scene)\b/i;
 
 /** 文本里是否含 bbi_image 子标签字面量（手输校验用；口径同 AI 侧）。 */
 export function containsTagMarkup(text: string): boolean {
@@ -179,6 +180,7 @@ export function containsTagMarkup(text: string): boolean {
 }
 
 export interface ImageTagContent {
+  scene?: ScenePlan;
   /** danbooru 短 tag 部分：显式 <tag> 子标签内容，或剔除子标签后的裸文本（存量格式）。 */
   tag: string;
   /** 自然语言部分：<nl> 子标签内容，无则空串。 */
@@ -218,16 +220,26 @@ export function parseImageTagContent(raw: string): ImageTagContent {
           const name = oneLine(typeof rawItem.name === 'string' ? rawItem.name : '');
           const tag = oneLine(typeof rawItem.tag === 'string' ? rawItem.tag : '');
           const nl = oneLine(typeof rawItem.nl === 'string' ? rawItem.nl : '');
-          return name && tag ? [{ name, tag, nl }] : [];
+          return name && tag ? [{ name, tag, nl,
+            center: readPlacement(rawItem.center),
+            characterId: typeof rawItem.characterId === 'string' ? rawItem.characterId : undefined,
+            negative: typeof rawItem.negative === 'string' ? oneLine(rawItem.negative) : undefined,
+            actionTag: typeof rawItem.actionTag === 'string' ? oneLine(rawItem.actionTag) : undefined,
+            actionNl: typeof rawItem.actionNl === 'string' ? oneLine(rawItem.actionNl) : undefined,
+          }] : [];
         });
       }
     } catch {
       // Invalid character JSON must not break the otherwise valid Base prompt.
     }
   }
+  let scene: ScenePlan | undefined;
+  const sceneMatch = inner.match(/<scene>([\s\S]*?)<\/scene>/i);
+  if (sceneMatch) { try { scene = readScene(JSON.parse(sceneMatch[1])); } catch { /* Legacy tags remain readable. */ } }
   const sizeMatch = inner.match(/<size>([\s\S]*?)<\/size>/i);
   const size = normalizeOrientation(sizeMatch ? oneLine(sizeMatch[1]) : '');
   const withoutSubTags = inner
+    .replace(/<scene>[\s\S]*?<\/scene>/gi, '')
     .replace(/<nl>[\s\S]*?<\/nl>/gi, '')
     .replace(/<negative>[\s\S]*?<\/negative>/gi, '')
     .replace(/<characters>[\s\S]*?<\/characters>/gi, '')
@@ -237,7 +249,7 @@ export function parseImageTagContent(raw: string): ImageTagContent {
     .filter(Boolean);
   const bare = oneLine(withoutSubTags.replace(/<tag>[\s\S]*?<\/tag>/gi, ''));
   const tag = [...(bare ? [bare] : []), ...explicit].join(', ');
-  return { tag, nl, negative, characters, size };
+  return { tag, nl, negative, characters, size, ...(scene ? { scene } : {}) };
 }
 
 /**
@@ -256,7 +268,8 @@ export function serializeImageTag(content: ImageTagContent): string {
   const characters = content.characters.length
     ? `<characters>${JSON.stringify(content.characters)}</characters>`
     : '';
-  return `<bbi_image>${content.tag}${nl}${negative}${characters}<size>${content.size}</size></bbi_image>`;
+  const scene = content.scene ? `<scene>${JSON.stringify(content.scene).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')}</scene>` : '';
+  return `<bbi_image>${scene}${content.tag}${nl}${negative}${characters}<size>${content.size}</size></bbi_image>`;
 }
 
 /**

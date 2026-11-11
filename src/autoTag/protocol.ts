@@ -1,3 +1,4 @@
+import { readScene, readPlacement, type ScenePlan } from './scene';
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import type { TargetSegment } from '@/autoTag/clean';
 import { parseClothingChanges, type ClothingChange } from './outfitTimeline';
@@ -11,12 +12,18 @@ import {
 } from '@/state/charTags';
 
 export interface ImageCharacterPrompt {
+  characterId?: string;
+  center?: { x: number; y: number };
+  negative?: string;
+  actionTag?: string;
+  actionNl?: string;
   name: string;
   tag: string;
   nl: string;
 }
 
 export interface ImageInsertion {
+  scene?: ScenePlan;
   /** 模型选择的目标正文位置 ID。 */
   position: string;
   /** 位置 ID 对应的原始物理行(0-based，仅插件内部使用)。 */
@@ -38,6 +45,7 @@ export interface ImageInsertion {
 }
 
 export interface ImagePlan {
+  wardrobeInitial?: unknown;
   costumeContexts?: unknown;
   identities?: IdentityClaim[];
   outfitChanges?: ClothingChange[];
@@ -168,7 +176,12 @@ function sanitizeCharacters(value: unknown, imageIndex: number): ImageCharacterP
       const name = sanitizeContent(item.name, `characters[${index}].name`, imageIndex);
       const tag = sanitizeContent(item.tag ?? item.prompt, `characters[${index}].tag`, imageIndex);
       const nl = sanitizeContent(item.nl, `characters[${index}].nl`, imageIndex);
-      if (name && tag) characters.push({ name, tag, nl });
+      if (name && tag) characters.push({ name, tag, nl,
+        center: readPlacement(item.center),
+        negative: sanitizeContent(item.negative, 'character.negative', imageIndex),
+        actionTag: typeof item.actionTag === 'string' ? sanitizeContent(item.actionTag, 'actionTag', imageIndex) : undefined,
+        actionNl: typeof item.actionNl === 'string' ? sanitizeContent(item.actionNl, 'actionNl', imageIndex) : undefined,
+      });
     } catch {
       // A malformed character prompt must not discard an otherwise valid image plan.
     }
@@ -239,6 +252,7 @@ export function parseImagePlan(
     // 兼容模型按习惯返回 orientation / aspect 键
     const size = normalizeOrientation(entry.size ?? entry.orientation ?? entry.aspect);
     images.push({
+      scene: { ...readScene(entry.scene ?? {})!, id: '', quote: after },
       position,
       sourceLine,
       charOffset: segment.charOffset ?? 0,
@@ -250,11 +264,12 @@ export function parseImagePlan(
     });
   }
 
-  const limitedImages = images.slice(0, normalizedMax);
+  const limitedImages = images.slice(0, normalizedMax).sort((a, b) => a.sourceLine - b.sourceLine || a.charOffset - b.charOffset);
   if (limitedImages.length < normalizedMin) {
     throw new Error(`AI 返回了 ${limitedImages.length} 张图片，少于设置的最少图片数 ${normalizedMin}`);
   }
   return {
+    wardrobeInitial: parsed.wardrobeInitial,
     images: limitedImages,
     changes: parseChanges(parsed.changes, positions, segmentById),
     costumeContexts: parsed.costumeContexts,

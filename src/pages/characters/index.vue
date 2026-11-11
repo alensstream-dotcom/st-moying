@@ -904,7 +904,7 @@ watch(
                   }}<input v-model="locks" type="checkbox" :value="f" />锁定</span
                 ><input v-model="draft.fields[f]" class="bbi-input" @input="pinEdited(f)" /><small>{{
                   dictionaryReady ? explainTags(draft.fields[f]) : ''
-                }}</small></label
+                }}</small><small>{{ protectedFields.includes(f) && appearanceMode !== 'story' ? '用户锁定' : draft.fieldEvidence?.[f] ? '剧情明确 · ' + draft.fieldEvidence[f] : draft.fields[f] ? '自动补全／历史资料，后续明确描写可校正' : '待补充' }}</small></label
               >
               <label>英文外貌说明<textarea v-model="draft.nl" class="bbi-input" rows="3" /></label>
               <p>

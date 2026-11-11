@@ -397,6 +397,8 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
   const skipCfg = skipCfgAboveSigma(width, height, nai.model, nai.varietyBoost);
   const sampler = isNai5(nai.model) && !NAI_V5_SAMPLERS.has(nai.sampler) ? 'k_euler_ancestral' : nai.sampler;
 
+  const useCoords = !!values.characters?.length && values.characters.every(c => !!c.center);
+  const center = (c: ImageCharacterPrompt) => c.center ? { x: Math.round(c.center.x * 5) / 5, y: Math.round(c.center.y * 5) / 5 } : { x: 0.5, y: 0.5 };
   const params: JsonObject = {
     params_version: isNai5(nai.model) ? 4 : 3,
     width,
@@ -422,7 +424,7 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
     negative_prompt: negative,
     reference_strength_multiple: [],
     normalize_reference_strength_multiple: nai.normalizeRefStrength,
-    use_coords: false,
+    use_coords: useCoords,
   };
 
   if (isNai3(nai.model)) {
@@ -437,21 +439,21 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
     const charCaptions = naiSupportsCharacterPrompts(nai.model)
       ? (values.characters ?? []).map((character) => ({
           char_caption: characterCaption(character),
-          centers: [{ x: 0.5, y: 0.5 }],
+          centers: [center(character)],
         }))
       : [];
     params.characterPrompts = [];
     params.v4_prompt = {
       caption: { base_caption: prompt, char_captions: charCaptions },
-      use_coords: false,
+      use_coords: useCoords,
       use_order: true,
     };
     params.v4_negative_prompt = {
       caption: {
         base_caption: negative,
-        char_captions: charCaptions.map(() => ({
-          char_caption: '',
-          centers: [{ x: 0.5, y: 0.5 }],
+        char_captions: charCaptions.map((c, index) => ({
+          char_caption: values.characters?.[index]?.negative || '',
+          centers: c.centers,
         })),
       },
       legacy_uc: false,

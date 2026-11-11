@@ -681,3 +681,8 @@
     transition: none;
   }
 }
+
+.bbi-scene-detail { margin: 8px 0 12px; padding: 8px 12px; border-left: 2px solid var(--bbi-accent, #6e8bb2); font-size: 13px; line-height: 1.6; text-align: left; }
+.bbi-scene-detail summary { cursor: pointer; opacity: .8; }
+.bbi-scene-detail p { margin: 6px 0; overflow-wrap: anywhere; }
+.bbi-scene-detail blockquote { margin: 8px 0; opacity: .7; max-height: 8em; overflow: auto; }
