@@ -20,6 +20,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { cancelFloorTags } from '@/autoTag/runner';
 import { clothingTrace } from '@/autoTag/outfitTimeline';
+import { extractGarment } from '@/autoTag/outfitState';
 import { effectiveOrientation, type Orientation } from '@/backends/size';
 import Icon from '@/components/Icon.vue';
 import { confirmDialog } from '@/components/confirm';
@@ -533,6 +534,10 @@ async function useAsPortrait(
     if (JSON.stringify(findCharTag(name)?.fields) !== JSON.stringify(snapshot.fields))
       throw new Error('保存期间角色档案已变化，请重新选择图片');
     const appearance = imageAppearance(snapshot, castTag);
+    // 这张图身上穿的也一并存成固定着装，省得再手填：之后账本以它为准，
+    // 剧情没写换装就不会再变款式（写了换装仍能照常换，因为走的是 style 而不是 always）。
+    const garment = extractGarment(castTag);
+    if (garment.trim()) appearance.fields.outfit = garment;
     if (!upsertCharTag(appearance, name, { recordChanges: true })) throw new Error('无法保存该图人物标签');
     setAppearancePolicy(name, {
       mode: appearance.fields.fandom ? 'fandom' : 'manual',

@@ -49,6 +49,7 @@ import {
 import { ensureFemaleSubjects, femaleCastNames } from '@/autoTag/femaleCast';
 import { anchorBlock, buildAnchors } from '@/autoTag/anchorLedger';
 import { ensureImageProfiles } from '@/autoTag/imageProfiles';
+import { diversifyLook } from '@/autoTag/lookDiversity';
 import { characterAliases, saveCharacterAliases } from '@/state/characterAliases';
 import { prepareTargetText } from '@/autoTag/clean';
 import {
@@ -767,7 +768,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                   candidate.changes.some((c) => c.field === 'new' && c.name === name)
                 )
                   continue;
-                const fields = recoverProfileFields(character.tag);
+                const fields = diversifyLook(
+                  recoverProfileFields(character.tag),
+                  entriesBefore,
+                  source,
+                ).fields;
                 candidate.changes.push({
                   name,
                   field: 'new',
@@ -790,7 +795,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 continue;
               const position = preparedTarget.segments[0];
               if (!position) continue;
-              const fields = recoverProfileFields();
+              const fields = diversifyLook(recoverProfileFields(), entriesBefore, source).fields;
               candidate.changes.push({
                 name: fact.name,
                 field: 'new',

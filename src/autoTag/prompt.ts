@@ -536,6 +536,14 @@ ${characterRule}
   - **【上镜锚点】是上一张图里实际用过的写法**：外貌与着装都要逐字复用，改动只限于正文明确写了的变化。锚点与【服装现状】冲突时以账本为准（账本记的是穿脱事实，锚点只是当时的措辞）。
   - **道具是一次性的，别让它长在身上**：刀、剑、枪、手铐、绳、锁链、扇子、托盘、杯子这些跟着动作走的东西，只在正文这一格还在用、还在手里、还架着时才写；情节过去了就不写。反过来，choker、项链、耳环、腕饰、发饰是真饰品，要一直留着。**别把「被按住」「被控制」写成项圈或手铐**——只要正文没写颈部饰品或上铐，就别加 collar / handcuffs。
   - **半脱是独立状态，不是全裸也不是全穿**：露肩、露背、露臀、掀裙、领口被扯开这类姿势，衣服要留在身上并被写出来——off shoulder、slipped down、pulled aside、breasts out、skirt lifted、clothes around waist。只写 nude/topless 会丢掉「衣服还在身上」这一半信息，直接画成光人；只写原封不动的整套衣服，又变成没脱。状态词照抄【服装现状】里已有的那些，不自己造新说法。
+10b. **同一部书里的女角色要长得不一样**：多人同书时，每人的发色、发型、瞳色、眼形、身高与体型、发饰必须彼此拉开距离，不能全是黑长直 + 棕瞳 + 中等身材。
+  - 已经在【角色外貌库】里有条目的角色，按条目写，不许改动；只在条目**空着**某个轴时，才从下面的词表里挑一个**库里没人用过**的值补上。
+  - 条目写着某个值时，即使和另一个角色撞车也照条目写（那是已定的档案）。
+  - **正文写过的长相优先**：正文点名了「银发」「琥珀色的眼睛」「个子很高」，就用正文的，哪怕和别的角色撞车，也不许为了错开去改。
+  - 正文没写、档案也空着的角色，六条轴各自错开，一人只占一个值：发色（black / dark brown / blonde / ash blonde / silver / white / red / auburn / pink / blue / purple / mint green / orange hair）、发型（long straight / short bob cut / twin tails / side ponytail / high ponytail / braided / wavy long / curly / hime cut / medium length / messy short hair）、瞳色（brown / amber / blue / green / grey / violet / red / golden / teal eyes）、眼形（round / almond / narrow / wide / upturned / droopy eyes、tsurime、tareme）、体型（petite / slender / tall / lithe / athletic / curvy / hourglass figure / willowy / toned / voluptuous）、发饰（hairpin / hair ribbon / hairband / hair clip / flower hair ornament / star hair ornament / beret / glasses / single earring / beaded necklace）。
+  - 撞车时**只改发色、发型、瞳色、眼形、体型、发饰这六样**，不动服装、不改年龄、不加种族特征。
+  - 错开是「不冲突的前提下更好认」，不是硬性：正文写明「一模一样的双胞胎」「统一制服」时就按正文。
+  - 多个角色同框时，外貌特征必须绑在各自名字后的角色块里，不许散成一串公共 tag（否则模型会把两人的特征混着用）。
 11. 视角（决定一张图好不好看的一半）——先回答**一个**问题：「这一格要不要看见另一个人在做什么」。要看见，就第三人称；不需要，才轮到第一人称。**不要一遇到两人互动就默认 pov**，那是把两人场面拍成单人自慰的最常见原因。
   - **默认第三人称（配合男主无脸/局部入画）**。两人同场时，第三人称永远能同时交代女主的完整曲线、接触点与位置关系，pov 做不到。常规机位：from side（侧面拍清女主胸腰臀S曲线、后入/深吻/抵墙的体位深度，男主写 faceless male）、from front、over shoulder（从男主虚化肩背越肩看女主表情与正身）、from behind（拍女主后背、塌腰与回眸）。
   - **只在三条同时成立时才用第一人称**（pov、first-person view）：①这一格的全部价值都在她身上——她的表情、她的身体、她被怎样（如正面口交仰视 fellatio + pov + from above + looking up、正面骑乘位 straddling + pov + looking down、传教士正面俯视、女主主动掀裙/足交展示身体）；②不需要交代男主的手在哪、是什么姿势、站在哪儿（或只需 pov hands / pov crotch / penis 即可锚定）；③她正对或背对镜头（正对她就是正对男主，脸与身体天然成立，不用扭头）。

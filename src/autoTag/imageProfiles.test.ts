@@ -62,8 +62,9 @@ describe('ensureImageProfiles 出图即建档', () => {
     expect(op.kind).toBe('new');
     if (op.kind !== 'new') return;
     expect(op.name).toBe('苏晚');
-    expect(op.fields.hair).toBe('black hair');
-    expect(op.fields.eyes).toBe('blue eyes');
+    // hair 里还会被补一个发型（六轴错开），所以只断言原有特征没丢
+    expect(op.fields.hair).toContain('black hair');
+    expect(op.fields.eyes).toContain('blue eyes');
     expect(op.fields.sex).toBe('1girl');
     expect(result.items[0].sourceLine).toBe(3);
   });

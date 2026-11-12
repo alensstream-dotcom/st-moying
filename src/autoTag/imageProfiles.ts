@@ -11,6 +11,7 @@ import { femaleName } from './femaleCast';
 import { isGenericCharacterName } from './genericName';
 import { resolveCanonicalCharName } from './charReuse';
 import { recoverProfileFields } from './profileRecovery';
+import { diversifyLook } from './lookDiversity';
 import type { ImageInsertion } from './protocol';
 
 /**
@@ -169,10 +170,14 @@ export function ensureImageProfiles(
       // 同一张楼里同一位无名女子可能出现在好几张图上：外貌对上了就并回刚才
       // 那条占位档案，别再建一堆「无名女子N」把形象拆散。
       if (!looksLikeName && created.some((item) => sameLook(item.fields, fields))) continue;
+      // 新档的形象要和库里已有的女角色岔开，否则几个「没写长相的少女」会全是同一张脸。
+      // 只岔空着的与撞车的特征，正文写过的词一律不动。
+      const diverse = diversifyLook(fields, [...entries, ...created.map((item) => ({ fields: item.fields }))], text);
+      if (diverse.notes.length) notes.push(`${name}: 形象错开 ${diverse.notes.join('；')}`);
       const op = createCharTagNewOp(
         {
           name,
-          fields: { ...fields, sex: fields.sex?.trim() ? fields.sex : '1girl' },
+          fields: { ...diverse.fields, sex: fields.sex?.trim() ? fields.sex : '1girl' },
           raw: character.tag,
           nl: character.nl ?? '',
           source: 'ai',
