@@ -198,9 +198,56 @@ export function clothingBefore(
       }
     }
     applyWardrobeChoices(state, message, saved?.manualChoiceRevision);
+    // 脱下来的衣服不能永久保持「脱掉」。账本里的 removed 是从头累积的，
+    // 只要剧情不再提，隔一两楼就该当人已经穿回去了——否则前一天脱光，
+    // 后面几十楼全是光着出场。
+    settleStaleUndress(state, message.mes ?? '');
     hash = continuityHash(hash + contribution(message));
   }
   return state;
+}
+/**
+ * 楼层推进时收拾「陈旧脱衣」。
+ *
+ * 规则只有三条，方向都是「变回穿着」：
+ * 1. 这一楼还在写她裸着/正在脱 → 保持原样；
+ * 2. 这一楼出现了这件衣物本身 → 认为在讲它，保持原样；
+ * 3. 都不满足就记一次「闲置」，连续两楼闲置即穿回；场景翻篇（第二天/出门）立刻穿回。
+ */
+export function settleStaleUndress(state: ClothingState, text: string): void {
+  if (!state.size) return;
+  const clothingHere = NAKED_STATE.test(text) || UNDRESS_ACTION.test(text) || BARE_UPPER.test(text) || BARE_LOWER.test(text);
+  const sceneReset = SCENE_RESET.test(text) && !UNDRESS_MARK.test(text);
+  for (const record of state.values()) {
+    if (record.suitMode === 'always') continue;
+    for (const piece of record.pieces) {
+      const location = piece.state.location;
+      if (location !== 'removed' && location !== 'floor' && location !== 'chair' && location !== 'held') continue;
+      const kind = garmentKind(piece.design);
+      const mentioned = piece.design ? text.includes(piece.design.trim()) || pieceMentioned(kind, text) : false;
+      if (clothingHere && mentioned) {
+        piece.state.stale = '0';
+        continue;
+      }
+      if (clothingHere) {
+        piece.state.stale = '0';
+        continue;
+      }
+      if (mentioned && !sceneReset) {
+        piece.state.stale = '0';
+        continue;
+      }
+      const stale = Number(piece.state.stale ?? '0') + 1;
+      if (sceneReset || stale >= 2) {
+        piece.state.location = 'worn';
+        piece.state.fastening = 'closed';
+        piece.state.arrangement = 'normal';
+        piece.state.stale = '0';
+      } else {
+        piece.state.stale = String(stale);
+      }
+    }
+  }
 }
 export function parseClothingChanges(
   raw: unknown,
@@ -766,7 +813,21 @@ export function initialiseClothingFromImage(
     if (!parts.length && wear.wear === 'worn') continue;
     // 剧情写明了穿搭时以原文为准：模型偶尔把长裤画成短裤，账本不能跟着错下去。
     const storyDesign = source ? storyGarmentNear(source, c.name, image.sourceLine, image.charOffset ?? 0) : '';
-    state.set(c.name, legacyRecord(c.name, storyDesign || parts.join(', '), wear.wear, wear.state));
+    // 首次出场时模型常在 tag 里顺手写 nude/topless，可正文压根没说脱。
+    // 正文这一句附近没有任何裸露/脱衣证据时，把模型写的「脱掉」降级成穿着，
+    // 让「衣服是哪件」由模型决定、而「穿没穿」由剧情决定。
+    const window = source
+      ? sentenceWindow(source, absoluteOffset(source, image.sourceLine, image.charOffset ?? 0), 80).text
+      : '';
+    const backedByStory =
+      !window ||
+      NAKED_STATE.test(window) ||
+      UNDRESS_ACTION.test(window) ||
+      BARE_UPPER.test(window) ||
+      BARE_LOWER.test(window) ||
+      OVER_CLOTHES.test(window);
+    const wearLevel = wear.wear !== 'worn' && !backedByStory && storyDesign ? 'worn' : wear.wear;
+    state.set(c.name, legacyRecord(c.name, storyDesign || parts.join(', '), wearLevel, wear.state));
   }
 }
 export function savedImageClothing(image: ImageInsertion, before: ClothingState): ClothingState {
@@ -1110,6 +1171,12 @@ export function synthesiseSceneClothing(
           handled.add(key);
           continue;
         }
+        // 「温泉」「浴缸」单独出现不等于正在洗（温泉街散步、浴室门口说话）。
+        // 这一句里没有任何洗/泡/脱的动作时就不动账本。
+        if (scene.mode === 'bath' && !/(?:脱|洗|泡|淋|浸|搓|冲洗|澡|赤裸|裸)/.test(evidence)) {
+          handled.add(key);
+          continue;
+        }
         for (const piece of record.pieces) {
           const location = piece.state.location;
           if (location && location !== 'worn' && location !== 'unknown') continue;
@@ -1219,8 +1286,11 @@ export function enforceClothing(
     const canonical = entries.length ? resolveCanonicalCharName(c.name, entries) : c.name;
     const record = state.get(canonical) ?? state.get(c.name);
     if (!record) continue;
-    managed++;
     const caption = clothingCaption(record);
+    // 账本一套衣服都没记下来(旧版残档 design 为空)时，别把模型写的衣服也剥掉，
+    // 否则人物会变成「没写任何衣物」→ 出图直接裸。整条跳过，连 Base 也不剥。
+    if (!caption.tag.trim()) continue;
+    managed++;
     const dynamic = c.tag
       .split(',')
       .map((t) => t.trim())

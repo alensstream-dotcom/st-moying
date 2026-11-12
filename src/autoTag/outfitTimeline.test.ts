@@ -5,6 +5,8 @@ import type { ImageInsertion } from './protocol';
 import {
   acceptClothingChanges,
   redressForNewScene,
+  settleStaleUndress,
+  enforceClothing,
   adoptChangedClothing,
   clothingAt,
   clothingCaption,
@@ -341,5 +343,90 @@ describe('redressForNewScene', () => {
   it('没有翻篇标志时不动', () => {
     const { changes } = redressForNewScene('她坐在床边说话。', [], before);
     expect(changes).toHaveLength(0);
+  });
+});
+
+describe('settleStaleUndress', () => {
+  const make = (): ClothingState =>
+    new Map([
+      [
+        '林晚晴',
+        {
+          name: '林晚晴',
+          outfitId: 'o1',
+          pieces: [
+            { id: 'p1', design: 'white shirt', state: { location: 'removed' } },
+            { id: 'p2', design: 'long jeans', state: { location: 'worn' } },
+          ],
+          source: 'init',
+        },
+      ],
+    ]);
+
+  it('连续两楼不提这件衣服就穿回去', () => {
+    const state = make();
+    settleStaleUndress(state, '两人坐在窗边聊天。');
+    expect(state.get('林晚晴')?.pieces[0].state.location).toBe('removed');
+    settleStaleUndress(state, '天色暗了下来。');
+    expect(state.get('林晚晴')?.pieces[0].state.location).toBe('worn');
+    expect(state.get('林晚晴')?.pieces[1].state.location).toBe('worn');
+  });
+
+  it('这一楼还在裸着/在脱就不算陈旧', () => {
+    const state = make();
+    settleStaleUndress(state, '她赤裸着坐在床边。');
+    expect(state.get('林晚晴')?.pieces[0].state.location).toBe('removed');
+  });
+
+  it('场景翻篇立刻穿回', () => {
+    const state = make();
+    settleStaleUndress(state, '第二天清晨，她出门锁门。');
+    expect(state.get('林晚晴')?.pieces[0].state.location).toBe('worn');
+  });
+});
+
+describe('initialiseClothingFromImage', () => {
+  const blank: ImageInsertion = {
+    position: 'P1',
+    sourceLine: 0,
+    charOffset: 0,
+    tag: '',
+    nl: '',
+    negative: '',
+    size: 'portrait',
+    characters: [{ name: '林晚晴', tag: '1girl, nude, black hair', nl: '' }],
+  } as ImageInsertion;
+
+  it('正文没说脱衣时，把模型写的 nude 降级成穿着', () => {
+    const state: ClothingState = new Map();
+    initialiseClothingFromImage(blank, state, '林晚晴穿着白色衬衫站在门口。');
+    expect(state.get('林晚晴')?.pieces[0].state.location).not.toBe('removed');
+  });
+
+  it('正文确实写了赤裸就保留脱衣状态', () => {
+    const state: ClothingState = new Map();
+    initialiseClothingFromImage(blank, state, '林晚晴浑身赤裸地站在窗边。');
+    expect(state.get('林晚晴')?.pieces[0].state.location).toBe('removed');
+  });
+});
+
+describe('clothingCaption 空账本', () => {
+  it('一件衣物都没记时不剥掉模型写的衣服', () => {
+    const state: ClothingState = new Map([
+      ['林晚晴', { name: '林晚晴', outfitId: 'o', pieces: [], source: 'init' }],
+    ]);
+    const image: ImageInsertion = {
+      position: 'P1',
+      sourceLine: 0,
+      charOffset: 0,
+      tag: 'white shirt, long jeans',
+      nl: '',
+      negative: '',
+      size: 'portrait',
+      characters: [{ name: '林晚晴', tag: '1girl, white shirt, long jeans', nl: '' }],
+    } as ImageInsertion;
+    enforceClothing(image, state, false, true);
+    expect(image.characters[0].tag).toContain('white shirt');
+    expect(image.tag).toContain('white shirt');
   });
 });
