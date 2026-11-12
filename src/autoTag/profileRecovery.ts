@@ -1,5 +1,8 @@
 import { emptyCharFields } from '@/state/charTags';
 import { parseImageTags, parseImageTagContent } from '@/st/imageTagRegex';
+/** 戴在身上的饰物：归 extra，不要混进头发/眼睛，否则发色发型轴会被它们挤占。 */
+const ORNAMENT =
+  /^\s*(?:(?:[a-z]+|golden?|silver|bronze|copper|black|white|red|blue|green|purple|pink|grey|gray|brown)\s+){0,2}(?:hair ribbon|hair band|hairband|hairpin|hair clip|hair ornament|hair stick|ribbon|glasses|round glasses|mask|earrings?|earring|piercing|necklace|pendant|choker|collar|bracelet|bangle|anklet|ring|beret|headband|veil|crown|tiara|circlet|headphones)\s*$/i;
 /** Only stable traits actually present in named character blocks, never scene clothes. */
 export function recoverProfileFields(tag = '') {
   const fields = emptyCharFields();
@@ -11,10 +14,11 @@ export function recoverProfileFields(tag = '') {
     const t = token.replace(/_/g, ' ');
     if (/closed eyes|looking|wet|messy|windswept|smil|blush|cry|holding|pulling|breasts out/i.test(t))
       continue;
-    const key =
-      /hair|bangs|braid|ponytail|twintails|bob cut|ahoge|sidelocks|sideburns|chignon|updo|undercut|dreadlocks|cornrows|mohawk|ringlets|pixie cut|hime cut/i.test(
-        t,
-      )
+    const key = ORNAMENT.test(t)
+      ? 'extra'
+      : /hair|bangs|braid|ponytail|twintails|bob cut|ahoge|sidelocks|sideburns|chignon|updo|undercut|dreadlocks|cornrows|mohawk|ringlets|pixie cut|hime cut/i.test(
+            t,
+          )
         ? 'hair'
         : /eyes|heterochromia|tsurime|tareme/i.test(t)
           ? 'eyes'

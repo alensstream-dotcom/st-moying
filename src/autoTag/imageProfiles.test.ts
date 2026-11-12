@@ -194,4 +194,39 @@ describe('ensureImageProfiles 出图即建档', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0].op.kind).toBe('new');
   });
+
+  it('同一楼新出现的两个具名女角色不许共用一张脸', () => {
+    const result = ensureImageProfiles(
+      [
+        image([{ name: '苏晚', tag: '1girl, black hair, blue eyes' }], 0),
+        image([{ name: '林晚晴', tag: '1girl, black hair, blue eyes' }], 1),
+      ],
+      [],
+      [],
+      2,
+      '',
+    );
+    const fields = result.items.map(
+      (item) => (item.op as Extract<typeof item.op, { kind: 'new' }>).fields,
+    );
+    expect(fields).toHaveLength(2);
+    expect(fields[0].hair).not.toBe(fields[1].hair);
+    expect(fields[0].eyes).not.toBe(fields[1].eyes);
+    expect(fields[0].body).not.toBe(fields[1].body);
+  });
+
+  it('一条占位档案只能被一个真名认领，第二个人另建新档', () => {
+    const placeholder = entry(`${PROVISIONAL_PREFIX}1`, { hair: 'long black hair', eyes: 'blue eyes' });
+    const result = ensureImageProfiles(
+      [
+        image([{ name: '苏晚', tag: '1girl, long black hair, blue eyes' }], 0),
+        image([{ name: '林晚晴', tag: '1girl, long black hair, blue eyes' }], 1),
+      ],
+      [placeholder],
+      [],
+      2,
+      '',
+    );
+    expect(result.items.map((item) => item.op.kind)).toEqual(['rename', 'new']);
+  });
 });

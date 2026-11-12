@@ -1,8 +1,10 @@
 import type { TargetSegment } from './clean';
+import { resolveCanonicalCharName } from './charReuse';
 import type { ClothingState, ClothingRecord, ClothingChange, ClothingPiece } from './outfitTimeline';
 import { readClothingFloor, clothingRevision } from './outfitTimeline';
 import type { STMessage } from '@/st/context';
 import type { ImageInsertion } from './protocol';
+import type { CharTagEntry } from '@/state/charTags';
 import { extractGarment } from './outfitState';
 import { requestCompletion, requestViaMainApi } from '@/api/client';
 import { getTagGenChannel } from '@/state/settings';
@@ -146,7 +148,7 @@ function fallbackDesign(design: string, context: CostumeContext): string {
 }
 export interface CostumeRepairs { designs: Map<string, string>; notes: string[] }
 const repairKey = (context: CostumeContext, design: string) => `${context.era}:${context.culture}:${design}`;
-export async function prepareCostumeRepairs(before: ClothingState, changes: ClothingChange[], images: ImageInsertion[], floor: CostumeFloor, setting: string, signal: AbortSignal, source = ''): Promise<CostumeRepairs> {
+export async function prepareCostumeRepairs(before: ClothingState, changes: ClothingChange[], images: ImageInsertion[], floor: CostumeFloor, setting: string, signal: AbortSignal, source = '', entries: CharTagEntry[] = []): Promise<CostumeRepairs> {
   const requests = new Map<string, { id: string; design: string; context: CostumeContext }>();
   const add = (design: string, context: CostumeContext, evidence = '', manual = false) => {
     if (!design || costumeAllows(design, context, evidence, manual)) return;
@@ -156,7 +158,15 @@ export async function prepareCostumeRepairs(before: ClothingState, changes: Clot
   for (const change of changes.filter(c => c.operation !== 'patch')) for (const p of change.pieces) add(p.design, costumeAt(floor, change.sourceLine, change.charOffset), change.evidence);
   for (const image of images) {
     const context = costumeAt(floor, image.sourceLine, image.charOffset);
-    for (const c of image.characters) if (!before.has(c.name) && !changes.some(x => x.name === c.name && x.operation === 'init')) { const design = extractGarment(c.tag); add(design, context, explicitCostumeEvidence(c.name, design, context, source, image.sourceLine, image.charOffset)); }
+    for (const c of image.characters) {
+      // 账本按档案主名记：模型写「晚晴」时这里也要归一，否则她明明已有穿搭，
+      // 还会被当成「首次出现」再补一条 init 记录。
+      const name = entries.length ? resolveCanonicalCharName(c.name, entries) : c.name;
+      if (!before.has(name) && !before.has(c.name) && !changes.some(x => x.name === name && x.operation === 'init')) {
+        const design = extractGarment(c.tag);
+        add(design, context, explicitCostumeEvidence(c.name, design, context, source, image.sourceLine, image.charOffset));
+      }
+    }
   }
   const designs = new Map<string, string>(), notes: string[] = [];
   if (!requests.size) return { designs, notes };
@@ -192,14 +202,23 @@ export function repairCostumeState(state: ClothingState, context: CostumeContext
     p.evidence = ''; // The replacement is a visual correction, not an invented story quotation.
   }
 }
-export function removeUnbackedCostume(image: ImageInsertion, state: ClothingState, context: CostumeContext): string[] {
+export function removeUnbackedCostume(
+  image: ImageInsertion,
+  state: ClothingState,
+  context: CostumeContext,
+  entries: CharTagEntry[] = [],
+): string[] {
   const notes: string[] = [];
   const cleanPrompt = (tag: string, evidence: string, manual = false) => tag.split(',').filter(t => {
     if (costumeAllows(t, context, evidence, manual)) return true;
     notes.push(`移除无剧情依据的跨时代服饰词：${t.trim()}`); return false;
   }).join(',');
   for (const c of image.characters) {
-    const record = state.get(c.name), evidence = record ? record.pieces.map(p => evidenceFor(p, record)).join(' ') : '';
+    // 账本按档案主名记：模型写「晚晴」时不能因为 state.get 落空就把她的整段
+    // 服饰都判成「无剧情依据」，那是跨时代过滤最常误伤的地方。
+    const name = entries.length ? resolveCanonicalCharName(c.name, entries) : c.name;
+    const record = state.get(name) ?? state.get(c.name),
+      evidence = record ? record.pieces.map(p => evidenceFor(p, record)).join(' ') : '';
     const allowedEvidence = [evidence, ...(record?.pieces.filter(p => costumePieceAllowed(p, record, context)).map(p => p.design) ?? [])].join(' ');
     c.tag = cleanPrompt(c.tag, allowedEvidence, record?.manual);
     c.nl = c.nl.split(/(?<=[.!?])\s+/).filter(s => costumeAllows(s, context, allowedEvidence, record?.manual)).join(' ');

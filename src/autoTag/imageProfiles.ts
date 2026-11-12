@@ -90,7 +90,14 @@ export function ensureImageProfiles(
   const text = options.story ?? story;
   const known = entries.map((entry) => entry.name.trim());
   const taken = new Set(known);
-  const created: Array<{ name: string; fields: Record<string, string> }> = [];
+  /**
+   * 本楼已经建过档的人。
+   * `source` 存模型原始写的那套特征（用来判「是不是同一个无名女子」），
+   * `fields` 存岔开之后真正落库的值（用来让下一个人避开）。
+   */
+  const created: Array<{ name: string; source: Record<string, string>; fields: Record<string, string> }> = [];
+  /** 本楼已经用掉的占位名：一条占位档案只能被认领一次。 */
+  const claimed = new Set<string>();
   const supplied = new Set<string>();
   let counter = provisionalIndex(entries);
 
@@ -146,8 +153,14 @@ export function ensureImageProfiles(
       const looksLikeName = !!canonical && !isGenericCharacterName(canonical);
       if (looksLikeName) {
         // 早先只按指代建过「无名女子」：外貌对得上就说明是同一个人，改名而不是新建第二条。
+        // 一条占位档案只能被认领一次——同一楼里两个真名长得一样时，第二个再发一次
+        // `rename 无名女子1` 会因为源名已经不存在而被 applyCharTagOps 静默跳过，
+        // 结果她整楼都没有档案。
         const provisional = entries.find(
-          (entry) => isProvisionalName(entry.name) && sameLook(entry.fields, fields),
+          (entry) =>
+            isProvisionalName(entry.name) &&
+            !claimed.has(entry.name) &&
+            sameLook(entry.fields, fields),
         );
         if (provisional) {
           const op = createCharTagRenameOp(
@@ -156,6 +169,7 @@ export function ensureImageProfiles(
             `第 ${floor} 楼出图时认出她就是先前的「${provisional.name}」`,
           );
           if (op) {
+            claimed.add(provisional.name);
             taken.add(canonical);
             taken.add(provisional.name);
             items.push({ op, sourceLine: image.sourceLine, charOffset: image.charOffset });
@@ -169,10 +183,12 @@ export function ensureImageProfiles(
       if (taken.has(name)) continue;
       // 同一张楼里同一位无名女子可能出现在好几张图上：外貌对上了就并回刚才
       // 那条占位档案，别再建一堆「无名女子N」把形象拆散。
-      if (!looksLikeName && created.some((item) => sameLook(item.fields, fields))) continue;
+      if (!looksLikeName && created.some((item) => sameLook(item.source, fields))) continue;
       // 新档的形象要和库里已有的女角色岔开，否则几个「没写长相的少女」会全是同一张脸。
+      // 同一楼里**同批新建的人之间也要岔开**：只拿 entries 当参照时，两个本楼新角色
+      // 谁都还没进库，于是都留着同一头黑发同一双蓝眼，同框就是双胞胎。
       // 只岔空着的与撞车的特征，正文写过的词一律不动。
-      const diverse = diversifyLook(fields, [...entries, ...created.map((item) => ({ fields: item.fields }))], text);
+      const diverse = diversifyLook(fields, [...entries, ...created], text);
       if (diverse.notes.length) notes.push(`${name}: 形象错开 ${diverse.notes.join('；')}`);
       const op = createCharTagNewOp(
         {
@@ -189,7 +205,8 @@ export function ensureImageProfiles(
       );
       if (!op) continue;
       taken.add(name);
-      if (!looksLikeName) created.push({ name, fields });
+      // 记下**岔开之后**的字段：下一个角色要避开的正是上面真正写进去的值。
+      created.push({ name, source: fields, fields: diverse.fields });
       items.push({ op, sourceLine: image.sourceLine, charOffset: image.charOffset });
       notes.push(`${name}: 出图自动建档`);
     }

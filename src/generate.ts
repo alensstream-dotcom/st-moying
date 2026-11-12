@@ -11,6 +11,7 @@ import {
   clothingBefore,
 } from '@/autoTag/outfitTimeline';
 import { getContext } from '@/st/context';
+import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 import { currentIdentityFacts, enforceKnownMaleIdentity, isMaleIdentity } from '@/state/characterIdentity';
 /**
  * 「一次出图」的共用中段 —— 楼层卡片与公开接口的唯一生成入口。
@@ -272,7 +273,10 @@ export async function generateImage(
     ...new Map(
       [...charTagLib.entries.filter(isManualFandom), ...renderOverrides].map((e) => [e.name, e]),
     ).values(),
-  ].filter((e) => input.characters?.some((c) => c.name === e.name));
+  ].filter((e) =>
+    // 模型写的是「晚晴」这类称呼时，字面比对会让手锁的外貌整层失效。
+    input.characters?.some((c) => resolveCanonicalCharName(c.name, charTagLib.entries) === e.name),
+  );
   let appearanceNotes: string[] = [];
   if (input.storyFrame && input.characters?.length) {
     const chat = getContext()?.chat ?? [];
@@ -337,7 +341,9 @@ export async function generateImage(
     };
   }
   const identityFacts = currentIdentityFacts();
-  if (input.characters?.some((c) => isMaleIdentity(c.name, identityFacts))) {
+  const canon = (name: string) =>
+    charTagLib.entries.length ? resolveCanonicalCharName(name, charTagLib.entries) : name;
+  if (input.characters?.some((c) => isMaleIdentity(canon(c.name), identityFacts))) {
     const image = {
       position: '',
       sourceLine: 0,
@@ -377,7 +383,7 @@ export async function generateImage(
         size: input.size ?? ('portrait' as const),
         characters: (input.characters ?? []).map((c) => ({ ...c })),
       };
-      if (frame.costume) appearanceNotes.push(...removeUnbackedCostume(image, state, frame.costume));
+      if (frame.costume) appearanceNotes.push(...removeUnbackedCostume(image, state, frame.costume, charTagLib.entries));
       enforceClothing(
         image,
         state,
@@ -401,14 +407,19 @@ export async function generateImage(
     const saved = readClothingFloor(chat[floor], clothingRevision(chat, floor));
     const frame = saved?.frames.find((f) => f.tag === input.storyFrame!.tag);
     const exactState = new Map((frame?.entries || []).map((e) => [e.name, e]));
-    applyWardrobeChoices(exactState, chat[floor], saved?.manualChoiceRevision);
+    applyWardrobeChoices(exactState, chat[floor], saved?.manualChoiceRevision, charTagLib.entries);
     const current = clothingBefore(chat, floor + 1, charTagLib.entries),
       bound = new Map();
     for (const c of input.characters) {
+      // 账本按档案主名记，这里也先归一：不然模型写「晚晴」时永远匹配不上
+      // 「林晚晴」那条绑定，固定套装形同虚设。
+      const name = charTagLib.entries.length ? resolveCanonicalCharName(c.name, charTagLib.entries) : c.name;
       const record =
+        exactState.get(name) ??
         exactState.get(c.name) ??
+        (current.get(name)?.suitMode === 'always' ? current.get(name) : undefined) ??
         (current.get(c.name)?.suitMode === 'always' ? current.get(c.name) : undefined);
-      if (record?.suitMode) bound.set(c.name, record);
+      if (record?.suitMode) bound.set(name, record);
     }
     if (bound.size) {
       const image = {
@@ -510,8 +521,12 @@ export async function generateImage(
       );
       if (!input.suppressCharacterReference && characters.length >= 1) {
         for (const c of characters) {
-          const look = lookSettings(c.name),
-            entry = charTagLib.entries.find((e) => e.name === c.name);
+          // 定妆图按档案主名取：名字写成别称时字面查不到档案，参考图会静默不发。
+          const name = charTagLib.entries.length
+            ? resolveCanonicalCharName(c.name, charTagLib.entries)
+            : c.name;
+          const look = lookSettings(name),
+            entry = charTagLib.entries.find((e) => e.name === name);
           if (!look.reference) continue;
           if (!naiConn.model.includes('4-5') || naiConn.vibes.some((v) => v.enabled)) {
             if (!referenceSet.length && !appearanceNotes.includes(REF_ONLY_V45))

@@ -169,11 +169,25 @@ function runSlot(floor: number, seq: number, rawTag: string): Promise<void> {
     let output: Awaited<ReturnType<typeof generateImage>> | undefined;
     try {
       assert();
-      output = await generateImage({ prompt: content.tag, nl: content.nl, negative: content.negative, characters: content.characters, size: content.size, seed }, signal, {
-        onStart: () => setGenPhase(slot, token, 'generating'),
-        onQueue: ahead => setQueueAhead(slot, token, ahead),
-        onRetry: retry => setGenRetry(slot, token, retry),
-      });
+      // 带 storyFrame：出图端会再用这一帧的服装/外貌快照锁一次。reader 路径以前不传，
+      // 等于把「按本图位置取账本状态」这道保险整个跳过，只能指望 plan 阶段没锁漏。
+      output = await generateImage(
+        {
+          prompt: content.tag,
+          storyFrame: { floor, tag: rawTag },
+          nl: content.nl,
+          negative: content.negative,
+          characters: content.characters,
+          size: content.size,
+          seed,
+        },
+        signal,
+        {
+          onStart: () => setGenPhase(slot, token, 'generating'),
+          onQueue: ahead => setQueueAhead(slot, token, ahead),
+          onRetry: retry => setGenRetry(slot, token, retry),
+        },
+      );
       assert();
       output.meta.continuity = [...(output.meta.continuity ?? []), ...clothingTrace(at.assert(), rawTag)];
       await saveImageResult(floor, at.swipe, seq, rawTag, seed, output.result, output.meta, assert);

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { assessIdentityClaims, femaleStoryFact, type IdentitySources } from '@/state/characterIdentity';
+import {
+  assessIdentityClaims,
+  enforceKnownMaleIdentity,
+  femaleStoryFact,
+  type IdentityFact,
+  type IdentitySources,
+} from '@/state/characterIdentity';
+import { emptyCharFields, type CharTagEntry } from '@/state/charTags';
+import type { ImageInsertion } from '@/autoTag/protocol';
 
 const sources = (story: string): IdentitySources => ({ story, card: '', worldbook: '', book: [] });
 
@@ -53,5 +61,36 @@ describe('femaleStoryFact 正文原句取证', () => {
       sources(story),
     );
     expect(assessed.find((f) => f.name === '苏晚晴')?.gender).toBe('unknown');
+  });
+});
+
+describe('enforceKnownMaleIdentity 按主名认档案', () => {
+  const man = (name: string): CharTagEntry => ({
+    name,
+    fields: { ...emptyCharFields(), sex: '1boy', hair: 'short black hair' },
+    raw: '',
+    nl: '',
+    source: 'manual',
+    desc: '',
+    history: [],
+  });
+  const facts: IdentityFact[] = [{ name: '陆沉', gender: 'male', heroine: false, source: 'manual', reason: '', evidence: '' }];
+  const image = (name: string): ImageInsertion => ({
+    position: 'P1',
+    tag: '1boy, 1girl',
+    nl: '',
+    negative: '',
+    characters: [{ name, tag: '1boy, long silver hair, breasts', nl: '' }],
+    size: 'portrait',
+    sourceLine: 0,
+    charOffset: 0,
+  });
+
+  it('写成称呼（阿沉）时仍认得档案，不会把档案已有的外貌词当女性特征留下', () => {
+    const target = image('阿沉');
+    enforceKnownMaleIdentity(target, [man('陆沉')], facts, false);
+    // 档案里已有的 short black hair 属于他，不该被重新拼进 tag
+    expect(target.characters[0].tag).not.toContain('short black hair');
+    expect(target.characters[0].tag).toContain('1boy');
   });
 });

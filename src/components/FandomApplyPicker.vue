@@ -6,6 +6,7 @@ import { charTagLib, findCharTag, upsertCharTag, recomputeCharTags } from '@/sta
 import { setAppearancePolicy, fandomOnly } from '@/state/appearancePolicy';
 import { adoptLook } from '@/state/characterStudio';
 import { getContext } from '@/st/context';
+import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 const props = defineProps<{ item: FandomMaterial | null }>();
 const emit = defineEmits<{ close: []; applied: [name: string, item: FandomMaterial] }>();
 const query = ref(''),
@@ -33,7 +34,10 @@ function apply() {
     const item = props.item;
     if (!item) return;
     if (chat !== getContext()?.getCurrentChatId?.()) throw new Error('聊天已切换，请关闭后重新选择角色');
-    const old = findCharTag(target.value);
+    // 输入框允许手打称呼（「晚晴」「林小姐」），先归一到档案主名再查，
+    // 否则会落空并误报「请选择角色库中要套用的角色」。
+    const name = resolveCanonicalCharName(target.value.trim(), charTagLib.entries);
+    const old = findCharTag(name);
     if (!old) throw new Error('请选择角色库中要套用的角色');
     const next = fandomOnly(old, { fandom: item.tags });
     if (!upsertCharTag(next, old.name, { recordChanges: true })) throw new Error('角色档案保存失败');

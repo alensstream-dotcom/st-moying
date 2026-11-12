@@ -72,6 +72,14 @@ describe('buildAnchors', () => {
     const bound = buildAnchors(chat, 1, () => true, '脖颈上的黑色项圈，手腕被手铐铐住')[0];
     expect(bound.props).toBe('black collar, handcuffs');
   });
+
+  it('锚点按档案主名归并，别名不会变成第二个人的锚点', () => {
+    const chat = [floor('long black hair, white dress', '晚晴'), floor('long black hair, red dress', '林晚晴')];
+    const entries = [{ name: '林晚晴' }] as never;
+    const anchors = buildAnchors(chat, 2, () => true, '', entries);
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0].costume).toBe('red dress');
+  });
 });
 
 describe('anchorBlock', () => {

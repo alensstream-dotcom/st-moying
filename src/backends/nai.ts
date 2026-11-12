@@ -460,7 +460,9 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
     params.characterPrompts = [];
     params.v4_prompt = {
       caption: { base_caption: prompt, char_captions: charCaptions },
-      use_coords: false,
+      // use_coords 必须为 true，char_captions 里的 centers 才会被采纳；
+      // 旧代码一直是 false，等于每人的落点白填，两个人都被画在正中叠成一团。
+      use_coords: charCaptions.length > 0,
       use_order: true,
     };
     params.v4_negative_prompt = {

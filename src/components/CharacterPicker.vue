@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, ref } from 'vue';
 import ModalMask from './ModalMask.vue';
 import { requestCompletion, requestViaMainApi } from '@/api/client';
-import { findCharTag } from '@/state/charTags';
+import { charTagLib, findCharTag } from '@/state/charTags';
+import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 import { getTagGenChannel } from '@/state/settings';
 import { getContext } from '@/st/context';
 
@@ -41,11 +42,14 @@ const controller = new AbortController();
 onBeforeUnmount(() => controller.abort());
 
 const rows = computed<Row[]>(() => {
-  const fromTag: Row[] = props.cast.map((item) => ({
-    name: item.name,
-    tag: item.tag,
-    saved: !!findCharTag(item.name),
-  }));
+  // 角色块里可能写的是「晚晴」这类称呼：先归到档案主名，否则同一个人的档案会被
+  // 标成「未建档」，点一下就拿称呼另建一条新档。
+  const fromTag: Row[] = props.cast.map((item) => {
+    const name = charTagLib.entries.length
+      ? resolveCanonicalCharName(item.name, charTagLib.entries)
+      : item.name;
+    return { name, tag: item.tag, saved: !!findCharTag(name) };
+  });
   const seen = new Set(fromTag.map((row) => row.name));
   return [...fromTag, ...extra.value.filter((row) => !seen.has(row.name))];
 });
@@ -117,7 +121,11 @@ async function recognise() {
     if (!found.length) throw new Error('没有识别到女性角色');
     extra.value = found.map((item, index) => {
       const named = (item.name ?? '').trim();
-      const name = named || `无名女子${index + 1}`;
+      // 视觉模型也常写「晚晴」这种称呼：同样先归主名，否则点保存会另建一条档。
+      const raw = named || `无名女子${index + 1}`;
+      const name = charTagLib.entries.length
+        ? resolveCanonicalCharName(raw, charTagLib.entries)
+        : raw;
       return {
         name,
         tag: (item.tag ?? '').trim(),

@@ -163,9 +163,6 @@ function sanitizeContent(value: unknown, field: string, index: number): string {
   return text;
 }
 
-const GRID_COL: Record<string, number> = { A: 0.1, B: 0.3, C: 0.5, D: 0.7, E: 0.9 };
-const GRID_ROW: Record<string, number> = { '1': 0.1, '2': 0.3, '3': 0.5, '4': 0.7, '5': 0.9 };
-
 /**
  * 画面落点：收 "A1".."E5" 网格、也收 {x,y}；越界夹到 0.1—0.9。
  * 解不出来返回 undefined（调用方保持旧行为，落在正中）。

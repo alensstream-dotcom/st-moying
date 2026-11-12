@@ -1,5 +1,5 @@
 import { readCounts } from './castCheck';
-import { resolveCanonicalCharName } from './charReuse';
+import { candidateAliasesForEntry, resolveCanonicalCharName } from './charReuse';
 import {
   femaleStoryFact,
   isMaleIdentity,
@@ -91,17 +91,48 @@ export function imageHasFemale(
   return readCounts(image.tag ?? '').girls > 0;
 }
 
+/**
+ * 这个名字在正文里出现过的全部位置。
+ *
+ * 只认全名不够：正文九成写「晚晴」「晚晴小姐」，库名却是「林晚晴」。字面比对
+ * 会判成「这一段没有女性」→ 整张图被丢掉，正是「明明有女角色却出背景图」。
+ */
+export function mentionIndexes(
+  text: string,
+  name: string,
+  entries: readonly CharTagEntry[],
+): number[] {
+  if (!text || !name) return [];
+  const entry = entries.find((item) => item.name.trim() === name);
+  const needles = new Set<string>([name]);
+  if (entry) for (const alias of candidateAliasesForEntry(entry)) if (alias) needles.add(alias);
+  const hits: number[] = [];
+  for (const needle of needles)
+    for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + 1)) hits.push(at);
+  return hits.sort((left, right) => left - right);
+}
+
 /** 候选女性条目按「离这一格最近的一次点名」排序。 */
-function closestMention<T extends { name: string }>(items: readonly T[], story: string, at: number): T[] {
+function closestMention(
+  items: readonly { name: string }[],
+  story: string,
+  at: number,
+  entries: readonly CharTagEntry[],
+): { name: string }[] {
   const ranked = items
     .map((item) => {
-      const before = story.lastIndexOf(item.name, at);
-      return { item, index: before >= 0 ? before : story.indexOf(item.name) };
+      const hits = mentionIndexes(story, item.name, entries);
+      const before = hits.filter((hit) => hit <= at).pop();
+      // 以被点名处到这一格的距离排，不是以「文中位置前后」排：后面很远才提一句的人
+      // 不该压过紧挨着这一格的人。没有更早提及时退到其后第一次提名（距离为正）。
+      const index = before ?? hits.find((hit) => hit > at) ?? -1;
+      return { item, index, distance: index < 0 ? Infinity : Math.abs(index - at) };
     })
     .filter((hit) => hit.index >= 0)
-    .sort((left, right) => right.index - left.index);
+    .sort((left, right) => left.distance - right.distance);
   return ranked.map((hit) => hit.item);
 }
+
 
 export interface FemaleCastOutcome {
   /** 保留下来的图片（可能少了几张）。 */
@@ -115,6 +146,15 @@ export interface FemaleCastOutcome {
 export interface FemaleCastOptions {
   /** true 时把没有女性主体的图整张丢掉；false（单槽重写）只尝试补人。 */
   drop?: boolean;
+}
+
+/** 图片的全局偏移。charOffset 是「行内偏移」，直接拿来和正文比会永远落在文章开头。 */
+function absoluteAt(story: string, image: ImageInsertion): number {
+  const lines = story.split('\n');
+  const line = Math.max(0, Math.min(lines.length - 1, image.sourceLine ?? 0));
+  let at = 0;
+  for (let i = 0; i < line; i += 1) at += (lines[i] ?? '').length + 1;
+  return Math.max(0, Math.min(story.length, at + (image.charOffset ?? 0)));
 }
 
 /**
@@ -141,17 +181,22 @@ export function ensureFemaleSubjects(
       continue;
     }
     const text = segmentText.get(image.position) ?? '';
-    const at = Math.max(0, Math.min(story.length, image.charOffset ?? 0));
-    const namedInText = names.filter((name) => text.includes(name));
-    let pick = namedInText.length ? closestMention(
-      namedInText.map((name) => ({ name })),
-      story,
-      at,
-    )[0]?.name : '';
+    // 之前直接拿 charOffset 当全局位置：那只是行内偏移，几乎总是很小的数，
+    // closestMention 于是总挑「整楼最前面被点名的人」——补进来的往往不是这一段的人。
+    const at = absoluteAt(story, image);
+    const namedInText = names.filter((name) => mentionIndexes(text, name, entries).length > 0);
+    let pick = namedInText.length
+      ? closestMention(
+          namedInText.map((name) => ({ name })),
+          story,
+          at,
+          entries,
+        )[0]?.name
+      : '';
     if (!pick && FEMALE_CUE_RE.test(text)) {
       // 正文只写「她」：从整楼里她最近一次被点名的地方补。
       const candidates = names.map((name) => ({ name }));
-      pick = closestMention(candidates, story, at)[0]?.name ?? '';
+      pick = closestMention(candidates, story, at, entries)[0]?.name ?? '';
     }
     const entry = entries.find((item) => item.name.trim() === pick);
     if (!pick) {

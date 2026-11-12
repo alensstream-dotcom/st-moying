@@ -392,7 +392,8 @@ describe('NAI V5 support', () => {
       { char_caption: '', centers: [{ x: 0.5, y: 0.5 }] },
       { char_caption: '', centers: [{ x: 0.5, y: 0.5 }] },
     ]);
-    expect(positive.use_coords).toBe(false);
+    // 有人物块时必须开 use_coords，否则 centers 会被 NAI 忽略、每人都画在正中。
+    expect(positive.use_coords).toBe(true);
     expect(positive.use_order).toBe(true);
   });
 

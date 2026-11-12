@@ -132,6 +132,25 @@ describe('ensureFemaleSubjects', () => {
     const result = ensureFemaleSubjects(plan, [segment('P2', '她抬眼看他。')], entries, facts, story);
     expect(result.dropped).toHaveLength(0);
   });
+
+  it('picks the woman nearest this image, not the top of the floor', () => {
+    // charOffset 是行内偏移。旧代码把它当全局位置，at 永远是个小数字，
+    // closestMention 就总挑整楼最前面那个人（风千华），这一格明明写的是苏晚。
+    const multi = '风千华坐在床边。\n苏晚推门进来，男人跟着她。';
+    const plan = [image('P2', '1boy, rain')];
+    plan[0].sourceLine = 1;
+    plan[0].charOffset = 6;
+    const women = [entry('风千华', '1girl'), entry('苏晚', '1girl'), entry('周野', '1boy')];
+    const result = ensureFemaleSubjects(
+      plan,
+      [segment('P2', '苏晚推门进来，男人跟着她。')],
+      women,
+      facts,
+      multi,
+    );
+    expect(result.images[0].characters?.map((item) => item.name)).toContain('苏晚');
+    expect(result.images[0].characters?.map((item) => item.name)).not.toContain('风千华');
+  });
 });
 
 describe('diagnoseFemaleSubject', () => {

@@ -15,7 +15,7 @@ import { currentIdentityFacts, type IdentityFact } from '@/state/characterIdenti
  *   把正文或模型输出里的「姓氏+尊称/辈分/职务」(风阿姨、林老师、苏总)、「直呼其名/亲昵简称」(千华、千华姐)
  *   唯一归并回已建档主名(风千华),并在模型因换称呼漏抄固定外貌时用档案字段兜底补齐。
  */
-import { CHAR_TAG_FIELDS, type CharTagEntry } from '@/state/charTags';
+import { type CharTagEntry, type CharTagField } from '@/state/charTags';
 import { LOOK_DIMENSION_LABEL, compareLook, isLookPin, scanLook } from '@/data/lookMatch';
 
 export interface CharReuse {
@@ -576,10 +576,9 @@ function ensureEntryAppearanceInCharacterTag(rawTag: string, entry: CharTagEntry
 }
 
 /** 档案侧参与比对的字段:只取长期不变的外形,outfit 会把「今天穿了什么」也算进相似度。 */
-const LOOK_FIELDS = CHAR_TAG_FIELDS.filter(
-  (field) =>
-    field === 'hair' || field === 'eyes' || field === 'body' || field === 'extra' || field === 'skin',
-);
+// 写成字面量而不是 CHAR_TAG_FIELDS.filter:characterIdentity 在模块顶层 import 本文件,
+// 而本文件又 import charTags,成环时求值顺序会让 CHAR_TAG_FIELDS 还是 undefined。
+const LOOK_FIELDS: CharTagField[] = ['hair', 'eyes', 'body', 'extra', 'skin'];
 
 function entryLookText(entry: CharTagEntry): string {
   return LOOK_FIELDS.map((field) => entry.fields[field] ?? '')

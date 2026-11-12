@@ -1,10 +1,11 @@
 import { characterAliases } from '@/state/characterAliases';
+import { appearancePolicy } from '@/state/appearancePolicy';
 import { applyWardrobeChoices, wardrobeChoiceRevision } from '@/state/wardrobeChoice';
 import type { CostumeContext, CostumeFloor } from './costumeContext';
 import type { TargetSegment } from './clean';
 import type { ImageInsertion } from './protocol';
 import { extractGarment, readOutfitState, readWear, BBI_OUTFIT_EXTRA_KEY } from './outfitState';
-import { resolveCanonicalCharName } from './charReuse';
+import { candidateAliasesForEntry, resolveCanonicalCharName } from './charReuse';
 import { isCollarToken, isPropToken, storyMentionsCollar, storyMentionsProp } from './props';
 import type { CharTagEntry } from '@/state/charTags';
 import type { STMessage } from '@/st/context';
@@ -141,19 +142,35 @@ export function readClothingFloor(
     ? copy(raw)
     : null;
 }
+/**
+ * 把一串衣物描述拆成可按件操作的部件。
+ *
+ * 「white shirt, long jeans」存成单个部件时有个死结：模型报「褪下牛仔裤」只会给
+ * `id: jeans`，而账本里只有 `legacy`，`patch` 一定被「指向未知衣物部件」拒掉，
+ * 裤子永远脱不下来。按衣物类别拆开才能一件一件改状态。
+ */
+function splitPieces(design: string, wear: string, state: string): ClothingPiece[] {
+  const parts = String(design ?? '')
+    .split(/[,，、]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const base = { location: wear === 'off' ? 'removed' : 'unknown', ...(state ? { legacy: state } : {}) };
+  if (parts.length <= 1) return [{ id: garmentKind(design) || 'legacy', design, state: { ...base } }];
+  const used = new Map<string, number>();
+  return parts.map((part) => {
+    const kind = garmentKind(part) || 'piece';
+    const seen = (used.get(kind) ?? 0) + 1;
+    used.set(kind, seen);
+    return { id: seen === 1 ? kind : `${kind}_${seen}`, design: part, state: { ...base } };
+  });
+}
 function legacyRecord(name: string, design: string, wear: string, state: string): ClothingRecord {
   // Preserve legacy uncertainty; never turn a crop or omitted state into 'fully dressed'.
   return {
     name,
     outfitId: `legacy_${continuityHash(name + design)}`,
     source: '旧版记录（部件未确认）',
-    pieces: [
-      {
-        id: 'legacy',
-        design,
-        state: { location: wear === 'off' ? 'removed' : 'unknown', ...(state ? { legacy: state } : {}) },
-      },
-    ],
+    pieces: splitPieces(design, wear, state),
   };
 }
 export function clothingBefore(
@@ -166,16 +183,20 @@ export function clothingBefore(
   // 剧情不能随手把它换掉,但正文明确写了换装就该换——所以是 style(锁款式),不是 always
   // (always 会拒掉整套换装,正好又回到「剧情换了衣服、画面还是那一套」)。
   // 只有字段为空的人才是「首次未知、可合理决定一次」。
-  for (const e of entries)
-    if (e.fields.outfit.trim())
+  // 点图固定形象写进的是 appearancePolicy 而不是档案字段,这里也要认，否则
+  // 账本压根没有她这一行，注入段与 enforceClothing 都落空。
+  for (const e of entries) {
+    const pinned = (e.fields.outfit || appearancePolicy(e.name)?.fields.outfit || '').trim();
+    if (pinned)
       state.set(e.name, {
-        ...legacyRecord(e.name, e.fields.outfit, 'worn', ''),
+        ...legacyRecord(e.name, pinned, 'worn', ''),
         suitMode: 'style',
         manual:
           e.source === 'manual' &&
           (!e.history.some((h) => h.field === 'outfit') ||
             [...e.history].reverse().find((h) => h.field === 'outfit')?.floor === -1),
       });
+  }
   let hash = '';
   for (let floor = 0; floor < Math.min(beforeFloor, chat.length); floor++) {
     const message = chat[floor],
@@ -204,7 +225,7 @@ export function clothingBefore(
           }
       }
     }
-    applyWardrobeChoices(state, message, saved?.manualChoiceRevision);
+    applyWardrobeChoices(state, message, saved?.manualChoiceRevision, entries);
     // 脱下来的衣服不能永久保持「脱掉」。账本里的 removed 是从头累积的，
     // 只要剧情不再提，隔一两楼就该当人已经穿回去了——否则前一天脱光，
     // 后面几十楼全是光着出场。
@@ -232,10 +253,7 @@ export function settleStaleUndress(state: ClothingState, text: string): void {
       if (location !== 'removed' && location !== 'floor' && location !== 'chair' && location !== 'held') continue;
       const kind = garmentKind(piece.design);
       const mentioned = piece.design ? text.includes(piece.design.trim()) || pieceMentioned(kind, text) : false;
-      if (clothingHere && mentioned) {
-        piece.state.stale = '0';
-        continue;
-      }
+      // 本楼正在穿脱/袒露，就别自作主张把人穿回去——哪怕这件衣服没被点名。
       if (clothingHere) {
         piece.state.stale = '0';
         continue;
@@ -395,6 +413,12 @@ export function unreportedClothingActions(
   const pattern =
     /(?:脱下|脱掉|脱去|褪下|褪去|解开|掀起|撩起|穿回|穿上|拉下)[^。！？\n]{0,14}?(?:外套|衬衫|衬衣|上衣|长裙|短裙|裙子|内裤|胸罩|文胸|裤子|丝袜|长袜|衣扣)|(?:外套|衬衫|衬衣|上衣|裙子|内裤|胸罩|文胸|裤子|丝袜)[^。！？\n]{0,8}?(?:脱下|脱掉|脱去|褪下|褪去|解开|掀起|撩起|拉下)/g;
   const names = [...new Set([...entries.map((e) => e.name), ...changes.map((c) => c.name)])];
+  // 主名以外，正文常常只写简称/称谓（「晚晴」「林小姐」）。只按主名找主语时，
+  // 「晚晴褪下内裤」会被判成没人认领，于是这条待核对提示根本不出现。
+  const calls = (name: string) => {
+    const entry = entries.find((e) => e.name === name);
+    return [name, ...characterAliases(name), ...(entry ? candidateAliasesForEntry(entry) : [])].filter(Boolean);
+  };
   for (const match of normalized.matchAll(pattern)) {
     const index = match.index || 0;
     if (
@@ -405,17 +429,14 @@ export function unreportedClothingActions(
       continue;
     const context = normalized.slice(Math.max(0, index - 300), index);
     const mentions = names
-      .map((name) => ({
-        name,
-        at: Math.max(...[name, ...characterAliases(name)].map((a) => context.lastIndexOf(a))),
-      }))
+      .map((name) => ({ name, at: Math.max(...calls(name).map((a) => context.lastIndexOf(a))) }))
       .filter((m) => m.at >= 0)
       .sort((a, b) => b.at - a.at);
     const actor = mentions[0]?.name;
     const local = context.slice(-24);
     if (
       !/她[^。！？“”「」『』]{0,8}$/.test(local) &&
-      ![actor || '', ...characterAliases(actor || '')].filter(Boolean).some((name) => local.includes(name))
+      !calls(actor || '').some((name) => local.includes(name))
     )
       continue;
     if (
@@ -451,17 +472,21 @@ export function acceptClothingChanges(
     const old = current.get(c.name);
     if (old && c.operation === 'patch')
       for (const piece of c.pieces) {
-        if (old.pieces.some((p) => p.id === piece.id) || !piece.design) continue;
-        const matches = old.pieces.filter(
-          (p) => p.design.trim().toLowerCase() === piece.design.trim().toLowerCase(),
-        );
-        if (matches.length === 1) piece.id = matches[0].id;
-        else {
-          // 模型经常给同一件衣服换个说法（black blouse / white shirt），按衣物类别唯一匹配兜底。
-          const kind = garmentKind(piece.design);
-          const sameKind = kind ? old.pieces.filter((p) => garmentKind(p.design) === kind) : [];
-          if (sameKind.length === 1) piece.id = sameKind[0].id;
+        if (old.pieces.some((p) => p.id === piece.id)) continue;
+        // 模型写的是它自己起的名（`jeans`、`white shirt`），得先归到账本里已有的部件上，
+        // 否则下面一律判「指向未知衣物部件」，穿脱永远记不上。
+        const matches = piece.design
+          ? old.pieces.filter((p) => p.design.trim().toLowerCase() === piece.design.trim().toLowerCase())
+          : [];
+        if (matches.length === 1) {
+          piece.id = matches[0].id;
+          continue;
         }
+        // 换说法（black blouse / white shirt）或只给部件名时，按衣物类别唯一匹配兜底。
+        const kind = garmentKind(piece.design || piece.id);
+        if (!kind) continue;
+        const sameKind = old.pieces.filter((p) => garmentKind(p.design) === kind);
+        if (sameKind.length === 1) piece.id = sameKind[0].id;
       }
     if (old?.suitMode === 'always' && c.operation !== 'patch') {
       rejected.push(c.name + ': 用户固定套装不接受整套换装（要跟随剧情请在衣柜面板改为“锁定款式”）；穿脱状态仍会记录');
@@ -830,10 +855,12 @@ export function proseGarment(sentence: string): string {
   return '';
 }
 /** 只认点名到本人的穿搭句，避免把别人的衣服算到她头上，也跳过脱衣/否定语境。 */
-function storyGarmentNear(source: string, name: string, line: number, offset: number): string {
+function storyGarmentNear(source: string, names: string[], line: number, offset: number): string {
   const lines = source.replace(/\r\n?/g, '\n').split('\n');
   const preceding = [...lines.slice(0, line), (lines[line] ?? '').slice(0, offset || undefined)].join('\n');
-  const sentences = preceding.split(/(?<=[。！？!?\n])/).filter((sentence) => sentence.includes(name));
+  const sentences = preceding
+    .split(/(?<=[。！？!?\n])/)
+    .filter((sentence) => names.some((name) => name && sentence.includes(name)));
   for (const sentence of [...sentences].reverse().slice(0, 6)) {
     if (/没穿|未穿|不穿|没有穿|脱下|脱掉|褪下|换下/.test(sentence)) continue;
     if (!/穿着|身穿|身着|穿了|套着|披着|一身/.test(sentence)) continue;
@@ -848,9 +875,14 @@ export function initialiseClothingFromImage(
   image: ImageInsertion,
   state: ClothingState,
   source = '',
+  entries: CharTagEntry[] = [],
 ): void {
   for (const c of image.characters) {
-    if (state.has(c.name)) continue;
+    // 账本按档案主名记。模型写「晚晴」而库里是「林晚晴」时，原来 state.has('晚晴')
+    // 判不中，于是同一个人的账本被拆成两条，越记越多。
+    const name = entries.length ? resolveCanonicalCharName(c.name, entries) : c.name;
+    if (state.has(name)) continue;
+    const entry = entries.find((e) => e.name === name);
     const parts = extractGarment(c.tag)
       .split(',')
       .map((s) => s.trim())
@@ -858,7 +890,15 @@ export function initialiseClothingFromImage(
     const wear = readWear(c.tag);
     if (!parts.length && wear.wear === 'worn') continue;
     // 剧情写明了穿搭时以原文为准：模型偶尔把长裤画成短裤，账本不能跟着错下去。
-    const storyDesign = source ? storyGarmentNear(source, c.name, image.sourceLine, image.charOffset ?? 0) : '';
+    const storyDesign = source
+      ? storyGarmentNear(
+          source,
+          // 正文里点名她的方式不一定是主名（「晚晴」「林小姐」都算），否则原文优先形同虚设
+          [name, c.name, ...characterAliases(name), ...(entry ? candidateAliasesForEntry(entry) : [])],
+          image.sourceLine,
+          image.charOffset ?? 0,
+        )
+      : '';
     // 首次出场时模型常在 tag 里顺手写 nude/topless，可正文压根没说脱。
     // 正文这一句附近没有任何裸露/脱衣证据时，把模型写的「脱掉」降级成穿着，
     // 让「衣服是哪件」由模型决定、而「穿没穿」由剧情决定。
@@ -873,24 +913,34 @@ export function initialiseClothingFromImage(
       BARE_LOWER.test(window) ||
       OVER_CLOTHES.test(window);
     const wearLevel = wear.wear !== 'worn' && !backedByStory && storyDesign ? 'worn' : wear.wear;
-    state.set(c.name, legacyRecord(c.name, storyDesign || parts.join(', '), wearLevel, wear.state));
+    state.set(name, legacyRecord(name, storyDesign || parts.join(', '), wearLevel, wear.state));
   }
 }
-export function savedImageClothing(image: ImageInsertion, before: ClothingState): ClothingState {
+export function savedImageClothing(
+  image: ImageInsertion,
+  before: ClothingState,
+  entries: CharTagEntry[] = [],
+): ClothingState {
   const state: ClothingState = new Map(copy([...before]));
   for (const c of image.characters) {
+    const name = entries.length ? resolveCanonicalCharName(c.name, entries) : c.name;
     const wear = readWear(c.tag),
       design = extractGarment(c.tag);
-    if (design || wear.wear !== 'worn')
-      state.set(c.name, legacyRecord(c.name, design, wear.wear, wear.state));
+    if (design || wear.wear !== 'worn') state.set(name, legacyRecord(name, design, wear.wear, wear.state));
   }
   return state;
 }
 const CLOTHING_WORD =
-  /\b(?:dress|shirt|skirt|pants|trousers|shorts|jeans|jacket|blazer|coat|suit|bra|panties|underwear|lingerie|stockings|thighhighs|pantyhose|tights|socks|shoes|boots|heels|uniform|serafuku|hanfu|kimono|robe|collar|sleeves?|clothes|clothing|outfit|sash|belt|ribbon|cloak|cape|gloves|swimsuit|bikini|apron|corset|hoodie|sweater|cardigan|blouse|tunic|ruqun|hakama|yukata|obi|geta|miko|qipao|cheongsam|necktie|bow tie|sneakers|loafers|baseball cap|dudou|chest wrap|underpants|undergarment)\b/i;
+  /\b(?:dress|shirt|skirt|pants|trousers|shorts|jeans|jacket|blazer|coat|suit|bra|panties|underwear|lingerie|stockings|thighhighs|pantyhose|tights|socks|shoes|boots|heels|uniform|serafuku|hanfu|kimono|robe|collar|sleeves?|clothes|clothing|outfit|sash|belt|cloak|cape|gloves|swimsuit|bikini|apron|corset|hoodie|sweater|cardigan|blouse|tunic|ruqun|hakama|yukata|obi|geta|miko|qipao|cheongsam|necktie|bow tie|sneakers|loafers|baseball cap|dudou|chest wrap|underpants|undergarment)\b/i;
+/** 戴在头上、脸上、脖子或腕上的饰物：归 appearance 的 extra，服装层不许把它当衣服剥掉。 */
+const BODY_ORNAMENT =
+  /\b(?:hair ribbon|hair band|hairband|hairpin|hair clip|hair ornament|ribbon|\b(?:neck|choker|circlet|tiara|ankle|wrist) ?(?:lace|band|ribbon|chain|let|cuffs?)\b|glasses|mask|earrings?|earring|piercing|necklace|pendant|choker|bracelet|bangle|anklet|ring|beret|headband|veil|crown)/i;
 const WEAR_WORD = /\b(?:nude|naked|topless|bottomless|fully clothed|off shoulder|breasts out|undressed)\b/i;
 const CLOTHING_ACTION = /\b(?:holding|grabbing|pulling|lifting|tugging|unbuttoning|taking off|removing)\b/i;
 export function isClothingDescription(value: string): boolean {
+  // `hair ribbon` 命中 CLOTHING_WORD 里的 ribbon，但账本里没有它——早年就是这么被服装层
+  // 剥掉的：档案 extra 写了发带，出图 prompt 里却没有。饰物归 appearance，服装层不碰。
+  if (BODY_ORNAMENT.test(value)) return false;
   return (CLOTHING_WORD.test(value) || WEAR_WORD.test(value)) && !CLOTHING_ACTION.test(value);
 }
 export function clothingCaption(record: ClothingRecord): { tag: string; nl: string } {
@@ -903,42 +953,26 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
   for (const p of record.pieces) {
     const s = p.state,
       location = s.location;
-    const both = /\b(?:dress|robe|uniform|jumpsuit|bodysuit|no clothes)\b/i.test(p.design);
-    const upper =
-      both ||
-      /\b(?:shirt|blouse|bra|jacket|blazer|coat|sweater|top|camisole|corset|tunic|dudou|chest wrap)\b/i.test(
-        p.design,
-      );
-    const lower =
-      both || /\b(?:skirt|pants|trousers|shorts|jeans|panties|underwear|underpants)\b/i.test(p.design);
+    const kind = garmentKind(p.design);
+    const cover = covers(kind);
+    const both = cover.both,
+      upper = cover.upper,
+      lower = cover.lower;
     if (['removed', 'floor', 'chair', 'held'].includes(location)) {
-      upperRemoved ||=
-        both || /\b(?:shirt|blouse|bra|sweater|top|camisole|corset|tunic|dudou|chest wrap)\b/i.test(p.design);
+      upperRemoved ||= upper;
       lowerRemoved ||= lower;
       if (p.id === 'legacy') {
         if (s.legacy) tags.push(s.legacy);
         continue;
       }
-      const garment = /\b(?:shirt|blouse)\b/i.test(p.design)
-        ? 'shirt'
-        : /\bbra\b/i.test(p.design)
-          ? 'bra'
-          : /\bpanties\b/i.test(p.design)
-            ? 'panties'
-            : /\b(?:pants|trousers)\b/i.test(p.design)
-              ? 'pants'
-              : /\bskirt\b/i.test(p.design)
-                ? 'skirt'
-                : /\bdress\b/i.test(p.design)
-                  ? 'dress'
-                  : '';
+      const garment = REMOVED_TAG[kind] ?? '';
       if (
         garment &&
         !record.pieces.some(
           (other) =>
             other.id !== p.id &&
             other.state.location === 'worn' &&
-            new RegExp('\\b' + garment + '\\b', 'i').test(other.design),
+            garmentKind(other.design) === kind,
         )
       )
         tags.push('no ' + garment);
@@ -1004,15 +1038,26 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
   }
   return { tag: [...new Set(tags.filter(Boolean))].join(', '), nl: sentences.join(' ') };
 }
-/** 衣物类别。用于部件 ID 兜底匹配、场景推断与换装采纳。 */
+/**
+ * 衣物类别。用于部件 ID 兜底匹配、场景推断与换装采纳。
+ *
+ * 顺序有意义：上半身/下半身都能覆盖住整个人的连体衣物排在最前，否则
+ * `cheongsam`、`qipao` 这类词会被后面的条子漏掉，账本渲染成空串，服装层整段失效。
+ */
 const GARMENT_KINDS: Array<[RegExp, string]> = [
+  [
+    /\b(?:dress|sundress|frock|robe|kimono|yukata|qipao|cheongsam|hanfu|ruqun|ao dai|gown|jumpsuit|bodysuit|uniform|serafuku|sailor uniform|one-piece)\b/i,
+    'dress',
+  ],
   [/\b(?:panties|underwear|underpants|briefs|thong|panty)\b/i, 'panties'],
-  [/\b(?:bra|lingerie|bikini top)\b/i, 'bra'],
-  [/\b(?:shirt|blouse|camisole|sweater|t-shirt|tank top)\b/i, 'shirt'],
+  [/\b(?:bra|lingerie|bikini top|bandeau)\b/i, 'bra'],
+  [
+    /\b(?:shirt|blouse|camisole|sweater|sweatshirt|hoodie|t-shirt|tank top|crop top|turtleneck|corset|tunic|dudou|chest wrap)\b/i,
+    'shirt',
+  ],
   [/\bskirt\b/i, 'skirt'],
-  [/\b(?:pants|trousers|jeans|shorts|leggings)\b/i, 'pants'],
-  [/\b(?:dress|robe|kimono|qipao|gown|jumpsuit)\b/i, 'dress'],
-  [/\b(?:jacket|blazer|coat|cloak|cape|cardigan)\b/i, 'jacket'],
+  [/\b(?:pants|trousers|jeans|shorts|leggings|culottes)\b/i, 'pants'],
+  [/\b(?:jacket|blazer|coat|cloak|cape|cardigan|suit)\b/i, 'jacket'],
   [/\b(?:socks|stockings|thighhighs|pantyhose|tights)\b/i, 'socks'],
   [/\b(?:shoes|boots|heels|slippers|sneakers)\b/i, 'shoes'],
 ];
@@ -1020,6 +1065,24 @@ export function garmentKind(design: string): string {
   const value = String(design ?? '');
   for (const [expression, kind] of GARMENT_KINDS) if (expression.test(value)) return kind;
   return '';
+}
+/** 这些类别脱掉之后要翻成对应的 `no xxx`；其余衣物只能靠 `Not wearing …` 句子表达。 */
+const REMOVED_TAG: Record<string, string> = {
+  shirt: 'shirt',
+  bra: 'bra',
+  panties: 'panties',
+  pants: 'pants',
+  skirt: 'skirt',
+  dress: 'dress',
+};
+/** 类别 → 上半身 / 下半身；连体衣物两边都算。 */
+function covers(kind: string): { upper: boolean; lower: boolean; both: boolean } {
+  const both = kind === 'dress';
+  return {
+    both,
+    upper: both || kind === 'shirt' || kind === 'bra' || kind === 'jacket',
+    lower: both || kind === 'skirts' || kind === 'skirt' || kind === 'pants' || kind === 'panties',
+  };
 }
 /**
  * 模型只给 unknown 时，从动作原文推断该部件状态。
@@ -1088,8 +1151,10 @@ function absoluteOffset(text: string, line: number, offset: number): number {
 function nearestNamedEntry(text: string, index: number, entries: CharTagEntry[]): string {
   let best = '';
   let bestAt = -1;
+  // 已存别名之外，还要认「正文里的简称/小名」（正文写「晚晴」而库名「林晚晴」）。
+  // 只认已存别名时，场景推断会认为这一句里没有人名，于是整段补录都漏掉她。
   for (const entry of entries)
-    for (const name of [entry.name, ...characterAliases(entry.name)]) {
+    for (const name of [entry.name, ...characterAliases(entry.name), ...candidateAliasesForEntry(entry)]) {
       if (!name) continue;
       const before = text.lastIndexOf(name, index);
       if (before > bestAt) {
@@ -1293,12 +1358,19 @@ export function adoptChangedClothing(
     if (!novel.length) continue;
     const window = sentenceWindow(text, index, 120);
     if (!CHANGE_SCENE.test(window.text)) continue;
-    if (!window.text.includes(character.name) && !/她/.test(window.text)) continue;
+    const entry = entries.find((e) => e.name === canonical);
+    const called =
+      window.text.includes(canonical) ||
+      window.text.includes(character.name) ||
+      (entry ? candidateAliasesForEntry(entry).some((alias) => window.text.includes(alias)) : false);
+    if (!called && !/她/.test(window.text)) continue;
     // 句子里必须真的出现衣物词：只写「换了一身」却没说是哪件，不足以接管账本。
     if (!proseGarment(window.text)) continue;
     const at = storyPosition(text, index);
     changes.push({
-      name: character.name,
+      // 这几条是绕过 acceptClothingChanges 直接并进账本的，所以必须自己归一：
+      // 写成「晚晴」会导致 applyOne 的 state.get 落空，新衣服挂不到账本上。
+      name: canonical,
       reportedName: character.name,
       position: '',
       sourceLine: at.line,
@@ -1339,7 +1411,7 @@ export function enforceClothing(
     const canonical = entries.length ? resolveCanonicalCharName(c.name, entries) : c.name;
     const record = state.get(canonical) ?? state.get(c.name);
     if (!record) continue;
-  const caption = clothingCaption(record);
+    const caption = clothingCaption(record);
     // 账本一套衣服都没记下来(旧版残档 design 为空)时，别把模型写的衣服也剥掉，
     // 否则人物会变成「没写任何衣物」→ 出图直接裸。整条跳过，连 Base 也不剥。
     if (!caption.tag.trim()) continue;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CharTagEntry } from '@/state/charTags';
+import { emptyCharFields, type CharTagEntry } from '@/state/charTags';
 import type { TargetSegment } from './clean';
 import type { ImageInsertion } from './protocol';
 import {
@@ -270,6 +270,33 @@ describe('clothingCaption', () => {
     };
     expect(clothingCaption(record).tag).toContain('nude');
   });
+
+  it('连体衣脱掉渲染成 no dress,而不是空串', () => {
+    // 空串会让 enforceClothing 的 `if (!caption.tag.trim()) continue` 整条跳过，
+    // 服装层对这个角色直接失效。
+    const record: ClothingRecord = {
+      name: '林晚晴',
+      outfitId: 'o1',
+      pieces: [piece('a', 'blue cheongsam', { location: 'removed' })],
+      source: 'x',
+    };
+    const caption = clothingCaption(record);
+    expect(caption.tag).toContain('no dress');
+    expect(caption.tag).toContain('nude');
+  });
+
+  it('只脱下装时点名到具体那件', () => {
+    const record: ClothingRecord = {
+      name: '林晚晴',
+      outfitId: 'o1',
+      pieces: [piece('a', 'white shirt'), piece('b', 'long jeans', { location: 'removed' })],
+      source: 'x',
+    };
+    const caption = clothingCaption(record);
+    expect(caption.tag).toContain('white shirt');
+    expect(caption.tag).toContain('no pants');
+    expect(caption.tag).toContain('bottomless');
+  });
 });
 
 describe('款式漂移防护', () => {
@@ -384,6 +411,33 @@ describe('settleStaleUndress', () => {
     const state = make();
     settleStaleUndress(state, '第二天清晨，她出门锁门。');
     expect(state.get('林晚晴')?.pieces[0].state.location).toBe('worn');
+  });
+
+  it('只脱了上衣时裤子照旧，不会被连带改状态', () => {
+    const state = make();
+    settleStaleUndress(state, '她坐在窗边发呆。');
+    settleStaleUndress(state, '窗外下起了雨。');
+    expect(state.get('林晚晴')?.pieces[0].state.location).toBe('worn');
+    expect(state.get('林晚晴')?.pieces[1].state.location).toBe('worn');
+  });
+});
+
+describe('固定着装进账本', () => {
+  it('没动过时按原样渲染出整套，而不是空串', () => {
+    const state = clothingBefore([], 0, [
+      {
+        name: '林晚晴',
+        fields: { ...emptyCharFields(), sex: '1girl', outfit: 'white shirt, long jeans' },
+        raw: '',
+        nl: '',
+        source: 'manual',
+        desc: '',
+        history: [],
+      },
+    ]);
+    const tag = clothingCaption(state.get('林晚晴')!).tag;
+    expect(tag).toContain('white shirt');
+    expect(tag).toContain('long jeans');
   });
 });
 

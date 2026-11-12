@@ -8,7 +8,9 @@
  */
 
 import type { STMessage } from '../st/context';
+import { appearancePolicy } from '../state/appearancePolicy';
 import type { CharTagEntry } from '../state/charTags';
+import { candidateAliasesForEntry } from './charReuse';
 import { clothingBefore, type ClothingState } from './outfitTimeline';
 
 const STATE_LABEL: Record<string, string> = {
@@ -39,34 +41,53 @@ function describePiece(piece: { design: string; state?: Record<string, string> }
   return uniq.length ? `${design || '衣物'}（${uniq.join('、')}）` : design;
 }
 
-/** 最近几条消息里出现过的人名：只对在场角色注入，避免「幽灵换装」。 */
+/**
+ * 最近几条消息里出现过的人名：只对在场角色注入，避免「幽灵换装」。
+ *
+ * 只认全名不够——正文九成写的是「晚晴」「晚晴小姐」。这里连候选称呼一起认，
+ * 否则她明明在场，注入段里却整行缺失，等于没锁。
+ */
 export function presentNames(chat: readonly STMessage[], entries: readonly CharTagEntry[], tail = 6): string[] {
   const names = new Set<string>();
   if (!Array.isArray(chat) || !chat.length) return [];
   for (const message of chat.slice(-tail)) {
     const text = String(message?.mes ?? '');
     if (!text) continue;
-    for (const entry of entries) if (entry.name && text.includes(entry.name)) names.add(entry.name);
+    for (const entry of entries) {
+      if (!entry.name) continue;
+      if (text.includes(entry.name)) {
+        names.add(entry.name);
+        continue;
+      }
+      if (candidateAliasesForEntry(entry).some((alias) => alias && text.includes(alias))) names.add(entry.name);
+    }
   }
   return [...names];
 }
 
-function render(state: ClothingState, names: readonly string[]): string[] {
+function render(state: ClothingState, names: readonly string[], entries: readonly CharTagEntry[]): string[] {
   const lines: string[] = [];
   for (const name of names) {
     const record = state.get(name);
-    if (!record?.pieces?.length) continue;
+    if (!record?.pieces?.length) {
+      // 账本里还没有她：这一楼是她的第一次，只能定一次装。不写出来模型就当没这回事，
+      // 于是每层重新挑一套——正是衣服乱飘的开端。
+      lines.push(`- ${name}：尚未定装（本楼可以按场景决定一套，之后固定沿用）`);
+      continue;
+    }
     const worn = record.pieces.filter((piece) => piece.state?.location !== 'removed' && piece.state?.location !== 'floor');
     const off = record.pieces.filter((piece) => piece.state?.location === 'removed' || piece.state?.location === 'floor');
     const parts = [...worn.map(describePiece), ...off.map((piece) => `${piece.design || '衣物'}已脱`)];
     // 用户绑定的套装与档案里的固定着装都要点名：这段是写给正文模型的，
     // 不告诉它「这套是钉死的」，它就会照着「更好看」把睡裙写成衬衫。
-    const lock =
-      record.suitMode === 'always'
-        ? '［用户固定整套：只能写穿脱，不许换款式］'
-        : record.suitMode === 'style'
-          ? '［款式已固定：要换必须写明确换装动作］'
-          : '';
+    const policy = appearancePolicy(name);
+    const full = record.suitMode === 'always' || policy?.mode === 'fandom';
+    const pinned = full || record.suitMode === 'style' || (policy?.mode === 'manual' && !!policy.fields.outfit);
+    const lock = full
+      ? '［用户固定整套：只能写穿脱，不许换款式］'
+      : pinned
+        ? '［款式已固定：要换必须写明确换装动作］'
+        : '';
     if (parts.length) lines.push(`- ${name}：${parts.join('、')}${lock}`);
   }
   return lines;
@@ -89,7 +110,7 @@ export function wardrobeLockText(
   }
   const names = presentNames(chat, entries, tail);
   if (!names.length) return '';
-  const lines = render(state, names);
+  const lines = render(state, names, entries);
   if (!lines.length) return '';
   return [
     '【着装锁定：唯一真源，必须逐字沿用】',

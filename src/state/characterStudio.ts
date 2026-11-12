@@ -140,11 +140,13 @@ export function imageAppearance(entry: CharTagEntry, tag: string): CharTagEntry 
     .map((t) => t.trim())
     .filter(Boolean);
   const groups: Partial<Record<CharTagField, RegExp>> = {
+    // 饰物先判：`hair ribbon`、`hairpin` 都含 hair，落到头发字段会被当成发色发型。
+    extra:
+      /^(?:(?:(?:[a-z]+|golden?|silver|bronze|copper)\s+){0,2}(?:hair ribbon|hair band|hairband|hairpin|hair clip|hair ornament|hair stick|ribbon|glasses|round glasses|mask|earrings?|piercing|necklace|pendant|choker|collar|bracelet|bangle|anklet|beret|headband|veil|crown|tiara|circlet)\b|.*\b(?:face|chin|jawline|nose|lips|eyebrows|eyelashes|ears|mole|freckles|scar)\b)/i,
     hair: /\b(?:hair|bangs|ponytail|twintails|braid|ahoge|hime cut|bob cut|sidelocks)\b/i,
     eyes: /\b(?:eyes|heterochromia|tsurime|tareme|sanpaku)\b/i,
     skin: /\b(?:skin|tan)\b/i,
     body: /\b(?:breasts|hips|waist|stature|frame|figure|petite|slender|muscular|tall|slim|long legs)\b/i,
-    extra: /\b(?:face|chin|jawline|nose|lips|eyebrows|eyelashes|ears|mole|freckles|scar)\b/i,
   };
   const identity = parts.find(
     (t) =>
@@ -155,10 +157,15 @@ export function imageAppearance(entry: CharTagEntry, tag: string): CharTagEntry 
   if (identity) fields.fandom = identity;
   const dynamic =
     /\b(?:holding|grabbing|touching|pulling|licking|kissing|looking|closed eyes|half.closed|tears|crying|sweat|wet|blush|smile|open mouth|breasts out)\b/i;
-  for (const [field, pattern] of Object.entries(groups)) {
-    const values = parts.filter((t) => pattern.test(t) && !dynamic.test(t));
-    if (values.length) fields[field as CharTagField] = values.join(', ');
+  // 按顺序归类，一个词只进第一个命中的字段：「hair ribbon」是饰物，不能同时又进 hair。
+  const bucket = new Map<CharTagField, string[]>();
+  for (const token of parts) {
+    if (dynamic.test(token)) continue;
+    const field = (Object.keys(groups) as CharTagField[]).find((key) => groups[key]!.test(token));
+    if (!field) continue;
+    bucket.set(field, [...(bucket.get(field) ?? []), token]);
   }
+  for (const [field, values] of bucket) fields[field] = values.join(', ');
   return {
     ...entry,
     fields,

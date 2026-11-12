@@ -11,6 +11,14 @@ const split = (s: string) =>
     .map((t) => t.trim())
     .filter(Boolean);
 const unique = (parts: string[]) => [...new Map(parts.map((t) => [t.toLowerCase(), t])).values()].join(', ');
+/**
+ * 戴在身上、留在人身上的饰物。
+ *
+ * 它们既不是衣服（不该由服装账本管，也不该被 enforceClothing 剥掉），也不是动作，
+ * 而是**这个人的固定外观**：发带、发卡、眼镜、项链、耳钉。归 extra 字段。
+ */
+const ORNAMENT_WORD =
+  /\b(?:hair ribbon|hair band|hairband|hairpin|hair clip|hair ornament|hair stick|ribbon|glasses|round glasses|monocle|mask|earrings?|earring|piercing|necklace|pendant|choker|bracelet|bangle|anklet|beret|headband|veil|crown|tiara|circlet|headphones)\b/i;
 const TRAIT =
   /\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|ahoge|sidelocks|sideburns|chignon|undercut|dreadlocks|cornrows|mohawk|ringlets|bob|pixie cut|updo|hair buns?|breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall|short woman|pointy ears|elf ears|tsurime|tareme|twintails|hairbun|hair bun|twin tails|fangs|lips|heterochromia|mole|scar|freckles|young adult|mature female|teenager|child)\b/i;
 const EXPRESSION =
@@ -24,6 +32,8 @@ export function isAppearanceDescription(token: string): boolean {
     )
   )
     return false;
+  // 饰物是外观的一部分：`hair ribbon` 含 hair，但它是戴的东西，不是发色发型。
+  if (ORNAMENT_WORD.test(token)) return true;
   return (
     !/^(?:looking|holding|grabbing|pulling|touching|stroking)\b/i.test(token) &&
     (TRAIT.test(token) || FANDOM.test(token.replace(/^[-+\d.]+::/, '')))
@@ -85,7 +95,8 @@ function ownsTrait(entry: CharTagEntry, token: string): boolean {
     (f.body &&
       /\b(?:breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall)\b/i.test(token)) ||
     (f.age && /\b(?:young adult|mature female|teenager|child)\b/i.test(token)) ||
-    (f.extra && /\b(?:face|eyebrows|eyelashes|ears|mole|scar|freckles)\b/i.test(token))
+    (f.extra &&
+      (ORNAMENT_WORD.test(token) || /\b(?:face|eyebrows|eyelashes|ears|mole|scar|freckles)\b/i.test(token)))
   );
 }
 function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: string[]): string {
@@ -175,13 +186,11 @@ export function enforceAppearance(
   const managed: CharTagEntry[] = [],
     warnings: string[] = [];
   for (const prompt of image.characters) {
-    if (
-      isMaleIdentity(prompt.name, facts) &&
-      !entries.some((e) => e.name === prompt.name && e.source === 'manual')
-    )
-      continue;
+    // 先归一再判性别/找档案：模型写「阿沉」而库名「陆沉」时，先判 isMaleIdentity 会落空，
+    // 男性角色就被当女性去套外貌档案了。
     const name = resolveCanonicalCharName(prompt.name, entries),
       entry = entries.find((e) => e.name === name);
+    if (isMaleIdentity(name, facts) && entry?.source !== 'manual') continue;
     if (!entry) continue;
     const canonical = appearanceParts(entry);
     if (!canonical.length) continue;

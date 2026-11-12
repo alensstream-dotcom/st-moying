@@ -3,6 +3,7 @@ import { getContext } from '@/st/context';
 import { stripImageTags } from '@/st/imageTagRegex';
 import type { CharTagEntry } from './charTags';
 import type { ImageInsertion } from '@/autoTag/protocol';
+import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 
 export type IdentityGender = 'female' | 'male' | 'unknown';
 export interface IdentityClaim {
@@ -390,9 +391,16 @@ export function enforceKnownMaleIdentity(
   independent = true,
 ): string[] {
   const notes: string[] = [];
+  const canonicalOf = (name: string) => (entries.length ? resolveCanonicalCharName(name, entries) : name);
   for (const c of image.characters) {
-    if (!isMaleIdentity(c.name, facts)) continue;
-    const entry = entries.find((e) => e.name === c.name);
+    // 性别判定也走主名：模型写「阿沉」而档案是「陆沉」时，直接 isMaleIdentity(c.name)
+    // 会落空 → 这个男角色被当成女性，接着套上自动女性档案。
+    const genderFact = identityFactFor(canonicalOf(c.name), facts) ?? identityFactFor(c.name, facts);
+    if (genderFact?.gender !== 'male') continue;
+    // 男性档案也可能被写成称呼（「阿明」「明哥」）：按主名取档案，否则拿不到
+    // 他已记的外貌，旧词会被当成「不是他的」而全部保留成女性特征。
+    const known = canonicalOf(c.name);
+    const entry = entries.find((e) => e.name === known);
     if (entry?.source === 'manual') {
       notes.push(`${c.name}: 剧情身份为男性，保留用户手动绘图形象，请核对冲突`);
       continue;
@@ -436,7 +444,7 @@ export function enforceKnownMaleIdentity(
       (c) =>
         identityFactFor(c.name, facts)?.gender &&
         identityFactFor(c.name, facts)?.gender !== 'unknown' &&
-        entries.find((e) => e.name === c.name)?.source !== 'manual',
+        entries.find((e) => e.name === canonicalOf(c.name))?.source !== 'manual',
     )
   ) {
     const counts = (['female', 'male'] as const).flatMap((g) => {
@@ -454,7 +462,7 @@ export function enforceKnownMaleIdentity(
   if (
     notes.length &&
     image.characters.length === 1 &&
-    entries.find((e) => e.name === image.characters[0].name)?.source !== 'manual'
+    entries.find((e) => e.name === canonicalOf(image.characters[0].name))?.source !== 'manual'
   ) {
     image.tag = image.tag
       .split(',')

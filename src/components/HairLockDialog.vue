@@ -4,17 +4,22 @@ import ModalMask from './ModalMask.vue';
 import { getContext } from '@/st/context';
 import { getTagGenChannel } from '@/state/settings';
 import { requestCompletion, requestViaMainApi } from '@/api/client';
-import { findCharTag, upsertCharTag, recomputeCharTags, isManualFandom } from '@/state/charTags';
+import { findCharTag, upsertCharTag, recomputeCharTags, isManualFandom, charTagLib } from '@/state/charTags';
+import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 import { appearancePolicy, setAppearancePolicy, fandomOnly } from '@/state/appearancePolicy';
 import { adoptLook } from '@/state/characterStudio';
 import { inspectHairTags } from '@/state/hairTags';
 import { recoverProfileFields } from '@/autoTag/profileRecovery';
 const props = defineProps<{ src: string; cast: Array<{ name: string; tag: string }>; chat?: string }>();
 const emit = defineEmits<{ close: [] }>();
-const candidates = props.cast.filter((c) => {
-  const entry = findCharTag(c.name);
-  return entry && isManualFandom(entry);
-});
+// 画面里写的是「晚晴」这类称呼时，字面查不到档案 → 她根本不进候选列表。
+const canonicalOf = (raw: string) => resolveCanonicalCharName(raw, charTagLib.entries);
+const candidates = props.cast
+  .map((c) => ({ ...c, name: canonicalOf(c.name) }))
+  .filter((c) => {
+    const entry = findCharTag(c.name);
+    return entry && isManualFandom(entry);
+  });
 const name = ref(candidates[0]?.name || ''),
   tags = ref(''),
   feedback = ref(''),

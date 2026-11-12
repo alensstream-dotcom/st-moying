@@ -49,7 +49,7 @@ import {
 import { ensureFemaleSubjects, femaleCastNames } from '@/autoTag/femaleCast';
 import { anchorBlock, buildAnchors } from '@/autoTag/anchorLedger';
 import { ensureImageProfiles } from '@/autoTag/imageProfiles';
-import { diversifyLook } from '@/autoTag/lookDiversity';
+import { diversifyLook, diversifyNewOps } from '@/autoTag/lookDiversity';
 import { characterAliases, saveCharacterAliases } from '@/state/characterAliases';
 import { prepareTargetText } from '@/autoTag/clean';
 import {
@@ -118,6 +118,7 @@ import {
   type CharTagAutoOp,
   type CharTagEntry,
   type CharTagField,
+  type CharTagNewOp,
 } from '@/state/charTags';
 import { injectImageTags, parseImagePlan, type ImageInsertion, type ImagePlan } from '@/autoTag/protocol';
 import { thinDesign } from '@/data/designGuide';
@@ -250,7 +251,7 @@ const FANDOM_GUARD_FIELDS: ReadonlySet<string> = new Set(['hair', 'eyes', 'skin'
  */
 const MALE_SEX_RE = /^(?:1boy|boy|male|man|men|masculine|♂)/i;
 
-function planChangeOps(
+export function planChangeOps(
   plan: ImagePlan,
   source: string,
   notes: string[],
@@ -527,6 +528,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         (name) => source.includes(name) || entriesBefore.some((entry) => entry.name === name),
         // 传本楼正文:道具(刀/手铐/绳)只有这里还提到才继续挂着
         source,
+        entriesBefore,
       ),
       entriesBefore.map((entry) => entry.name),
     );
@@ -556,7 +558,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const expectedWardrobeChoice = wardrobeChoiceRevision(message),
       expectedAppearancePolicy = appearancePolicyRevision();
     const wardrobeBaseline = new Map([...wardrobe].map(([name, entry]) => [name, JSON.stringify(entry)]));
-    applyWardrobeChoices(wardrobe, message);
+    // 本楼的衣柜选择也要按主名归一：clothingBefore 只处理 floor 之前的楼层。
+    applyWardrobeChoices(wardrobe, message, undefined, entriesBefore);
     const wardrobeRevision = clothingRevision(context.chat, floor);
     const expectedStory = narrativeHash(rawSource);
     const savedWardrobe = readClothingFloor(message, wardrobeRevision);
@@ -571,6 +574,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             ? savedImageClothing(
                 { ...parseImageTagContent(slotRawTag), position: '', sourceLine: 0, charOffset: 0 },
                 wardrobe,
+                entriesBefore,
               )
             : null;
     const outfitBlock = clothingBlock(slotWardrobe ?? wardrobe);
@@ -1116,6 +1120,17 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       if (accepted) op.fields.sex = '1girl';
       return accepted;
     });
+    // 同一楼里模型自己报的几个 new 之间也要岔开形象：planChangeOps 只拿库当参照，
+    // 本楼新建的人谁都还没进库，于是同一楼两三个新女主常常是同一头黑发同一双蓝眼。
+    // 只岔空着的与撞车的特征，正文写过的词不动（口径同 lookDiversity）。
+    if (!slot) {
+      const fresh = maleGuarded
+        .map((item) => item.op)
+        .filter((op): op is CharTagNewOp => op.kind === 'new')
+        .map((op) => ({ name: op.name, fields: op.fields, op }));
+      diversifyNewOps(fresh, safeEntries, source, appearanceChangeNotes);
+      for (const item of fresh) item.op.fields = item.fields;
+    }
     // Fill only absent face dimensions on new original profiles, then persist them.
     // Existing appearances and manual fandom choices are never rerolled here.
     const faceOptions = [
@@ -1220,9 +1235,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const accepted = acceptClothingChanges(
       slot
         ? []
-        : (plan.outfitChanges ?? []).filter(
-            (c) => wardrobe.get(c.name)?.suitMode !== 'always' || c.operation === 'patch',
-          ),
+        : (plan.outfitChanges ?? []).filter((c) => {
+            // 账本按主名记，模型可能写「晚晴」；不归一会查不到 suitMode=always 而被放进
+            // accept 里再拒掉，用户看到一条本可静默的警告。
+            const name = activeEntries.length
+              ? resolveCanonicalCharName(c.name, activeEntries)
+              : c.name;
+            const record = wardrobe.get(name) ?? wardrobe.get(c.name);
+            return record?.suitMode !== 'always' || c.operation === 'patch';
+          }),
       source,
       wardrobe,
       activeEntries,
@@ -1250,7 +1271,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           image.sourceLine,
           image.charOffset,
         );
-        const adopted = adoptChangedClothing(image, stateAtImage, source);
+        const adopted = adoptChangedClothing(image, stateAtImage, source, activeEntries);
         accepted.changes.push(...adopted.changes);
         accepted.rejected.push(...adopted.notes);
       }
@@ -1275,6 +1296,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       costumeRequest.setting ?? '',
       controller.signal,
       source,
+      activeEntries,
     );
     if (controller.signal.aborted) return;
     // Repair a request-local copy; historical floors stay intact. States and garment IDs never change.
@@ -1403,7 +1425,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       const frameCostume =
         (slot && savedWardrobe?.frames[slot.seq]?.costume) ||
         costumeAt(costume, image.sourceLine, image.charOffset);
-      initialiseClothingFromImage(image, at, source);
+      initialiseClothingFromImage(image, at, source, activeEntries);
       for (const record of at.values())
         if (/旧版记录/.test(record.source) && !wardrobe.has(record.name)) {
           const evidence = explicitCostumeEvidence(
@@ -1422,21 +1444,22 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       repairCostumeState(at, frameCostume, costumeRepairs);
       for (const record of at.values())
         for (const p of record.pieces) if (!p.costume) p.costume = { ...frameCostume };
-      visualNotes.push(...removeUnbackedCostume(image, at, frameCostume));
+      visualNotes.push(...removeUnbackedCostume(image, at, frameCostume, activeEntries));
       for (const [name, entry] of at)
         if (!wardrobe.has(name) && !accepted.changes.some((c) => c.name === name))
           completion.set(name, entry);
       enforceClothing(image, at, profile.nl, profile.naiCharPrompts, activeEntries, source);
+      // 账本与档案都按主名记，快照筛选也要归一，否则模型写别称时这帧的
+      // appearance/entries 是空的，出图时二次锁定就没了依据。
+      const castNames = new Set(
+        image.characters.map((c) => (activeEntries.length ? resolveCanonicalCharName(c.name, activeEntries) : c.name)),
+      );
       frames.push({
         tag: serializeImageTag(image),
         sourceLine: image.sourceLine,
         charOffset: image.charOffset,
-        appearance: entriesAt
-          .filter((e) => image.characters.some((c) => c.name === e.name))
-          .map((e) => ({ ...e, history: [] })),
-        entries: JSON.parse(
-          JSON.stringify([...at.values()].filter((e) => image.characters.some((c) => c.name === e.name))),
-        ),
+        appearance: entriesAt.filter((e) => castNames.has(e.name)).map((e) => ({ ...e, history: [] })),
+        entries: JSON.parse(JSON.stringify([...at.values()].filter((e) => castNames.has(e.name)))),
         costume: frameCostume,
       });
     }
@@ -1516,7 +1539,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           [...wardrobe.values()].filter(
             (e) =>
               accepted.changes.some((c) => c.name === e.name) ||
-              plan.images.some((i) => i.characters.some((c) => c.name === e.name)),
+              plan.images.some((i) =>
+                i.characters.some(
+                  (c) => (activeEntries.length ? resolveCanonicalCharName(c.name, activeEntries) : c.name) === e.name,
+                ),
+              ),
           ),
         ),
       ),

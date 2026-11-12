@@ -1,4 +1,6 @@
 import type { STMessage } from '@/st/context';
+import type { CharTagEntry } from '@/state/charTags';
+import { resolveCanonicalCharName } from './charReuse';
 import { isGenericCharacterName } from './genericName';
 import { isClothingDescription } from './outfitTimeline';
 import { isCollarToken, isPropToken, storyMentionsCollar, storyMentionsProp } from './props';
@@ -79,6 +81,7 @@ export function buildAnchors(
   beforeFloor: number,
   keep: (name: string) => boolean = () => true,
   story = '',
+  entries: readonly CharTagEntry[] = [],
 ): AnchorEntry[] {
   const table = new Map<string, AnchorEntry>();
   const from = Math.max(0, beforeFloor - LOOKBACK);
@@ -90,7 +93,9 @@ export function buildAnchors(
     for (const frame of list) {
       if (!frame?.tag) continue;
       for (const character of parseImageTagContent(frame.tag).characters) {
-        const name = character.name.trim();
+        // 锚点按档案主名归档：旧帧里写的是「晚晴」而档案主名是「林晚晴」时，
+        // 不归一就会出现「同一个人的两条锚点」，且已建档角色会被当成新人连外貌一起下发。
+        const name = entries.length ? resolveCanonicalCharName(character.name.trim(), entries) : character.name.trim();
         if (!name) continue;
         if (isGenericCharacterName(name)) continue;
         if (!keep(name)) continue;

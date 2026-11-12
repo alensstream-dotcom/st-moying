@@ -1,6 +1,8 @@
 import { getContext, type STMessage } from '@/st/context';
 import { stripImageTags } from '@/st/imageTagRegex';
 import type { ClothingState, ClothingRecord, ClothingPiece } from '@/autoTag/outfitTimeline';
+import { resolveCanonicalCharName } from '@/autoTag/charReuse';
+import type { CharTagEntry } from './charTags';
 export type SuitMode = 'style' | 'always';
 export interface SuitBinding {
   id: string;
@@ -85,6 +87,7 @@ export function applyWardrobeChoices(
   state: ClothingState,
   message: STMessage | undefined,
   alreadyApplied?: string,
+  entries: CharTagEntry[] = [],
 ): void {
   if (alreadyApplied === wardrobeChoiceRevision(message)) return;
   let appliedIds = new Set<string>();
@@ -93,8 +96,11 @@ export function applyWardrobeChoices(
   } catch {}
   for (const choice of wardrobeChoices(message)) {
     if (appliedIds.has(choice.id)) continue;
+    // 账本按档案主名记。在衣柜面板给「晚晴」绑套装的，库里那个人是「林晚晴」，
+    // 不归一就会写出一条同名副账，绑定对它本人的图完全不生效。
+    const name = entries.length ? resolveCanonicalCharName(choice.name, entries) : choice.name;
     if (!choice.suit) {
-      const old = state.get(choice.name);
+      const old = state.get(name) ?? state.get(choice.name);
       if (old) {
         delete old.suitMode;
         delete old.boundSuitId;
@@ -103,8 +109,8 @@ export function applyWardrobeChoices(
       continue;
     }
     const suit = choice.suit;
-    state.set(choice.name, {
-      name: choice.name,
+    state.set(name, {
+      name,
       outfitId: suit.id,
       boundSuitId: suit.id,
       suitMode: suit.mode,
