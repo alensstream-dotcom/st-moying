@@ -18,8 +18,20 @@ export interface TruncationVerdict {
 const OPEN_THINK = '<thinking>';
 const CLOSE_THINK = '</thinking>';
 
-export function diagnoseTruncation(raw: string): TruncationVerdict {
+/**
+ * 上游明说「被上限截断」的 finish_reason。
+ *
+ * 形态判断只能看输出长相,而模型完全可能在一个刚好闭合的位置被掐断(括号齐了但最后
+ * 一张图写了一半的 tag 串收住了)——那种长相看不出问题,内容却缺。finish_reason 是
+ * 上游的直接证词,有它就优先采信,再交给 salvage 按缺口补收尾。
+ */
+const FINISH_LENGTH_RE = /^(?:length|max_tokens|max_output_tokens|MAX_TOKENS)$/i;
+
+export function diagnoseTruncation(raw: string, finishReason?: string | null): TruncationVerdict {
   const text = (raw ?? '').trim();
+  if (finishReason && FINISH_LENGTH_RE.test(finishReason.trim())) {
+    return { truncated: true, reason: `finish_reason=${finishReason}` };
+  }
   if (!text) return { truncated: true, reason: '空输出' };
 
   const openAt = text.indexOf(OPEN_THINK);

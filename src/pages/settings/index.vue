@@ -1149,6 +1149,7 @@ async function confirmUpdate() {
           <label class="bbi-mini-field">
             <span>最大 token</span>
             <input v-model.number="editingChannel.maxTokens" class="bbi-input" type="number" step="256" min="256" />
+            <small style="color: var(--bbi-ink-muted); font-size: 11px">低于 32768 会按 32768 发送</small>
           </label>
           <label class="bbi-mini-field">
             <span>超时(秒)</span>

@@ -86,7 +86,7 @@ describe('buildRequestBody:思考强度与两条源分支', () => {
       model: 'm',
       messages: msgs,
       temperature: 1,
-      max_tokens: 1024,
+      max_tokens: 32768,
       stream: false,
       tool_choice: 'none',
       presence_penalty: 0,
@@ -143,6 +143,23 @@ describe('buildRequestBody:思考强度与两条源分支', () => {
     expect(
       build({ excludeParams: ['temperature'], reasoningEffort: 'high' }).temperature,
     ).toBeUndefined();
+  });
+
+  it('max_tokens 有 32768 下限:渠道写成 1024 也照样够写三张图', () => {
+    // 输出成本主要在结构(思考块 + 每图一个 Base + 每角色一个块),4096 一类的旧设置
+    // 一律在半截 JSON 处断掉,表现就是满屏「输出被截断」。
+    expect(build().max_tokens).toBe(32768);
+    expect(build({ maxTokens: 2048 }).max_tokens).toBe(32768);
+  });
+
+  it('用户把 max_tokens 调得更大时不被下限压回去', () => {
+    expect(build({ maxTokens: 65535 }).max_tokens).toBe(65535);
+    expect(build({ maxTokens: 40000 }).max_tokens).toBe(40000);
+  });
+
+  it('maxTokens 未设时取 32768,不再回落到更小的值', () => {
+    expect(build({ maxTokens: undefined }).max_tokens).toBe(32768);
+    expect(build({ maxTokens: null as unknown as number }).max_tokens).toBe(32768);
   });
 });
 

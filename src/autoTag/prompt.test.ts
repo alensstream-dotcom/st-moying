@@ -1467,9 +1467,9 @@ describe('思考块预算上限', () => {
     const one = (await buildAutoTagMessages(context(), 1, mk(1), null)).map(m => m.content).join('\n');
     const three = (await buildAutoTagMessages(context(), 1, mk(3), null)).map(m => m.content).join('\n');
     expect(one).toContain('<thinking_budget>');
-    // 1 张 = 12 + 8,3 张 = 36。上限固定的话多图时必然超。
-    expect(one).toContain('最多 20 行');
-    expect(three).toContain('最多 36 行');
+    // 1 张 = 8 + 5 = 13,3 张 = 23。上限固定的话多图时必然超。
+    expect(one).toContain('最多 13 行');
+    expect(three).toContain('最多 23 行');
   });
 
   it('针对 NAI V4.5 / V5 强化女主绝对主体与男主角色块局部无脸降权', async () => {
@@ -1480,5 +1480,41 @@ describe('思考块预算上限', () => {
     expect(all).toContain('前戏半脱/诱惑姿态 → 核心体位推进 → 敏感点特写/高潮余韵');
     expect(all).toContain('长段剧情五刀剔除法');
     expect(all).toContain('三元闭环绑定公式');
+  });
+
+  it('lean 版:思考清单与契约都变短,但输出协议不动', async () => {
+    // 截断重试靠这个降载:思考清单本身是思考长度的来源,只在末尾恳求「写短点」没用。
+    const full = (await buildAutoTagMessages(context(), 1, mk(2), null)).map(m => m.content).join('\n');
+    const lean = (await buildAutoTagMessages(
+      context(),
+      1,
+      mk(2),
+      null,
+      undefined,
+      undefined,
+      '',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    ))
+      .map(m => m.content)
+      .join('\n');
+    expect(lean.length).toBeLessThan(full.length);
+    // 长解释整段消失
+    expect(full).toContain('长段剧情五刀剔除法');
+    expect(lean).not.toContain('长段剧情五刀剔除法');
+    // 精简思考清单上场,完整清单下场
+    expect(lean).toContain('本次为截断后的重试');
+    expect(lean).not.toContain('【输出前思考清单】');
+    // 协议本身一个字都不能少:JSON 形状与命中字段还要照写
+    expect(lean).toContain('<bbi_image>');
+    expect(lean).toContain('outfitChanges');
+    // 标记不能漏进最终文本
+    expect(lean).not.toContain('⟪');
+    expect(full).not.toContain('⟪');
   });
 });

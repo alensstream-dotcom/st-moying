@@ -204,6 +204,18 @@ export async function requestCompletion(
  *
  * (与柏宝书 src/api/client.ts 的同名函数同源,行为保持一致。)
  */
+/**
+ * 输出预算的下限。
+ *
+ * 为什么要有:生图 tag 的输出成本不在「写得长」,而在结构——一个 <thinking> 块 + 每张图
+ * 一个 Base 串 + 每个角色一个块。70% 的「输出被截断」都是尾部 JSON 差两个括号,而
+ * max_tokens 一旦被渠道设成 4k/8k,再好的提示词也塞不下三张图。真实故障里最常见的就是
+ * 用户沿用旧的 4096 渠道设置,然后三楼全报截断。
+ *
+ * 只做下限、不覆盖用户更大的值;渠道自己支持更小时由上游报错,比静默半截输出好排查。
+ */
+const MIN_OUTPUT_TOKENS = 32768;
+
 export function buildRequestBody(
   channel: ApiChannel,
   messages: ChatMsg[],
@@ -215,7 +227,7 @@ export function buildRequestBody(
     model: channel.model,
     messages,
     temperature: channel.temperature ?? 1.0,
-    max_tokens: channel.maxTokens ?? 65535,
+    max_tokens: Math.max(MIN_OUTPUT_TOKENS, channel.maxTokens ?? MIN_OUTPUT_TOKENS),
     stream,
     // 不用工具:见函数头注释,防第三方 fetch 拦截器把生图 tag 改写成工具调用
     tool_choice: 'none',

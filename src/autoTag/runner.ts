@@ -567,36 +567,48 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             : null;
     const outfitBlock = clothingBlock(slotWardrobe ?? wardrobe);
     const costumeRequest: CostumeRequest = { inherited: costumeBefore(context.chat, floor) };
-    const messages = await buildAutoTagMessages(
-      context,
-      floor,
-      promptOptions,
-      memory,
-      preparedTarget,
-      anchors.text,
-      slot ? buildSlotTaskNote(rawSource, slot.seq) : '',
-      profile,
-      loreSeed,
-      charReuse,
-      outfitBlock,
-      costumeRequest,
-      anchorLedger,
-    );
+    /**
+     * 组装一次请求历史。
+     *
+     * `lean` 是「上一次被截断」时的降载版:思考清单换成十行版、契约里略去长解释。
+     * 用同一个函数而不是另存一份文案,是因为世界书/角色卡/记忆/账本这些上下文也都要
+     * 跟着一起重取——只替换契约而留着旧上下文,等于两份口径打架。
+     */
+    const assemble = async (lean: boolean) => {
+      const built = await buildAutoTagMessages(
+        context,
+        floor,
+        promptOptions,
+        memory,
+        preparedTarget,
+        anchors.text,
+        slot ? buildSlotTaskNote(rawSource, slot.seq) : '',
+        profile,
+        loreSeed,
+        charReuse,
+        outfitBlock,
+        costumeRequest,
+        anchorLedger,
+        lean,
+      );
+      built.push({
+        role: 'system',
+        content:
+          CLOTHING_PROTOCOL +
+          '\n' +
+          appearancePolicyBlock() +
+          '\n用户套装的部件 ID 和款式不允许随意重选；style 允许有证据的穿脱，明确整套换装可退出；always 不接受任何自动服装变更。',
+      });
+      built.push({
+        role: 'system',
+        content:
+          IDENTITY_PROTOCOL + '\n已核实身份（旧绘图档案不是性别证据）：' + JSON.stringify(knownIdentities),
+      });
+      return built;
+    };
+    const messages = await assemble(false);
     costumeRequest.story = source;
     const channel = getTagGenChannel();
-    messages.push({
-      role: 'system',
-      content:
-        CLOTHING_PROTOCOL +
-        '\n' +
-        appearancePolicyBlock() +
-        '\n用户套装的部件 ID 和款式不允许随意重选；style 允许有证据的穿脱，明确整套换装可退出；always 不接受任何自动服装变更。',
-    });
-    messages.push({
-      role: 'system',
-      content:
-        IDENTITY_PROTOCOL + '\n已核实身份（旧绘图档案不是性别证据）：' + JSON.stringify(knownIdentities),
-    });
     const identitySources: IdentitySources = {
       story: source,
       card: messages
@@ -619,6 +631,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 上一次 attempt 是否被判为「被截断」:是则下一次重发时追加降载指令。
     // 不增加重试次数(那是用户的成本上限),只让重试打在正确的点上。
     let retryNote = '';
+    // 上一次 attempt 是否被判为「被截断」:是则后续重试改发降载版历史(精简思考清单 +
+    // 略去长解释的契约)。降载必须换掉整份历史而不是只追加一句「写短点」——思考清单
+    // 本身就是思考长度的来源,只在末尾恳求,模型照旧逐条自证。
+    let leanOnce = false;
     // 上一次是否被渠道侧拦过:是则后续重试改发「兼容版」提示词(露骨示例词换成中性占位),
     // 并只保留最小结构要求。过滤发生在模型看到请求之前,加授权话术没用,只能把请求改淡。
     let blockedOnce = false;
@@ -627,10 +643,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         processed.delete(identity);
         return;
       }
-      const baseMessages = blockedOnce ? neutralizeMessages(messages) : messages;
+      const baseMessages =
+        blockedOnce || leanOnce ? await assemble(leanOnce) : messages;
       const attemptMessages: ChatMsg[] = retryNote
-        ? [...baseMessages, { role: 'system', content: retryNote }]
-        : baseMessages;
+        ? [...(blockedOnce ? neutralizeMessages(baseMessages) : baseMessages), { role: 'system', content: retryNote }]
+        : blockedOnce
+          ? neutralizeMessages(baseMessages)
+          : baseMessages;
       try {
         // parsed 用对象壳装着:validate 闭包写入,await 之后读取——请求成功 + 验收通过才非空。
         // (直接 let 会被 TS 收窄成 null:闭包内的赋值控制流分析看不见。)
@@ -644,7 +663,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             retryNote = BLOCK_RETRY_NOTE;
             throw new Error(`被渠道内容过滤拦下(${block.reason})`);
           }
-          const verdict = diagnoseTruncation(raw);
+          const verdict = diagnoseTruncation(raw, meta?.finishReason);
           // 截断先尝试抢救:写完了几张图却断在下一张上,那几张是好的,补上收尾括号就能用。
           // 救得回来就少发一次请求、少丢一张图;救不动再走重试。
           let text = raw;
@@ -665,6 +684,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             if (!salvaged) {
               // 形态上就是被掐断的:重试要降载,而不是原样再发一遍同样长度的请求。
               // 降的是图数(输出成本的主体),单独把字写短没用——图数不减照样在同一处断。
+              // 同时置 leanOnce:下一次改发精简契约与精简思考清单,把思考本身压下来。
+              leanOnce = true;
               retryNote = truncationRetryNote(Math.max(1, promptOptions.minImages));
               throw new Error(`输出被截断(${verdict.reason})`);
             }

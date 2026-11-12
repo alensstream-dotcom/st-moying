@@ -55,4 +55,17 @@ describe('diagnoseTruncation', () => {
     const raw = '<thinking>ok</thinking>\n{"images":[]}}';
     expect(diagnoseTruncation(raw).truncated).toBe(true);
   });
+
+  it('采信 finish_reason=length,哪怕括号刚好是齐的', () => {
+    // 模型可以在「tag 值被切在一个刚好收住的位置」停下:括号齐、内容却缺。
+    // 长相看不出来,只能靠上游的证词判。
+    const raw = '<thinking>ok</thinking>\n{"images":[{"position":"P1","sourceLine":1,"tag":"1girl"}],"changes":[]}';
+    expect(diagnoseTruncation(raw, 'length')).toEqual({
+      truncated: true,
+      reason: 'finish_reason=length',
+    });
+    expect(diagnoseTruncation(raw, 'MAX_TOKENS').truncated).toBe(true);
+    // 正常收尾的 stop 不清空原判断,形态上没问题就放行。
+    expect(diagnoseTruncation(raw, 'stop').truncated).toBe(false);
+  });
 });

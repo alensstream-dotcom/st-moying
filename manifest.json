@@ -3,9 +3,9 @@
   "loading_order": 100,
   "requires": [],
   "optional": [],
-  "js": "dist/index.js?ver=0.1.63",
+  "js": "dist/index.js?ver=0.1.64",
   "author": "alensstream-dotcom",
-  "version": "0.1.63",
+  "version": "0.1.64",
   "homePage": "",
   "auto_update": false,
   "minimum_client_version": "1.12.13"

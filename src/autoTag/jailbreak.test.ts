@@ -52,9 +52,11 @@ describe('破限词里必须留下反拒答结构', () => {
   // 截断的主要成因是思考太长,不是尺度。破限必须自己压住输出预算。
   it('strong 起给思考块行数上限,并说明超预算就是截断', () => {
     const text = getJailbreakTier('strong').text;
-    expect(text).toContain('最多 12 行');
+    expect(text).toContain('到数就停笔');
     expect(text).toContain('截断');
-    expect(getJailbreakTier('max').text).toContain('最多 10 行');
+    expect(getJailbreakTier('max').text).toContain('到数立刻停笔');
+    // 行数不再写死在破限里,而是统一以思考清单给的上限为准(两者才不会打架)。
+    expect(text).not.toContain('最多 12 行');
   });
 
   it('两档都要求按重要性排序输出,让被切时丢的是次要图', () => {

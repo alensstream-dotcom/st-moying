@@ -106,6 +106,21 @@ function backendPromptSpec(options: AutoTagSettings, nlOn: boolean, naiCharPromp
 }
 
 /**
+ * 紧凑型思维链:只在「上一次被截断」的重试里替代完整清单。
+ *
+ * 检索式的清单越全,模型越会逐条自证,思考块越写越长;而截断的根因正是思考吃掉了输出
+ * 预算。这份只保留「先建档、再一图一行、写完立刻闭合」三件事,把完整规范留在 JSON 里
+ * 现查——契约本身没删,所以 tag 质量不会塌。
+ */
+export const LEAN_THINKING = `【精简思考清单（本次为截断后的重试）】
+只写这几行,写完立刻输出 JSON:
+1. 建档:本段若有库中没有的具名女性,先写 field:"new" 的字段;男性不建档。
+2. 每张图一行:「P编号 · 谁 · 用什么 · 落在哪个部位 · 什么反应 · 景别+机位」。
+3. 每图只挑一处接触,接触写成词组(hand on breast、brush on pussy),不写成两样并列。
+4. 服装与外貌照抄【角色固定外貌库】【服装现状】【上镜锚点】,正文没写动作就不改。
+5. 图按重要性从高到低排,写完一张就把该对象的括号补齐。`;
+
+/**
  * 按默认后端取思维链,与 backendPromptSpec 一一配对。
  *
  * 拆成三份是因为思维链的槽位块要求填的每个字段,都得在同后端规范里有判据和词表:
@@ -118,7 +133,11 @@ function backendThinkingPrompt(
   nlOn: boolean,
   naiCharPromptsOn: boolean,
   images: number,
+  lean = false,
 ): string {
+  // 截断重试走精简版:完整清单有 7.9k~12k 字符、近百条要求,模型照着过一遍就是两千 token
+  // 的思考块,而这正是把 JSON 挤出预算的那部分。精简版只留「一张图一行」。
+  if (lean) return `${LEAN_THINKING}\n\n${thinkingCapNote(images, true)}`;
   if (settings.defaultBackend === 'nai') {
     const template = naiCharPromptsOn
       ? (options.prompts?.naiV5Thinking ?? '').trim() || DEFAULT_NAI_V5_THINKING
@@ -139,11 +158,33 @@ function backendThinkingPrompt(
  * 固定 12 行在两三张图时根本塞不下,模型要么违反上限要么漏槽位。所以这里给的是
  * 「第一层固定 + 每张图固定」的算术式:让它能自己算,也能在少图时确实压得住。
  */
-export const THINKING_LINE_CAP = 12;
+export const THINKING_LINE_CAP = 8;
 /** 第二层每张图的槽位块大致行数(仅用于算上限,不要求严格对齐)。 */
-export const THINKING_LINES_PER_IMAGE = 8;
+export const THINKING_LINES_PER_IMAGE = 5;
 
-export function thinkingCapNote(images: number): string {
+/**
+ * 精简模式的两类标记:
+ * - `⟪fold⟫…⟪endfold⟫` 只在完整版出现,精简版整段删掉(长解释、举例、清单);
+ * - `⟪lean⟫…⟪end⟫` 只在精简版出现,完整版删掉(替代性的短指令)。
+ *
+ * 用标记而不是两套契约,是为了让两份共用同一处文案、永不漂移:改规则只改一处。
+ */
+const MARKERS = ['⟪lean⟫', '⟪end⟫', '⟪fold⟫', '⟪endfold⟫'];
+
+export function leanContract(text: string, lean: boolean): string {
+  const strip = (value: string) => MARKERS.reduce((acc, marker) => acc.replaceAll(marker, ''), value);
+  if (!lean) return strip(text.replace(/⟪lean⟫[\s\S]*?⟪end⟫/g, ''));
+  return strip(text.replace(/⟪fold⟫[\s\S]*?⟪endfold⟫/g, ''));
+}
+
+export function thinkingCapNote(images: number, lean = false): string {
+  // 降载版单独给死 5 行:这时候图数已经被截断重试压到下限,再按「每图 5 行」算上限
+  // 就会给出 13～23 行,和重试指令里的「5 行以内」自相矛盾,模型取宽的写。
+  if (lean) {
+    return `<thinking_budget>
+<thinking> 最多 5 行:只写结论,不逐条复述正文,也不在思考里排版。写完立刻输出 JSON。
+</thinking_budget>`;
+  }
   const perImage = Math.max(1, Math.floor(images) || 1);
   const cap = THINKING_LINE_CAP + perImage * THINKING_LINES_PER_IMAGE;
   return `<thinking_budget>
@@ -229,6 +270,14 @@ export async function buildAutoTagMessages(
    * 排在服装账本之前——账本是结论,锚点是那句话原本的写法,模型照抄更省力。
    */
   anchorText?: string,
+  /**
+   * 精简模式:上一次输出被截断时的重试请求。
+   *
+   * 两处减载:思考清单换成 {@link LEAN_THINKING} 十行版,任务契约里只保留「必须遵守」
+   * 的主干段(设计和具身这类只在首次选衣服时才用的长段整段略去)。契约本身没删,
+   * 规范、协议、示例照旧,所以 tag 质量不会塌,只是少了逐条自证的素材。
+   */
+  lean = false,
 ): Promise<ChatMsg[]> {
   const target = context.chat[targetFloor];
   const preparedTarget =
@@ -423,12 +472,19 @@ ${sizeRule}
   - 仅仅在场不构成入画理由：主要角色依据设定与剧情判断，不等同于所有已建档角色；不得把不在场者加入画面。**被提及、被回忆、只出现在别人的台词里、只是候选名单上的一员，都不等于实际入画**——这一格镜头里没有他的身体，就不要为了凑数把他塞进来。反过来也一样：不要因为候选多就多画人，也不要为了省事把正在动手的人裁掉。在不损失主体内容与核心互动的前提下，优先不带无关路人的构图。
   - 已建档角色沿用固定外貌，**动作、情绪、服装以当前这一刻的正文为准**：档案给的是脸和身体底子（发色瞳色肤色体型），不是姿势和表情；同一角色在不同格子里的动作要跟着那一格的正文各写各的，不要照搬上一格的动作。
 6b. 取景取舍——这一格**必须出现什么、可以省掉什么**，落 tag 前逐项判一遍。判错的代价不对称：漏掉动作的参与者，画面就变成另一件事（两个人只剩一个人 = 自慰；两个男的只剩一个 = 一个人两根肉棒）；多带一个闲人，只是画面挤。
+⟪fold⟫
   - 三类一定要进画面：①动作的**施受双方**——谁在动、谁被作用，一个都不能省，人多就把男主降级成局部身位（手、腰胯、背后的一截身体），也不能省掉他；②**接触点本身**及接触点两侧的身体；③撑住这个动作的**道具与它的落点**（毛笔要落在阴部上、鞭子要落在臀上；只画一件飘着的道具，画出来就是摆设）。
   - 可以省掉的：环境里的次要器物、没人碰的背景人物、正文没写到的家具、离接触点远的服饰细节（远景里的鞋袜、耳钉）。
   - **运动关系**：写清力从谁身上来、落到谁身上、往哪个方向（his hand pressing her back down，不是 hand on back）。单向动作要写成箭头，不写「两人相拥」这种对称词。
   - **从属关系**：道具属于谁的手、衣服挂在谁身上、身体属于谁，都要绑定；不许让同一个物件同时归两个人（一双不属于任何人的手最容易画成第三个人）。
   - 人数 tag 与角色块必须一致：画面里有 1 女 2 男就写 1girl, 2boys 并给三个人各一个角色块（NAI V5），只写 2girls 而实际两个人，模型就会画出多出来的器官。男主的局部身位也要占一个人数，不能因为不写脸就不计人。
+⟪endfold⟫
+⟪lean⟫
+  - 施受双方与接触点必须都在画面里，男主降级成局部身位也要占人数；人数 tag 与角色块一致。
+  - 动作与道具绑成词组落在一起（brush on pussy），不写飘着的单独道具。
+⟪end⟫
 6c. 落 tag 之前先用一句话把这一格说成人话：「谁 · 用什么东西 · 在哪个部位 · 做什么 · 什么反应」。这句概括是这一格的骨架，tag 只是它的逐项翻译——写 tag 时对着它逐字核，漏一项就补一项。**这句写不出来的格子不许画**（说明你自己也没看清画面，画出来必然是远景加站桩）。
+⟪fold⟫
   - **长段剧情五刀剔除法（当选中的段落字数很多时，先砍掉五类非画面噪音再写概括句）**：
     · 第一刀砍台词与声音：骂声、求饶、喘息声本身画不出来，一律转化为女主的嘴型与微表情（parted lips、biting lip、open mouth、gasping、tears）。
     · 第二刀砍回忆、心理与比喻（最容易污染画面）：如正文写「她想起昨日在会议室里还是高高在上的女总裁，此刻却像猎物般任人摆布」，严禁把回忆或比喻里的 meeting room、business suit、prey 写进 tag，只提炼当前屈辱潮红的表情（humiliation、blush、clenched teeth）。
@@ -439,8 +495,13 @@ ${sizeRule}
   - 最重要的三件（谁在动、用什么、落在哪）必须出现在 tag 的第一句，位置固定在最前面；其余细节按「离接触点由近到远」排，越远越可能被模型丢，所以远处的干脆不写。
   - **tag 不是越多越好**：只写看得见且必须看见的。同一个意思不重复（large breasts 与 huge breasts 不要并存、long hair 与 very long hair 也不要），效果词不叠三层（不要太 seductive、beautiful、amazing 一路形容词），只写会在画面上留下具体形状的东西——剪裁、接触、方向、状态。tag 数控制在 25～40 个，超过就说明你在塞细节，先砍远景与服饰细节。
   - 动作与道具要绑成词组落在一起（brush on pussy、hand pressing her back、fingers inside her），分成 brush 与 pussy 两个散 tag，模型就只会画一支飘着的毛笔和一个裸体。
+⟪endfold⟫
+⟪lean⟫
+  - 概括句写不出来就别画；写完把 tag 数压在 40 个以内。
+⟪end⟫
 ${characterRule}
 9. 选图 = 给这段正文画一格以女主为核心的漫画分镜，不是挑一句好听的话配图。按步骤做完再收结论，不要跳过打分直接挑：
+⟪fold⟫
   - 第一步，枚举：在 <thinking> 的 E 段里用**紧凑单行**列出目标正文里 3～6 个候选瞬间（正文只有 1～2 个就全列），格式「P编号(谁·在做什么·画面里看得见什么)」，所有候选合写在一两行内以节省思考行数。这一步不做取舍。
   - 第二步，扫「显式情欲与敏感点锚点」和「软色情擦边锚点」（这类瞬间最具视觉冲击力，也最容易被漏）：
     · 显式情欲与体位接触锚点（最高优）：体位进入或切换（前戏抚摸、口交深喉、插入结合、后入塌腰、骑乘起伏、足交乳交、内射高潮余韵）、敏感部位直接作用（乳首吸吮/揉捏、阴蒂/穴口拨开、手指/道具落点）、生理失控反应（潮红、泪眼迷离、流涎、弓腰绷紧、脚趾蜷缩、丝袜撕裂）。
@@ -453,6 +514,10 @@ ${characterRule}
   - 第五步，做一遍**不可替代性过滤**（这一步最容易漏，却直接决定这张图有没有价值）：把候选里的人物名字换成随便一个路人，如果这张图仍然能套进几十段别的剧情（站在窗边、坐在桌边聊天、正常走路、普通微笑、抬头看天），它就是通用废图——降权或直接划掉。留下那种「只有这一刻、只有这两个人、只有这段关系才成立」的构图。
   - 同等分数下的优先顺序：①关系或身份发生实质变化的一瞬（告白、拒绝、答应、翻脸、承认、第一次碰触）②接触正在发生的一瞬（手刚碰到、衣服刚被拉开、唇刚贴上、刚进入）③重要角色首次亮相或重新登场的第一印象 ④重大转折（拿到或失去关键物件、被撞见、被揭穿）。
   - 首次亮相优先给「角色作为整体」的第一印象（脸＋造型＋身材曲线＋姿态同框），不要一上来就局部特写。
+⟪endfold⟫
+⟪lean⟫
+  - 三步走完就挑：列 3～6 个候选 → 按「张力 / 可见信息 / 可画性」各 1～5 分挑最高分 → 把画面说成一句人话再翻成 tag。同一瞬间只出一张，图之间至少隔两句正文。
+⟪end⟫
 10. 服装与姿势的取值优先级：
  - 【新版衣橱候选】只供首次穿搭或明确换装时选择；已有服装账本或用户绑定时不得重选。款式用独立标签，如 white shirt, collared shirt, black skirt, pleated skirt；不拼形容词长句，不注入旧姿势或脸型素材。
  - 候选不符合正文时跳过，不改写剧情来迎合素材。无衣服描写且首次建档时只补全一次常用独立衣物标签，之后原样继承。动作和机位依据当前画面独立编写。
@@ -563,14 +628,14 @@ ${characterRule}
   if (worldInfo) messages.push({ role: 'system', content: buildWorldInfoSystem(worldInfo) });
   // 后端书写规范(ComfyUI/NAI)压在固定协议之前;无适用规范时不占消息位。
   if (spec) messages.push({ role: 'system', content: spec });
-  messages.push({ role: 'system', content: fixedContract });
+  messages.push({ role: 'system', content: leanContract(fixedContract, lean) });
   messages.push({
     role: 'system',
     content: COSTUME_PROTOCOL + '\n' + costumeBlock(costumeRequest.seed!),
   });
   // 思维链:压在任务协议之后,要求模型先在 <thinking> 里过检查点再输出 JSON。
   // 解析端(protocol.ts)会先剥掉 think 块再取 JSON,二者配套;按后端取对应的那一份。
-  const thinking = backendThinkingPrompt(options, nlOn, naiCharPromptsOn, options.maxImages);
+  const thinking = backendThinkingPrompt(options, nlOn, naiCharPromptsOn, options.maxImages, lean);
   if (thinking) messages.push({ role: 'system', content: thinking });
   const libraryBlock =
     library?.trim() ||
