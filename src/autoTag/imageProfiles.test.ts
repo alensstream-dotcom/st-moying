@@ -162,6 +162,23 @@ describe('ensureImageProfiles 出图即建档', () => {
     expect(result.items).toHaveLength(0);
   });
 
+  it('已有档案只补空白外貌字段，不覆盖用户已写的值', () => {
+    const saved = entry('苏晚', { hair: 'black hair' });
+    const result = ensureImageProfiles(
+      [image([{ name: '苏晚', tag: '1girl, red hair, blue eyes' }])],
+      [saved],
+      [],
+      4,
+      '',
+    );
+    expect(result.items).toHaveLength(1);
+    const op = result.items[0].op;
+    expect(op.kind).toBe('set');
+    if (op.kind !== 'set') return;
+    expect(op.field).toBe('eyes');
+    expect(op.value).toBe('blue eyes');
+  });
+
   it('同一位无名女子出现在多张图里只建一条占位档案', () => {
     const result = ensureImageProfiles(
       [

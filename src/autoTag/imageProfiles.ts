@@ -1,8 +1,10 @@
 import {
   createCharTagNewOp,
   createCharTagRenameOp,
+  createCharTagSetOp,
   type CharTagAutoOp,
   type CharTagEntry,
+  type CharTagField,
 } from '@/state/charTags';
 import { isMaleIdentity, type IdentityFact } from '@/state/characterIdentity';
 import { femaleName } from './femaleCast';
@@ -43,6 +45,9 @@ export interface ImageProfileResult {
 }
 
 const SIGNATURE_FIELDS = ['hair', 'eyes', 'skin', 'body', 'extra'] as const;
+
+/** 允许从画面补全的字段：外貌为主，服装交给服装账本。 */
+const FILL_FIELDS: CharTagField[] = ['hair', 'eyes', 'skin', 'body', 'extra', 'age'];
 
 function signature(fields: Record<string, string>): string[] {
   return SIGNATURE_FIELDS.map((key) => (fields[key] ?? '').trim().toLowerCase())
@@ -86,6 +91,7 @@ export function ensureImageProfiles(
   const known = entries.map((entry) => entry.name.trim());
   const taken = new Set(known);
   const created: Array<{ name: string; fields: Record<string, string> }> = [];
+  const supplied = new Set<string>();
   let counter = provisionalIndex(entries);
 
   for (const image of images) {
@@ -97,6 +103,27 @@ export function ensureImageProfiles(
       if (existing) {
         if (raw !== existing.name && !aliases.some((pair) => pair[1] === raw))
           aliases.push([existing.name, raw]);
+        // 档案先建、形象后补：只填空白字段，绝不覆盖已有值，也不动用户手锁的档案。
+        if (!options.locked?.has(existing.name) && existing.source !== 'manual') {
+          const filled = recoverProfileFields(character.tag);
+          for (const field of FILL_FIELDS) {
+            if (existing.fields[field]?.trim()) continue;
+            const value = filled[field]?.trim();
+            if (!value) continue;
+            const key = `${existing.name}|${field}`;
+            if (supplied.has(key)) continue;
+            const op = createCharTagSetOp(
+              existing.name,
+              field,
+              value,
+              `第 ${floor} 楼出图补全形象`,
+            );
+            if (!op) continue;
+            supplied.add(key);
+            items.push({ op, sourceLine: image.sourceLine, charOffset: image.charOffset });
+            notes.push(`${existing.name}: 补全 ${field}`);
+          }
+        }
         continue;
       }
       if (taken.has(canonical)) continue;
