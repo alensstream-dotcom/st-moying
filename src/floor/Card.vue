@@ -14,6 +14,7 @@ import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 import { putStudioImage } from '@/data/loreThumbs';
 import { recoverProfileFields } from '@/autoTag/profileRecovery';
 import { openCharacterPicker } from '@/floor/characterPicker';
+import { openOutfitHarvest } from '@/floor/outfitHarvest';
 import { computed, onMounted, ref, watch } from 'vue';
 
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
@@ -369,6 +370,7 @@ function openImage(): void {
   const openedChat = getContext()?.getCurrentChatId?.();
   const hairCast = parseImageTagContent(entry.prompt).characters.map((c) => ({ name: c.name, tag: c.tag }));
   const hairSrc = entry.path;
+  const harvestPrompt = entry.prompt;
   openLightbox({
     onLockHair: hairCast.length
       ? () => openHairLock({ src: hairSrc, cast: hairCast, chat: openedChat })
@@ -377,6 +379,12 @@ function openImage(): void {
     prompt: lightboxPrompt.value,
     filename: downloadFileName(entry),
     onDelete: () => void removeEntry(entry, at),
+    /*
+     * 「收藏这身」只对带角色块的图开放:没有角色块就没有衣物来源,提炼出来是一堆场景词。
+     * 传 detail 原文而不是灯箱里那份(promptText + 元信息),否则 <characters> 后面
+     * 会跟着一串采样参数,harvestOutfit 照单全收。
+     */
+    onHarvest: hairCast.length ? () => openOutfitHarvest({ src: entry.path, prompt: harvestPrompt }) : undefined,
     onAdopt: () =>
       openCharacterPicker({
         src: entry.path,

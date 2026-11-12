@@ -15,6 +15,7 @@ import {
 } from '@/autoTag/context';
 import type { BookMemoryContext } from '@/autoTag/bookMemory';
 import { resolveJailbreakText } from '@/autoTag/jailbreak';
+import { DESIGN_CHAIN, DESIGN_TAG_RULE, EMBODIED_BLOCK } from '@/data/designGuide';
 import { buildLoreBlock } from '@/data/loreIndex';
 import { isAiStoryMessage, isStoryMessage, type STContext } from '@/st/context';
 import { parseImageTagContent } from '@/st/imageTagRegex';
@@ -452,6 +453,8 @@ ${characterRule}
  - **同一角色的一致性高于多样性**：本楼内同一角色只有一套衣服（穿脱状态按所在 P 位置各自取，不算换衣服）。候选项多只是供货，不是让你每张换一套；挑定后逐字复用，差异只出现在姿势/机位/景别/衣物状态词上。如果你发现自己给同一角色写了第二套服装，先回正文找换衣动作，找不到就改回第一套。
  - 不同人物初次选款可以区分，但原文明示同款制服时允许相同。不得为了区分角色改动已锁定款式。
   - **先看【服装现状】再挑**：区块里写着某人「穿着」时，她的衣服已经定了，别重新挑——照抄那套装束；正文没提衣着不代表没穿。区块里没有这个人（首次出场）才从候选里挑，挑定后长期固定。候选库只在两种情况有用：给她挑第一套，或正文明确写了换装。**区块里那套装束可能是从她的固定着装档案带过来的**——那也是定死的答案，不是建议，不许因为「今天换个造型更好看」就换掉。
+  - **给她挑第一套、或正文只给了模糊场合（上班、赴宴、床上）时，按下面的设计链走一遍，别只填 white shirt + black skirt 交差**：${DESIGN_CHAIN.split('\n').join('\n  ')}
+  - ${DESIGN_TAG_RULE}
   - **半脱是独立状态，不是全裸也不是全穿**：露肩、露背、露臀、掀裙、领口被扯开这类姿势，衣服要留在身上并被写出来——off shoulder、slipped down、pulled aside、breasts out、skirt lifted、clothes around waist。只写 nude/topless 会丢掉「衣服还在身上」这一半信息，直接画成光人；只写原封不动的整套衣服，又变成没脱。状态词照抄【服装现状】里已有的那些，不自己造新说法。
 11. 视角（决定一张图好不好看的一半）——先回答**一个**问题：「这一格要不要看见另一个人在做什么」。要看见，就第三人称；不需要，才轮到第一人称。**不要一遇到两人互动就默认 pov**，那是把两人场面拍成单人自慰的最常见原因。
   - **默认第三人称（配合男主无脸/局部入画）**。两人同场时，第三人称永远能同时交代女主的完整曲线、接触点与位置关系，pov 做不到。常规机位：from side（侧面拍清女主胸腰臀S曲线、后入/深吻/抵墙的体位深度，男主写 faceless male）、from front、over shoulder（从男主虚化肩背越肩看女主表情与正身）、from behind（拍女主后背、塌腰与回眸）。
@@ -510,6 +513,7 @@ ${characterRule}
   - 施受方向跟着正文走：女主主动时动作词挂在女主身上（她伸手、她拉、她按、她跨坐），男主只写被作用的部位。
   - 局部特写（埋胸、摸腿、亲锁骨这类）**必须尽量同框女主的眼睛或脸**：改用 from above + looking up + upper body，或 cowboy shot + 俯视，让关键部位和她的脸同时在画面里；同框不下就退一档景别，**绝不许把头切掉只画两条腿**。只有当正文的看点就是那个部位本身（乳首被含住、穴口被拨开、手指进出）时，才允许纯局部 close-up / lower body，此时靠 body tag 交代是哪一层。
   - 视线：男女主互动时，除非正文明确写她撇开视线，女主的眼睛要看着镜头（looking at viewer）；独处时不受此限，按剧情自然表现姿态与身段。
+14b. ${EMBODIED_BLOCK}
 15. 服装状态是连续的，跨段落、跨楼层都不重置：
   - **本楼先按正文判一次穿脱，判完就写状态词**：只有正文明确写了脱下/褪下/解开/掀开某件衣物的动作（动词和那件衣物在同一句里），才把这件降到半脱或脱落，并写清降到哪一步；正文有穿、系、套上的动作，才升回去。接吻、拥抱、隔着衣服抚摸、把衣服揉皱或拉扯但衣服还在身上——一律保持【服装现状】原样，不写任何脱衣状态词（需要表现接触时写 clothes on、through clothes 这类不改变状态的词）。没有动作就照【服装现状】原样沿用，一格都不许自己变。
 - **款式和长度逐字照抄，不许自己改短**：【服装现状】写的是 long jeans / long pants / maxi skirt，就必须画成长裤长裙，不许出现 shorts / miniskirt / denim shorts；颜色、袖长、领口同理。只有在正文明确换成另一件衣服时，才允许换款式。

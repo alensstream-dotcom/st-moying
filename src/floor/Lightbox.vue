@@ -40,9 +40,11 @@ const props = defineProps<{
   adoptable?: boolean;
   rerollable?: boolean;
   hairLockable?: boolean;
+  /** 有值才显示「收藏这身」——把图里这套衣服收进衣橱,与固定人物形象互不相干。 */
+  harvestable?: boolean;
 }>();
 
-const emit = defineEmits<{ close: []; delete: []; adopt: []; reroll: []; lockHair: [] }>();
+const emit = defineEmits<{ close: []; delete: []; adopt: []; reroll: []; lockHair: []; harvest: [] }>();
 
 /** 适应屏幕 ↔ 原始尺寸。 */
 const zoomed = ref(false);
@@ -161,6 +163,14 @@ const promptText = computed(() => (props.prompt ?? '').trim());
           title="保存图中人物的标签与头像，不训练模型"
         >
           保存角色形象
+        </button>
+        <button
+          v-if="harvestable"
+          class="bbi-lb-btn bbi-lb-btn--text"
+          @click="emit('harvest')"
+          title="把这身衣服的款式收进新衣橱，以后可以召回复用"
+        >
+          收藏这身
         </button>
         <button
           v-if="rerollable"

@@ -24,6 +24,8 @@ export interface LightboxOptions {
   onAdopt?: () => void;
   onReroll?: () => void;
   onLockHair?: () => void;
+  /** 提供了才显示「收藏这身」;回调里自己开弹窗,灯箱会先关掉。 */
+  onHarvest?: () => void;
 }
 
 /** 同一时刻只允许一个灯箱,重复调用先关旧的。 */
@@ -54,9 +56,14 @@ export function openLightbox(options: LightboxOptions): void {
       adoptable: !!options.onAdopt,
       rerollable: !!options.onReroll,
       hairLockable: !!options.onLockHair,
+      harvestable: !!options.onHarvest,
       onLockHair: () => {
         close();
         options.onLockHair?.();
+      },
+      onHarvest: () => {
+        close();
+        options.onHarvest?.();
       },
       onAdopt: () => {
         close();
