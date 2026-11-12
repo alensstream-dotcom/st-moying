@@ -1144,7 +1144,9 @@ export function synthesiseSceneClothing(
   }
   return { changes, notes };
 }
-const CHANGE_SCENE = /换上|换成|换好|换了一|换上一|换了一身|换身|新衣|更衣|换装/;
+// 只认真正的换装动作。裸的「换了一」会命中「换了一下姿势」「换了一边」，
+// 一旦采纳就把账本款式换掉——长牛仔裤被写成短牛仔裤就是这么来的。
+const CHANGE_SCENE = /换上|换成|换好|换上一|换了一身|换身|新衣|更衣|换装/;
 const MAIN_GARMENTS = new Set(['shirt', 'skirt', 'pants', 'dress']);
 /**
  * 剧情明确换装、但模型只写了 patch（或压根没报）时，采纳图片里模型给的新衣物，
@@ -1154,6 +1156,7 @@ export function adoptChangedClothing(
   image: ImageInsertion,
   before: ClothingState,
   source: string,
+  entries: CharTagEntry[] = [],
 ): { changes: ClothingChange[]; notes: string[] } {
   const changes: ClothingChange[] = [];
   const notes: string[] = [];
@@ -1162,7 +1165,8 @@ export function adoptChangedClothing(
   const prefix = text.split('\n').slice(0, image.sourceLine).reduce((n, line) => n + line.length + 1, 0);
   const index = Math.max(0, Math.min(text.length, prefix + (image.charOffset ?? 0)));
   for (const character of image.characters) {
-    const record = before.get(character.name);
+    const canonical = entries.length ? resolveCanonicalCharName(character.name, entries) : character.name;
+    const record = before.get(canonical) ?? before.get(character.name);
     if (!record) continue;
     if (record.suitMode === 'always') {
       notes.push(`${character.name}: 固定套装已锁定款式，剧情换装未生效`);
@@ -1177,6 +1181,8 @@ export function adoptChangedClothing(
     const window = sentenceWindow(text, index, 120);
     if (!CHANGE_SCENE.test(window.text)) continue;
     if (!window.text.includes(character.name) && !/她/.test(window.text)) continue;
+    // 句子里必须真的出现衣物词：只写「换了一身」却没说是哪件，不足以接管账本。
+    if (!proseGarment(window.text)) continue;
     const at = storyPosition(text, index);
     changes.push({
       name: character.name,
@@ -1204,10 +1210,14 @@ export function enforceClothing(
   state: ClothingState,
   nl: boolean,
   independent: boolean,
+  entries: CharTagEntry[] = [],
 ): void {
   let managed = 0;
   for (const c of image.characters) {
-    const record = state.get(c.name);
+    // 账本按档案主名记。模型写「晚晴」「林小姐」而库里是「林晚晴」时，旧代码直接
+    // state.get 落空 → 这张图的服装完全不锁（脸却因为 enforceAppearance 走了归一锁住了）。
+    const canonical = entries.length ? resolveCanonicalCharName(c.name, entries) : c.name;
+    const record = state.get(canonical) ?? state.get(c.name);
     if (!record) continue;
     managed++;
     const caption = clothingCaption(record);
@@ -1261,3 +1271,51 @@ export function enforceClothing(
 }
 
 
+
+/** 场景翻篇的标志：换天、换地点、出门这类「人已经重新收拾过」的写法。 */
+const SCENE_RESET =
+  /(?:第二天|次日|翌日|隔天|第二天一早|清早|清晨|天亮|几天后|一周后|一个月后|数日后|回到(?:家|房间|城里|学校|公司)|出门|上班|上学|抵达|到了(?:公司|学校|会场))/;
+
+/** 本楼正在发生的脱衣/裸露/亲密动作。有它就不复位，避免把正在脱的衣服又穿回去。 */
+const UNDRESS_MARK = /(?:脱|褪下|赤裸|裸体|全裸|一丝不挂|洗澡|沐浴|淋浴|泡温泉|做爱|性交|交合|插入|抽插|口交)/;
+
+/**
+ * 场景翻篇自动复位：上一段脱掉的衣物，在新场景里默认已经穿回去。
+ *
+ * 不这么做就会出用户遇到的那种图：前一天做爱脱光，第二天日常剧情里女主
+ * 光着上半身出场——账本的 removed 是永久的，而现实里人会穿衣服。
+ * 只在「有翻篇标志、且本楼没有脱衣动作」时复位，方向永远是多穿，不会当众脱。
+ */
+export function redressForNewScene(
+  source: string,
+  entries: CharTagEntry[],
+  before: ClothingState,
+): { changes: ClothingChange[]; notes: string[] } {
+  const changes: ClothingChange[] = [];
+  const notes: string[] = [];
+  const text = String(source ?? '');
+  if (!SCENE_RESET.test(text) || UNDRESS_MARK.test(text)) return { changes, notes };
+  for (const record of before.values()) {
+    if (record.suitMode === 'always') continue;
+    const off = record.pieces.filter(
+      (piece) => piece.state?.location === 'removed' || piece.state?.location === 'floor',
+    );
+    if (!off.length) continue;
+    changes.push({
+      name: record.name,
+      reportedName: record.name,
+      position: '',
+      sourceLine: 0,
+      charOffset: 0,
+      operation: 'patch',
+      evidence: '',
+      pieces: off.map((piece) => ({
+        id: piece.id,
+        design: '',
+        state: { location: 'worn', fastening: 'closed', arrangement: 'normal' },
+      })),
+    });
+    notes.push(`${record.name}: 新场景开始，已把脱下的衣物穿回`);
+  }
+  return { changes, notes };
+}

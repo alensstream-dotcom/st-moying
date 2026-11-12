@@ -44,7 +44,28 @@ export function diagnoseShot(tag: string, characterTags: string[] = []): ShotDia
   if (!missing.length && !LIGHT_PATTERN.test(hay)) {
     return { missing: ['光线'], softOnly: true };
   }
+  // 只缺机位不再算错:景别对了画面就成立,机位缺了由 repairShotDefaults() 补一个中性的
+  // from front 即可。旧版把它和缺景别一起算硬错,结果 NSFW 段落常在「构图缺项」上
+  // 把重试次数烧光、整楼交白卷。
+  if (missing.length === 1 && missing[0] === '机位') {
+    return { missing: ['机位'], softOnly: true };
+  }
   return { missing, softOnly: false };
+}
+
+/**
+ * 补齐缺省的景别/机位词。
+ *
+ * 只在真的缺时才补,不覆盖模型已经写好的取景;补的词都是最中性的一档,
+ * 目的是别让 NAI 退回它自己的默认构图(中景平视证件照)。
+ */
+export function repairShotDefaults(tag: string, characterTags: string[] = []): string {
+  const hay = [tag ?? '', ...characterTags].join(', ');
+  const additions: string[] = [];
+  if (!SHOT_PATTERN.test(hay)) additions.push('upper body');
+  if (!ANGLE_PATTERN.test(hay)) additions.push('from front');
+  if (!additions.length) return tag;
+  return [String(tag ?? '').trim(), ...additions].filter(Boolean).join(', ');
 }
 
 /**

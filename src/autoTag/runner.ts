@@ -70,6 +70,7 @@ import {
   clothingRevision,
   enforceClothing,
   initialiseClothingFromImage,
+  redressForNewScene,
   narrativeHash,
   readClothingFloor,
   savedImageClothing,
@@ -85,10 +86,13 @@ import {
   diagnoseMonotonousShots,
   diagnoseShot,
   monotonousShotRetryNote,
+  repairShotDefaults,
   shotRetryNote,
 } from '@/autoTag/shotCheck';
 import { salvageJsonObject } from '@/autoTag/salvage';
-import { diagnoseDistance, distanceRetryNote } from '@/autoTag/shotGuide';
+import { applySuggestedDistance, diagnoseDistance } from '@/autoTag/shotGuide';
+import { fallbackImage, fallbackNote, isDrawWorthy } from '@/autoTag/fallbackImage';
+import { refreshWardrobeLock } from '@/st/wardrobeLock';
 import {
   adjacentPositionNote,
   adjacentPositions,
@@ -819,6 +823,16 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             retryNote = EMPTY_PLAN_RETRY_NOTE;
             throw new Error('返回了空 images');
           }
+          // 重试到底还是 0 张、而这一楼明明有值得画的情节：自己拼一张。
+          // 交白卷对用户是纯损失（整楼没图 + 批量队列判失败），拼一张最差也只是构图普通。
+          if (!slot && !candidate.images.length && isDrawWorthy(source)) {
+            const fallback = fallbackImage(source, preparedTarget.segments, entriesBefore);
+            if (fallback) {
+              candidate.images.push(fallback);
+              console.warn(`[墨影] ${fallbackNote(source)}`);
+              diagnostic('images:fallback', { floor, position: fallback.position });
+            }
+          }
           // 落位重复:两张图挤在同一段,画出来是同一瞬间拍两遍。仅当可选位置
           // 够分时才纠(席位数少于图数时重叠是必然的)。同样只在还有重试次数时纠。
           if (attempt < retries) {
@@ -864,11 +878,21 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 return { position: image.position, ...gap };
               })
               .filter((gap): gap is NonNullable<typeof gap> => !!gap);
+            // 景别过远不再重试：直接按建议改写这一张的取景。
+            // 重试要再付一次分析费，而且模型下次未必改对；改 tag 是确定性的。
             if (farGaps.length) {
-              retryNote = distanceRetryNote(farGaps);
-              throw new Error(
-                `景别过远(${farGaps.map((gap) => `${gap.position} 应 ${gap.suggest}`).join('、')})`,
-              );
+              for (const image of candidate.images) {
+                const text = segmentText.get(image.position) ?? '';
+                const gap = diagnoseDistance(
+                  text,
+                  image.tag,
+                  (image.characters ?? []).map((character) => character.tag),
+                  prevSegText(image.position),
+                );
+                if (!gap) continue;
+                image.tag = repairShotDefaults(applySuggestedDistance(image.tag, gap.suggest));
+                diagnostic('distance:auto-fix', { floor, position: image.position, to: gap.suggest });
+              }
             }
           }
           // 画面事实闭环:人数与道具落点。
@@ -920,6 +944,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 构图缺项:只在还有重试次数时纠一次。没次数了就放行——
           // 交一张景别平庸的图,好过因为「没写机位」整楼不生。
           if (attempt < retries) {
+            // 先补默认构图词再判缺项：缺景别/机位属于「画面会平」，不该烧掉重试次数。
+            for (const image of candidate.images)
+              image.tag = repairShotDefaults(image.tag, (image.characters ?? []).map((character) => character.tag));
             const gaps = [
               ...new Set(
                 candidate.images
@@ -1165,6 +1192,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       const scene = synthesiseSceneClothing(source, activeEntries, wardrobe, accepted.changes);
       accepted.changes.push(...scene.changes);
       accepted.rejected.push(...scene.notes);
+      // 场景翻篇（换天/出门）时把上一段脱掉的衣物自动穿回：账本里的 removed 是永久的，
+      // 不复位就会出现「第二天日常剧情女主还光着上半身出场」。只在本楼没有脱衣动作时触发。
+      const redress = redressForNewScene(source, activeEntries, wardrobe);
+      if (redress.changes.length) {
+        accepted.changes.push(...redress.changes);
+        accepted.rejected.push(...redress.notes);
+      }
       // 剧情明确换装但模型只写了 patch/漏报时，采纳图片里的新衣物，避免画面停在旧套装。
       for (const image of plan.images) {
         const stateAtImage = clothingAt(
@@ -1339,7 +1373,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       for (const [name, entry] of at)
         if (!wardrobe.has(name) && !accepted.changes.some((c) => c.name === name))
           completion.set(name, entry);
-      enforceClothing(image, at, profile.nl, profile.naiCharPrompts);
+      enforceClothing(image, at, profile.nl, profile.naiCharPrompts, activeEntries);
       frames.push({
         tag: serializeImageTag(image),
         sourceLine: image.sourceLine,
@@ -1728,6 +1762,8 @@ export function bindAutoTagging(): void {
       chatId && !dryRun && typeof type === 'string' && type !== 'quiet' && type !== 'impersonate',
     );
     diagnostic('GENERATION_STARTED', { chatId, type, dryRun, eligible, options });
+    // 写正文之前把着装账本注入上下文：模型知道她穿着什么，才不会自己换衣服。
+    if (eligible) refreshWardrobeLock();
     beginGeneration(chatId, type, dryRun);
   });
   context.eventSource.on(events.CHARACTER_MESSAGE_RENDERED, (messageId: unknown, type: unknown) => {
@@ -1758,5 +1794,6 @@ export function bindAutoTagging(): void {
   context.eventSource.on(events.CHAT_CHANGED, (...args: unknown[]) => {
     diagnostic('CHAT_CHANGED', { args, currentChatId: getContext()?.getCurrentChatId?.() ?? '' });
     cancelAll();
+    refreshWardrobeLock();
   });
 }

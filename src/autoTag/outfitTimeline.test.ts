@@ -4,6 +4,7 @@ import type { TargetSegment } from './clean';
 import type { ImageInsertion } from './protocol';
 import {
   acceptClothingChanges,
+  redressForNewScene,
   adoptChangedClothing,
   clothingAt,
   clothingCaption,
@@ -306,5 +307,39 @@ describe('款式漂移防护', () => {
     const design = wardrobe.get('林晚晴')!.pieces.map((p) => p.design).join(',');
     expect(design).toContain('long jeans');
     expect(design).not.toContain('shorts');
+  });
+});
+
+describe('redressForNewScene', () => {
+  const before: ClothingState = new Map([
+    [
+      '林晚晴',
+      {
+        name: '林晚晴',
+        outfitId: 'o1',
+        pieces: [
+          { id: 'p1', design: 'white shirt', state: { location: 'removed' } },
+          { id: 'p2', design: 'long jeans', state: { location: 'worn' } },
+        ],
+        source: 'init',
+      },
+    ],
+  ]);
+
+  it('换天出门时把脱下的衣物穿回', () => {
+    const { changes, notes } = redressForNewScene('第二天清晨，她收拾好出门上班。', [], before);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].pieces[0].state.location).toBe('worn');
+    expect(notes[0]).toContain('穿回');
+  });
+
+  it('本楼正在做爱/洗澡时不复位', () => {
+    const { changes } = redressForNewScene('第二天清晨，两人在浴室里做爱。', [], before);
+    expect(changes).toHaveLength(0);
+  });
+
+  it('没有翻篇标志时不动', () => {
+    const { changes } = redressForNewScene('她坐在床边说话。', [], before);
+    expect(changes).toHaveLength(0);
   });
 });

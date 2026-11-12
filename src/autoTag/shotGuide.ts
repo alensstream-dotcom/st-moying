@@ -264,3 +264,23 @@ ${lines.join('\n')}
 直接从 <thinking> 开始,不要解释。
 </shot_distance_retry>`;
 }
+
+/** 所有景别/取景词（用于替换，不做边界匹配，下划线与连写都算）。 */
+const DISTANCE_WORDS =
+  /(?:extreme[-_ ]?close[-_ ]?up|close[-_ ]?up|upper[-_ ]?body|from[-_ ]?chest[-_ ]?up|half[-_ ]?body|cowboy[-_ ]?shot|medium[-_ ]?shot|from[-_ ]?waist[-_ ]?up|full[-_ ]?body|wide[-_ ]?shot|very[-_ ]?wide|long[-_ ]?shot|establishing[-_ ]?shot|portrait|lower[-_ ]?body|feet[-_ ]?out[-_ ]?of[-_ ]?frame|head[-_ ]?out[-_ ]?of[-_ ]?frame)/gi;
+
+/**
+ * 直接把「过远」的景别改写成建议景别。
+ *
+ * 生图失败的三条主因里有一条就是「景别过远」：正文点名了部位，模型却给了 full body，
+ * 重试一次还要再付一次分析费，而且下次未必就改对。这里直接改 tag，比让模型重写稳。
+ * 只动取景词，不碰动作、服装、人数。
+ */
+export function applySuggestedDistance(tag: string, suggest: string): string {
+  const cleaned = String(tag ?? '')
+    .replace(DISTANCE_WORDS, '')
+    .replace(/,\s*,/g, ',')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[,\s]+|[,\s]+$/g, '');
+  return [cleaned, String(suggest ?? '').trim()].filter(Boolean).join(', ');
+}
