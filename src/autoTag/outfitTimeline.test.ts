@@ -7,7 +7,9 @@ import {
   adoptChangedClothing,
   clothingAt,
   clothingCaption,
+  initialiseClothingFromImage,
   parseClothingChanges,
+  proseGarment,
   synthesiseSceneClothing,
   type ClothingChange,
   type ClothingPiece,
@@ -152,20 +154,60 @@ describe('synthesiseSceneClothing 场景推断', () => {
     expect(states.every((s) => s.location === 'floor' && s.wetness === 'wet')).toBe(true);
   });
 
-  it('亲密情节至少脱下内裤,裙子掀起', () => {
+  it('亲吻和隔着衣服的抚摸不推断任何脱衣', () => {
+    const wardrobe = wardrobeOf('林晚晴', [
+      piece('a', 'white shirt'),
+      piece('b', 'dark skirt'),
+      piece('c', 'white panties'),
+      piece('d', 'white bra'),
+    ]);
+    const kiss = synthesiseSceneClothing('林晚晴与他接吻，呼吸交缠。', [entry('林晚晴')], wardrobe);
+    expect(kiss.changes).toHaveLength(0);
+    const touch = synthesiseSceneClothing(
+      '林晚晴靠在他怀里，他隔着衣服抚摸她的胸口。',
+      [entry('林晚晴')],
+      wardrobe,
+    );
+    expect(touch.changes).toHaveLength(0);
+  });
+
+  it('明确写着隔着衣物时,即使情节再亲密也不脱', () => {
+    const wardrobe = wardrobeOf('林晚晴', [piece('a', 'white shirt'), piece('c', 'white panties')]);
+    const scene = synthesiseSceneClothing(
+      '林晚晴与他做爱，衣服都还穿在身上，只是下体隔着布料摩擦。',
+      [entry('林晚晴')],
+      wardrobe,
+    );
+    expect(scene.changes).toHaveLength(0);
+  });
+
+  it('只脱了被点名的那件,其余保持原样', () => {
     const wardrobe = wardrobeOf('林晚晴', [
       piece('a', 'white shirt'),
       piece('b', 'dark skirt'),
       piece('c', 'white panties'),
     ]);
     const scene = synthesiseSceneClothing(
-      '林晚晴与他做爱，喘息声压得很低。',
+      '林晚晴做爱前褪下内裤，裙子仍然穿着。',
       [entry('林晚晴')],
       wardrobe,
     );
+    expect(scene.changes).toHaveLength(1);
     const pieces = scene.changes[0].pieces;
-    expect(pieces.find((p) => p.id === 'c')?.state.location).toBe('removed');
-    expect(pieces.find((p) => p.id === 'b')?.state.arrangement).toBe('lifted');
+    expect(pieces.map((p) => p.id)).toEqual(['c']);
+    expect(pieces[0].state.location).toBe('removed');
+  });
+
+  it('写了赤裸/全裸时整身衣物才全部脱下', () => {
+    const wardrobe = wardrobeOf('林晚晴', [piece('a', 'white shirt'), piece('b', 'dark skirt')]);
+    const scene = synthesiseSceneClothing('林晚晴赤裸着身子压在他身上。', [entry('林晚晴')], wardrobe);
+    expect(scene.changes[0].pieces.every((p) => p.state.location === 'removed')).toBe(true);
+  });
+
+  it('洗澡时原文写着穿泳衣,不按全脱处理', () => {
+    const wardrobe = wardrobeOf('林晚晴', [piece('a', 'white swimsuit')]);
+    const scene = synthesiseSceneClothing('林晚晴穿着泳衣走进浴室冲洗。', [entry('林晚晴')], wardrobe);
+    expect(scene.changes).toHaveLength(0);
   });
 
   it('固定套装不做场景改动,只提示', () => {
@@ -222,5 +264,47 @@ describe('clothingCaption', () => {
       source: 'x',
     };
     expect(clothingCaption(record).tag).toContain('nude');
+  });
+});
+
+describe('款式漂移防护', () => {
+  it('外观描述不能整套换装', () => {
+    const wardrobe = wardrobeOf('林晚晴', [piece('a', 'long jeans')]);
+    const change: ClothingChange = {
+      name: '林晚晴',
+      reportedName: '林晚晴',
+      position: 'P1',
+      sourceLine: 0,
+      charOffset: 0,
+      operation: 'change',
+      evidence: '林晚晴穿着一条短牛仔裤，站在门口。',
+      pieces: [piece('b', 'denim shorts')],
+    };
+    const accepted = acceptClothingChanges([change], change.evidence, wardrobe, [entry('林晚晴')]);
+    expect(accepted.changes).toHaveLength(0);
+    expect(accepted.rejected.join()).toContain('外观描述');
+  });
+
+  it('proseGarment 认得出长牛仔裤与短牛仔裤', () => {
+    expect(proseGarment('她穿着一条蓝色的长牛仔裤')).toBe('blue long jeans');
+    expect(proseGarment('换上黑色牛仔短裤')).toBe('black denim shorts');
+    expect(proseGarment('她笑了笑，没说话')).toBe('');
+  });
+
+  it('首次建档优先采用剧情原文的款式', () => {
+    const wardrobe: ClothingState = new Map();
+    const image = {
+      position: 'P1',
+      after: '',
+      tag: '',
+      nl: '',
+      sourceLine: 0,
+      charOffset: 0,
+      characters: [{ name: '林晚晴', tag: 'white denim shorts, tank top', nl: '' }],
+    } as unknown as ImageInsertion;
+    initialiseClothingFromImage(image, wardrobe, '林晚晴穿着一条白色长牛仔裤走进房间。');
+    const design = wardrobe.get('林晚晴')!.pieces.map((p) => p.design).join(',');
+    expect(design).toContain('long jeans');
+    expect(design).not.toContain('shorts');
   });
 });

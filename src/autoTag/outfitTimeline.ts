@@ -453,6 +453,13 @@ export function acceptClothingChanges(
       if (mapped.length && mapped.every(Boolean)) {
         c.operation = 'patch';
         c.pieces = mapped as ClothingPiece[];
+      } else if (
+        /穿着|身穿|身着|是一条|是那件|wearing|dressed in/i.test(c.evidence) &&
+        !/(?:换上|换成|换好|换装|更衣|穿上|穿回|脱下|脱掉|褪下)/.test(c.evidence)
+      ) {
+        // 「她穿着一条短牛仔裤」是外观描述，不是换装事件；照收会让账本款式被悄悄改写。
+        rejected.push(c.name + ': 这段只是外观描述，不是换装动作，不能整套重置');
+        continue;
       } else {
         rejected.push(c.name + ': 非明确换装不能整套重置，请用已有部件 patch 或新增衣物 add');
         continue;
@@ -496,6 +503,13 @@ export function acceptClothingChanges(
     else if (c.operation === 'init' && old) reason = '已有穿搭，不能重新初始化';
     else if (c.operation === 'init' && c.evidence && (!preceding.includes(c.evidence) || !mentioned))
       reason = '初始服装引用的剧情证据无效';
+    else if (
+      c.operation === 'change' &&
+      /穿着|身穿|身着|是一条|是那件|wearing|dressed in/i.test(c.evidence) &&
+      !/(?:换上|换成|换好|换装|更衣|穿上|穿回|脱下|脱掉|褪下)/.test(c.evidence)
+    )
+      // 「她穿着一条短牛仔裤」是外观描述，不是换装事件；照收会让账本款式被悄悄改写。
+      reason = '这段只是外观描述，不是换装动作，不能整套重置';
     else if (c.operation === 'change' && old && !REPLACE.test(c.evidence))
       reason = '没有明确换装/重新穿戴证据，不能整套重置';
     else if (
@@ -675,9 +689,73 @@ export function clothingTrace(message: STMessage | undefined, rawTag: string): s
     ...floor.rejected.map((r) => `状态处理：${r}`),
   ];
 }
+/** 中文剧情里的常见衣物词 → 英文服装 tag。只用于「首次建档」，永不覆盖已有账本。 */
+const PROSE_GARMENT: Array<[RegExp, string]> = [
+  [/短牛仔裤|牛仔短裤/, 'denim shorts'],
+  [/长牛仔裤|直筒牛仔裤/, 'long jeans'],
+  [/牛仔裤/, 'jeans'],
+  [/百褶裙|短裙/, 'miniskirt'],
+  [/连衣裙/, 'dress'],
+  [/长裙|半身裙|裙子|裙/, 'skirt'],
+  [/长裤|西裤|休闲裤|运动裤/, 'pants'],
+  [/短裤/, 'shorts'],
+  [/白衬衫|衬衫/, 'shirt'],
+  [/t恤|T恤|短袖/, 't-shirt'],
+  [/吊带|背心/, 'camisole'],
+  [/卫衣/, 'hoodie'],
+  [/毛衣|针织衫/, 'sweater'],
+  [/风衣|大衣|外套|夹克/, 'jacket'],
+  [/文胸|胸罩|内衣/, 'bra'],
+  [/内裤|底裤/, 'panties'],
+  [/连裤袜|丝袜/, 'pantyhose'],
+  [/高跟鞋/, 'high heels'],
+  [/运动鞋|帆布鞋/, 'sneakers'],
+  [/长靴|靴子/, 'boots'],
+];
+const PROSE_COLOR: Array<[RegExp, string]> = [
+  [/白/, 'white'],
+  [/黑/, 'black'],
+  [/红/, 'red'],
+  [/蓝/, 'blue'],
+  [/绿/, 'green'],
+  [/黄/, 'yellow'],
+  [/粉/, 'pink'],
+  [/紫/, 'purple'],
+  [/灰/, 'grey'],
+  [/米|卡其/, 'beige'],
+];
+/** 从一句中文里认出衣物（含紧邻的颜色）；认不出返回 ''。 */
+export function proseGarment(sentence: string): string {
+  if (!sentence) return '';
+  for (const [expression, design] of PROSE_GARMENT) {
+    const match = expression.exec(sentence);
+    if (!match) continue;
+    const before = sentence.slice(Math.max(0, match.index - 4), match.index);
+    const color = PROSE_COLOR.find(([expr]) => expr.test(before))?.[1] ?? '';
+    return [color, design].filter(Boolean).join(' ');
+  }
+  return '';
+}
+/** 只认点名到本人的穿搭句，避免把别人的衣服算到她头上，也跳过脱衣/否定语境。 */
+function storyGarmentNear(source: string, name: string, line: number, offset: number): string {
+  const lines = source.replace(/\r\n?/g, '\n').split('\n');
+  const preceding = [...lines.slice(0, line), (lines[line] ?? '').slice(0, offset || undefined)].join('\n');
+  const sentences = preceding.split(/(?<=[。！？!?\n])/).filter((sentence) => sentence.includes(name));
+  for (const sentence of [...sentences].reverse().slice(0, 6)) {
+    if (/没穿|未穿|不穿|没有穿|脱下|脱掉|褪下|换下/.test(sentence)) continue;
+    if (!/穿着|身穿|身着|穿了|套着|披着|一身/.test(sentence)) continue;
+    const design = proseGarment(sentence);
+    if (design) return design;
+  }
+  return '';
+}
 /** One-time compatibility completion only when the LLM omitted a first outfit.
  * Once recorded, later image prompts can never replace it. */
-export function initialiseClothingFromImage(image: ImageInsertion, state: ClothingState): void {
+export function initialiseClothingFromImage(
+  image: ImageInsertion,
+  state: ClothingState,
+  source = '',
+): void {
   for (const c of image.characters) {
     if (state.has(c.name)) continue;
     const parts = extractGarment(c.tag)
@@ -686,7 +764,9 @@ export function initialiseClothingFromImage(image: ImageInsertion, state: Clothi
       .filter(Boolean);
     const wear = readWear(c.tag);
     if (!parts.length && wear.wear === 'worn') continue;
-    state.set(c.name, legacyRecord(c.name, parts.join(', '), wear.wear, wear.state));
+    // 剧情写明了穿搭时以原文为准：模型偶尔把长裤画成短裤，账本不能跟着错下去。
+    const storyDesign = source ? storyGarmentNear(source, c.name, image.sourceLine, image.charOffset ?? 0) : '';
+    state.set(c.name, legacyRecord(c.name, storyDesign || parts.join(', '), wear.wear, wear.state));
   }
 }
 export function savedImageClothing(image: ImageInsertion, before: ClothingState): ClothingState {
@@ -916,8 +996,40 @@ function nearestNamedEntry(text: string, index: number, entries: CharTagEntry[])
 }
 const BATH_SCENE = /洗澡|沐浴|泡澡|泡温泉|淋浴|冲凉|入浴|浴缸|浴池|温泉|泡进|浸(?:在|入).{0,6}(?:水|浴)/;
 const NUDE_SCENE = /赤身裸体|一丝不挂|全裸|赤裸.{0,4}(?:身|躯)|脱得精光|未着寸缕|衣服全脱|浑身赤裸/;
+/** 只有真正发生关系/裸露身体的词才算亲密情节；亲吻、隔着衣服的抚摸不算。 */
 const SEX_SCENE =
-  /做爱|性交|交合|交欢|歡好|欢好|云雨|翻云覆雨|床事|承欢|交媾|插入|抽插|高潮|内射|口交|乳交|爱抚|抚摸|骑(?:在|上)|跨坐|赤裸相拥/;
+  /做爱|性交|交合|交欢|歡好|欢好|云雨|翻云覆雨|床事|承欢|交媾|插入|抽插|内射|口交|乳交|骑乘|跨坐/;
+/** 明确的裸露/脱光表述。 */
+const NAKED_STATE =
+  /赤裸|裸体|全裸|一丝不挂|未着寸缕|赤身|脱光(?:了)?(?:衣服|衣物|全身)|衣服全脱|光着(?:身子|身体)/;
+/** 明确的脱衣动作：动词 + 衣物词必须在同一句里紧邻出现。 */
+const UNDRESS_ACTION =
+  /(?:脱|褪|扒|扯|剥|解|拉|掀|撩)[^，。！？；]{0,12}(?:衣|裤|裙|袜|罩|背心|吊带|内衣|内裤|外套|上衣|衬衫)/;
+const BARE_UPPER = /(?:上身|胸口|乳房|胸部|奶子)[^，。！？；]{0,6}(?:赤裸|裸露|暴露|露出|光着)/;
+const BARE_LOWER = /(?:下身|私处|腿间|屁股)[^，。！？；]{0,6}(?:赤裸|裸露|暴露|露出|光着)/;
+/** 明确「没脱」的写法：这类情节一律不碰账本，宁可少脱也不错脱。 */
+const OVER_CLOTHES =
+  /(?:隔着(?:衣服|衣料|布料|衣物|内衣|内裤|裤子|裙子|胸罩|睡衣)|未脱|没脱|没有脱|不脱|衣着完整|衣服还在|穿着衣服)/;
+const PIECE_PROSE: Record<string, RegExp> = {
+  panties: /内裤|底裤|丁字裤/,
+  bra: /胸罩|文胸|内衣|奶罩/,
+  skirt: /裙/,
+  dress: /裙|旗袍|礼服|汉服|和服/,
+  pants: /牛仔|(?<!内)裤/,
+  shirt: /衬衫|上衣|t恤|T恤|背心|吊带|毛衣|卫衣/,
+  jacket: /外套|夹克|大衣|西装|风衣/,
+  socks: /袜/,
+  shoes: /鞋/,
+};
+function pieceMentioned(kind: string, text: string): boolean {
+  const expression = PIECE_PROSE[kind];
+  if (!expression) return false;
+  // 按分句判断：「褪下内裤，裙子仍然穿着」里内裤被点名、裙子被明确保留。
+  return text.split(/[，。；！？,;]/).some((clause) => {
+    if (!expression.test(clause)) return false;
+    return !/(?:仍然|还|依旧|依然)?(?:穿着|穿在|没脱|未脱|还在身上)/.test(clause);
+  });
+}
 /**
  * 剧情场景推断：洗澡/全裸/亲密情节即使没逐件写脱衣，也按常识补一份穿脱状态。
  * 生成的 change 会作为本楼账本事件持久化，只影响事件位置之后的图片。
@@ -963,11 +1075,44 @@ export function synthesiseSceneClothing(
       const window = sentenceWindow(text, index, 80);
       const evidence = window.text.trim();
       const pieces: ClothingPiece[] = [];
-      for (const piece of record.pieces) {
-        const location = piece.state.location;
-        if (location && location !== 'worn' && location !== 'unknown') continue;
-        const kind = garmentKind(piece.design);
-        if (scene.mode === 'bath' || scene.mode === 'nude') {
+      if (scene.mode === 'sex') {
+        // 严格按剧情：没写脱衣/裸露就不动账本；写了「隔着衣服」更是明确不脱。
+        if (OVER_CLOTHES.test(evidence)) {
+          notes.push(`${name}: 亲密情节但原文写着隔着衣物/没有脱，服装账本保持原样`);
+          handled.add(key);
+          continue;
+        }
+        const naked = NAKED_STATE.test(evidence);
+        const undress = UNDRESS_ACTION.test(evidence);
+        const bareUpper = BARE_UPPER.test(evidence);
+        const bareLower = BARE_LOWER.test(evidence);
+        if (!naked && !undress && !bareUpper && !bareLower) {
+          // 亲吻、隔着衣服的抚摸、单纯的爱抚描写：不推断任何脱衣。
+          handled.add(key);
+          continue;
+        }
+        for (const piece of record.pieces) {
+          const location = piece.state.location;
+          if (location && location !== 'worn' && location !== 'unknown') continue;
+          const kind = garmentKind(piece.design);
+          const mentioned = pieceMentioned(kind, evidence);
+          const upper = kind === 'shirt' || kind === 'bra' || kind === 'jacket' || kind === 'dress';
+          const lower = kind === 'pants' || kind === 'skirt' || kind === 'panties' || kind === 'dress';
+          if (naked || (undress && mentioned) || (bareUpper && upper) || (bareLower && lower)) {
+            pieces.push({ id: piece.id, design: '', state: { location: 'removed' } });
+          } else if (mentioned && /掀起|撩起|掀开|撩开/.test(evidence) && (kind === 'skirt' || kind === 'dress')) {
+            pieces.push({ id: piece.id, design: '', state: { arrangement: 'lifted' } });
+          }
+        }
+      } else {
+        if (scene.mode === 'bath' && /穿着(?:泳衣|泳装|比基尼|浴衣|睡衣)/.test(evidence)) {
+          notes.push(`${name}: 洗澡情节里原文写着穿着衣物，未按全脱处理`);
+          handled.add(key);
+          continue;
+        }
+        for (const piece of record.pieces) {
+          const location = piece.state.location;
+          if (location && location !== 'worn' && location !== 'unknown') continue;
           pieces.push({
             id: piece.id,
             design: '',
@@ -976,15 +1121,12 @@ export function synthesiseSceneClothing(
               ...(scene.mode === 'bath' ? { wetness: 'wet' } : {}),
             },
           });
-        } else if (kind === 'panties' || kind === 'bra') {
-          pieces.push({ id: piece.id, design: '', state: { location: 'removed' } });
-        } else if (kind === 'skirt' || kind === 'dress') {
-          pieces.push({ id: piece.id, design: '', state: { arrangement: 'lifted' } });
-        } else if (kind === 'pants') {
-          pieces.push({ id: piece.id, design: '', state: { arrangement: 'lowered' } });
         }
       }
-      if (!pieces.length) continue;
+      if (!pieces.length) {
+        handled.add(key);
+        continue;
+      }
       const at = storyPosition(text, index);
       changes.push({
         name,

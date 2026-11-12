@@ -1316,7 +1316,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       const frameCostume =
         (slot && savedWardrobe?.frames[slot.seq]?.costume) ||
         costumeAt(costume, image.sourceLine, image.charOffset);
-      initialiseClothingFromImage(image, at);
+      initialiseClothingFromImage(image, at, source);
       for (const record of at.values())
         if (/旧版记录/.test(record.source) && !wardrobe.has(record.name)) {
           const evidence = explicitCostumeEvidence(
