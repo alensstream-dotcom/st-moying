@@ -4,6 +4,7 @@ import {
   applyVibes,
   buildNaiParameters,
   BUILTIN_NAI_ARTISTS,
+  characterReferenceParams,
   fullNegativePrompt,
   fullPositivePrompt,
   isBuiltinNaiArtist,
@@ -441,6 +442,52 @@ describe('NAI V5 support', () => {
       expect([model, caption.char_captions]).toEqual([model, []]);
       expect([model, caption.base_caption.includes('Two girls in a classroom.')]).toEqual([model, false]);
     }
+  });
+});
+
+describe('characterReferenceParams', () => {
+  const ref = { image: 'AAA', strength: 0.7, fidelity: 0.4 };
+
+  it('单条参考也按数组下发', () => {
+    const p = characterReferenceParams('nai-diffusion-4-5-full', [], { prompt: 'x', characterReference: ref });
+    expect(p.director_reference_images).toEqual(['AAA']);
+    expect(p.director_reference_strengths).toEqual([0.7]);
+    expect(p.director_reference_secondary_strengths).toEqual([0.6]);
+  });
+
+  it('多人各带一张,强度互不串味', () => {
+    const second = { image: 'BBB', strength: 0.5, fidelity: 1 };
+    const p = characterReferenceParams('nai-diffusion-4-5-full', [], {
+      prompt: '2girls',
+      characterReferences: [ref, second],
+    });
+    expect(p.director_reference_images).toEqual(['AAA', 'BBB']);
+    expect(p.director_reference_strengths).toEqual([0.7, 0.5]);
+    expect(p.director_reference_secondary_strengths).toEqual([0.6, 0]);
+    expect((p.director_reference_descriptions as unknown[]).length).toBe(2);
+    expect(p.director_reference_information_extracted).toEqual([1, 1]);
+  });
+
+  it('characterReferences 优先于单条字段', () => {
+    const p = characterReferenceParams('nai-diffusion-4-5-full', [], {
+      prompt: 'x',
+      characterReference: { image: 'OLD', strength: 1, fidelity: 1 },
+      characterReferences: [ref],
+    });
+    expect(p.director_reference_images).toEqual(['AAA']);
+  });
+
+  it('没有参考时不出字段', () => {
+    expect(characterReferenceParams('nai-diffusion-4-5-full', [], { prompt: 'x' })).toEqual({});
+  });
+
+  it('非 4.5 与开启 Vibe 时报错', () => {
+    expect(() => characterReferenceParams('nai-diffusion-3', [], { prompt: 'x', characterReference: ref })).toThrow(
+      '当前模型不支持角色图片参考',
+    );
+    expect(() =>
+      characterReferenceParams('nai-diffusion-4-5-full', [{ enabled: true }], { prompt: 'x', characterReference: ref }),
+    ).toThrow('图片参考不能与 Vibe 同用');
   });
 });
 

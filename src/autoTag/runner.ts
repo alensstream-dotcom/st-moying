@@ -47,6 +47,7 @@ import {
   type CastGap,
 } from '@/autoTag/castCheck';
 import { ensureFemaleSubjects, femaleCastNames } from '@/autoTag/femaleCast';
+import { anchorBlock, buildAnchors } from '@/autoTag/anchorLedger';
 import { ensureImageProfiles } from '@/autoTag/imageProfiles';
 import { characterAliases, saveCharacterAliases } from '@/state/characterAliases';
 import { prepareTargetText } from '@/autoTag/clean';
@@ -514,6 +515,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const lockedNames = lockedCharTagNames();
     // 纯本地渲染:建档由主请求在同一次输出里完成(changes 的 field="new")
     const anchors = resolveCharAnchors(entriesBefore, lockedNames);
+    // 上镜锚点:上一张图里她实际被写成什么样。与上面同名的 anchors 区分开——
+    // 那个是角色库文本,这个是画面事实。只留这会儿还在楼里的角色:名字出现在目标正文,
+    // 或本来就是已建档角色(离场的人继续注入只会把镜头往空处带)。
+    const anchorLedger = anchorBlock(
+      buildAnchors(context.chat, floor, (name) => source.includes(name) || entriesBefore.some((entry) => entry.name === name)),
+      entriesBefore.map((entry) => entry.name),
+    );
     // 单槽重写:协议强制「恰好 1 张」,并把该槽位当前提示词与其余槽位摘要带给模型
     // (锚住同一个画面、别抢别人的画面)。min/max 要同时覆盖 build 的规则文案与下面的
     // parse 校验,只改一处会自相矛盾。
@@ -572,6 +580,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       charReuse,
       outfitBlock,
       costumeRequest,
+      anchorLedger,
     );
     costumeRequest.story = source;
     const channel = getTagGenChannel();

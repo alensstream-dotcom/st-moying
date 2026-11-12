@@ -25,6 +25,7 @@ import { openLightbox } from '@/floor/lightbox';
 import { settings, getTagGenChannel } from '@/state/settings';
 import { requestCompletion, requestViaMainApi } from '@/api/client';
 import { materialPrompt } from '@/data/materialPrompt';
+import { DESIGN_CHAIN } from '@/data/designGuide';
 import type { GenerationMeta } from '@/generationMeta';
 import { clothingBefore } from '@/autoTag/outfitTimeline';
 import type { WardrobeSlot } from '@/data/loreTypes';
@@ -342,6 +343,130 @@ async function run(action: () => Promise<void>) {
     controller = null;
   }
 }
+const SLOTS = ['full', 'top', 'bottom', 'underwear', 'hosiery', 'shoes', 'accessory'] as const;
+function applySuit(value: ReturnType<typeof parseSuitReply>) {
+  if (typeof value.tags !== 'string') throw new Error('模型未返回服装标签');
+  tags.value = inspectClothing(value.tags).tags;
+  if (typeof value.era === 'string' && ['ancient', 'modern', 'fantasy', 'any'].includes(value.era))
+    suitEra.value = value.era as SuitMaterial['era'];
+  if (typeof value.category === 'string' && SUIT_CATEGORIES.some((c) => c[0] === value.category))
+    suitCategory.value = value.category;
+  if (typeof value.slot === 'string' && (SLOTS as readonly string[]).includes(value.slot))
+    slot.value = value.slot as WardrobeSlot;
+}
+
+/**
+ * 让 LLM 按「设计需求」出一套新款式（借鉴 zhiku 的 AI 设计衣服）。
+ * 与 analyse 的区别：analyse 是照着一件已有衣服/一张图复原，这里是**从零设计**，
+ * 所以要把设计决策链一并喂进去，否则出来的永远是 white shirt + black skirt。
+ */
+async function designFresh() {
+  const brief = (description.value.trim() || query.value.trim()).slice(0, 400);
+  if (!brief) {
+    feedback.value = '请先在下面写一句设计需求（身份、场合、想突出的部位），或在上方搜索框填关键词';
+    return;
+  }
+  await run(async () => {
+    const api = settings.channels.find((c) => c.id === channel.value);
+    const chat = getContext()?.getCurrentChatId?.();
+    const messages = [
+      {
+        role: 'system' as const,
+        content:
+          '你是 ACGN 服装设计师。按用户需求设计一套能直接画的套装，返回 JSON {name, tags, era, category, slot}。' +
+          '设计时逐条走这条链：' +
+          DESIGN_CHAIN +
+          '。tags 是逗号分隔的英文标签，只能从下面词表逐字选取，不能拼长句，不带穿脱状态与画风；' +
+          '部位要拆开写（外套/上衣/内衣/下装/丝袜/鞋/配饰），8～14 个标签。' +
+          'era 只能是 ancient/modern/fantasy/any；category 只能是 ' +
+          SUIT_CATEGORIES.map((c) => c[0]).join('/') +
+          '；slot 只能是 full/top/bottom/underwear/hosiery/shoes/accessory。词表：' +
+          clothingWords.join(', '),
+      },
+      { role: 'user' as const, content: brief },
+    ];
+    const options = { signal: controller!.signal, source: '衣橱：AI 设计新款式' };
+    const reply = api
+      ? await requestCompletion({ ...api, stream: false }, messages, options)
+      : await requestViaMainApi(messages, options);
+    if (chat !== getContext()?.getCurrentChatId?.()) throw new Error('聊天已切换，未改写衣橱编辑器');
+    const value = parseSuitReply(reply);
+    newSuit();
+    description.value = brief;
+    applySuit(value);
+    title.value = String(value.name || 'AI 设计款式').slice(0, 120);
+    automatic.value = true;
+    selectedId.value = '';
+    origin.value = 'AI 设计';
+    feedback.value = checked.value.unknown.length
+      ? '模型返回了未收录词，请在保存前替换。'
+      : '已按需求设计到编辑器，可预览后收藏；标签可继续改。';
+  });
+}
+
+/**
+ * 从最近剧情读她现在穿着什么（借鉴 zhiku 的 outfitFromStory）。
+ * 只在「账本还没这件衣服」或用户想确认时用，账本本身仍是权威。
+ */
+async function readFromStory() {
+  const chat = getContext();
+  const text = (chat?.chat ?? [])
+    .slice(-4)
+    .map((message) => message.mes.replace(/<bbi_image>[\s\S]*?<\/bbi_image>/g, ''))
+    .join('\n')
+    .trim();
+  if (!text) {
+    feedback.value = '当前聊天还没有可读的剧情';
+    return;
+  }
+  await run(async () => {
+    const api = settings.channels.find((c) => c.id === channel.value);
+    const messages = [
+      {
+        role: 'system' as const,
+        content:
+          '从剧情里读出「' +
+          (actor.value || '这个角色') +
+          '此刻身上穿的全部衣物，返回 JSON {name, tags}。' +
+          '只写正文实际出现的衣物，正文没写的不要猜；按部位从外到内逐个写，用逗号分隔英文标签；' +
+          'tags 只能从下面词表逐字选，不带穿脱状态、表情、动作。词表：' +
+          clothingWords.join(', '),
+      },
+      { role: 'user' as const, content: text },
+    ];
+    const reply = api
+      ? await requestCompletion({ ...api, stream: false }, messages, {
+          signal: controller!.signal,
+          source: '衣橱：从剧情读当前穿着',
+        })
+      : await requestViaMainApi(messages, { signal: controller!.signal, source: '衣橱：从剧情读当前穿着' });
+    const value = parseSuitReply(reply);
+    newSuit();
+    applySuit(value);
+    title.value = String(value.name || `${actor.value || '剧情'}当前穿着`).slice(0, 120);
+    origin.value = '从剧情读取';
+    automatic.value = false;
+    feedback.value = '已按剧情填入，核对后可收藏或直接穿上。';
+  });
+}
+
+interface SuitReply {
+  name?: unknown;
+  tags?: unknown;
+  era?: unknown;
+  category?: unknown;
+  slot?: unknown;
+}
+function parseSuitReply(reply: string): SuitReply {
+  const match = reply.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('模型未返回服装 JSON');
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    throw new Error('模型返回的 JSON 无法解析');
+  }
+}
+
 async function save() {
   await run(async () => {
     assertTags();
@@ -749,7 +874,9 @@ onUnmounted(() => {
             <option v-for="c in settings.channels" :key="c.id" :value="c.id">
               {{ c.name || c.model }}
             </option></select
-          ><button class="bbi-btn" @click="analyse">识别／整理一次（LLM）</button>
+          ><button class="bbi-btn" @click="analyse">识别／整理一次（LLM）</button
+          ><button class="bbi-btn" :disabled="busy" @click="designFresh">AI 设计一套新款式</button
+          ><button class="bbi-btn" :disabled="busy" @click="readFromStory">从最近剧情读她现在穿的</button>
         </div>
       </details>
       <details>

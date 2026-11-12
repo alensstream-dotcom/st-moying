@@ -227,8 +227,20 @@ async function sha256Hex(text: string): Promise<string> {
 
 /* ============ payload 构造(纯函数,可测) ============ */
 
+export interface NaiCharacterReference {
+  fidelity: number;
+  image: string;
+  strength: number;
+}
+
 export interface NaiGenerateValues {
-  characterReference?: { image: string; strength: number; fidelity: number };
+  /** 单人参考（旧口径，等价于只带一条 characterReferences）。 */
+  characterReference?: NaiCharacterReference;
+  /**
+   * 逐角色参考图：数组下标与 characters 无关，NAI 只按目录参考，不认名字，
+   * 所以多人画面里每个角色都可以各带一张定妆图（各自独立强度）。
+   */
+  characterReferences?: NaiCharacterReference[];
   /** 正向 tag(不含质量词)。 */
   prompt: string;
   nl?: string;
@@ -640,6 +652,36 @@ export interface NaiImageOutput {
 }
 
 /**
+ * 角色参考图 → payload 字段。多人画面按数组逐条下发（NAI 只按目录参考、不认名字），
+ * 因此每条各自独立强度；只带一条的旧口径也走这里。
+ */
+export function characterReferenceParams(
+  model: string,
+  vibes: readonly { enabled: boolean }[],
+  values: NaiGenerateValues,
+): JsonObject {
+  const refs = values.characterReferences?.length
+    ? values.characterReferences
+    : values.characterReference
+      ? [values.characterReference]
+      : [];
+  if (!refs.length) return {};
+  if (!model.includes('4-5')) throw new NaiError('当前模型不支持角色图片参考');
+  if (vibes.some((vibe) => vibe.enabled)) throw new NaiError('图片参考不能与 Vibe 同用');
+  return {
+    director_reference_images: refs.map((r) => r.image),
+    director_reference_descriptions: refs.map(() => ({
+      caption: { base_caption: 'character', char_captions: [] },
+      legacy_uc: false,
+    })),
+    director_reference_strengths: refs.map((r) => r.strength),
+    // 1 - fidelity 会带浮点尾巴(0.6000000000000001)，按官方前端口径取三位小数
+    director_reference_secondary_strengths: refs.map((r) => Math.round((1 - r.fidelity) * 1000) / 1000),
+    director_reference_information_extracted: refs.map(() => 1),
+  };
+}
+
+/**
  * 生图。返回图片与本次实际使用的画师串/vibe/采样参数。
  *
  * 429/5xx/网络级失败会自动退避重试(backends/naiRateLimit.ts);配置类错误
@@ -658,21 +700,7 @@ export async function generateNaiImage(
   // 画师串在发请求时解析一次，快照下来随图落盘：事后配方被删/改名也不丢。
   const artist = naiArtistUsage(nai);
   const params = buildNaiParameters(nai, values);
-  if (values.characterReference) {
-    if (!nai.model.includes('4-5')) throw new NaiError('当前模型不支持角色图片参考');
-    if (nai.vibes.some((v) => v.enabled)) throw new NaiError('图片参考不能与 Vibe 同用');
-    const r = values.characterReference;
-    params.director_reference_images = [r.image];
-    params.director_reference_descriptions = [
-      {
-        caption: { base_caption: 'character', char_captions: [] },
-        legacy_uc: false,
-      },
-    ];
-    params.director_reference_strengths = [r.strength];
-    params.director_reference_secondary_strengths = [1 - r.fidelity];
-    params.director_reference_information_extracted = [1];
-  }
+  Object.assign(params, characterReferenceParams(nai.model, nai.vibes, values));
 
   const activeVibes = naiSupportsVibes(nai.model) ? nai.vibes.filter((vibe) => vibe.enabled) : [];
   const loaded = new Map<string, NaiVibeData>();

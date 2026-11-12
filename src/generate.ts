@@ -69,6 +69,10 @@ import { applyPresetToNaiConn, genPresetById } from '@/state/genPresets';
 import { allCharacterRecords, charTagLib, isManualFandom } from '@/state/charTags';
 import { enforceAppearance, isAppearanceDescription } from '@/autoTag/appearanceLock';
 
+const REF_ONLY_V45 = '图片参考未启用：仅 V4.5 且不能与 Vibe 同用，使用文字定妆';
+const REF_NEEDS_PORTRAIT = '图片参考未启用：缺少定妆图或档案已变更';
+const REF_NO_LOCAL_CARD = '本机定妆图缺失，使用文字定妆';
+
 /** 一次生成的输入。与协议层 ImageInsertion 同形,但不含正文位置信息。 */
 export interface GenerateInput {
   suppressCharacterReference?: boolean;
@@ -492,44 +496,54 @@ export async function generateImage(
             configConflicts.join(', ') +
             '），已保留用户配置；若仍出现现代服装，请检查该配方',
         );
-      let characterReference: { image: string; strength: number; fidelity: number } | undefined;
+      // 逐角色各带一张定妆图：NAI 只按目录参考、不认名字，多人画面里每个角色
+      // 都可以各自独立绑定（旧行为只认单人，是这里最影响一致性的限制）。
+      const referenceSet: Array<{ image: string; strength: number; fidelity: number }> = [];
       const subjectCount = [...input.prompt.matchAll(/\b(\d+)(?:girls?|boys?|others?)\b/gi)].reduce(
         (sum, m) => sum + Number(m[1]),
         0,
       );
-      if (
-        !input.suppressCharacterReference &&
-        characters.length === 1 &&
-        (subjectCount === 1 || (subjectCount === 0 && /\bsolo\b/i.test(input.prompt)))
-      ) {
-        const c = characters[0],
-          look = lookSettings(c.name),
-          entry = charTagLib.entries.find((e) => e.name === c.name);
-        if (look.reference) {
-          if (!naiConn.model.includes('4-5') || naiConn.vibes.some((v) => v.enabled))
-            appearanceNotes.push('图片参考未启用：仅 V4.5 且不能与 Vibe 同用，使用文字定妆');
-          else if (
+      if (!input.suppressCharacterReference && characters.length >= 1) {
+        for (const c of characters) {
+          const look = lookSettings(c.name),
+            entry = charTagLib.entries.find((e) => e.name === c.name);
+          if (!look.reference) continue;
+          if (!naiConn.model.includes('4-5') || naiConn.vibes.some((v) => v.enabled)) {
+            if (!referenceSet.length && !appearanceNotes.includes(REF_ONLY_V45))
+              appearanceNotes.push(REF_ONLY_V45);
+            continue;
+          }
+          if (
             !entry ||
             !look.active?.image ||
             fingerprint(entry.fields) !== fingerprint(look.active.fields) ||
             entry.raw !== (look.active.raw ?? '') ||
             entry.nl !== look.active.nl
-          )
-            appearanceNotes.push('图片参考未启用：缺少定妆图或档案已变更');
-          else {
-            const record = await getThumb(look.active.image);
-            if (record) {
-              characterReference = {
-                image: await prepareCharacterReference(record.blob),
-                strength: look.strength,
-                fidelity: look.fidelity,
-              };
-              appearanceNotes.push('已发送单角色定妆参考（约 +5 Anlas；中转接口需验证）');
-            } else appearanceNotes.push('本机定妆图缺失，使用文字定妆');
+          ) {
+            if (!referenceSet.length) appearanceNotes.push(REF_NEEDS_PORTRAIT);
+            continue;
           }
+          const record = await getThumb(look.active.image);
+          if (!record) {
+            if (!referenceSet.length) appearanceNotes.push(REF_NO_LOCAL_CARD);
+            continue;
+          }
+          referenceSet.push({
+            image: await prepareCharacterReference(record.blob),
+            strength: look.strength,
+            fidelity: look.fidelity,
+          });
         }
-      } else if (!input.suppressCharacterReference && characters.some((c) => lookSettings(c.name).reference))
-        appearanceNotes.push('多人画面使用独立文字定妆，不发送图片参考');
+        if (referenceSet.length) {
+          appearanceNotes.push(
+            referenceSet.length > 1
+              ? `已发送 ${referenceSet.length} 人定妆参考（各角色独立；约 +5 Anlas/张；中转接口需验证）`
+              : '已发送单角色定妆参考（约 +5 Anlas；中转接口需验证）',
+          );
+        }
+      }
+      if (subjectCount > 1 && referenceSet.length)
+        appearanceNotes.push('多人画面：人物骨架仍以文字 tag 为准，参考图只做脸与发型锚定');
       const output = await generateNaiImage(
         naiConn,
         // characters 原样透传:不支持的模型由 buildNaiParameters 自己滤掉(同一口径
@@ -540,7 +554,7 @@ export async function generateImage(
           characters,
           seed: input.seed,
           size,
-          characterReference,
+          characterReferences: referenceSet.length ? referenceSet : undefined,
         },
         signal,
         {

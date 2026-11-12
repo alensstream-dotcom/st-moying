@@ -8,6 +8,7 @@ import {
 } from '@/state/charTags';
 import { isMaleIdentity, type IdentityFact } from '@/state/characterIdentity';
 import { femaleName } from './femaleCast';
+import { isGenericCharacterName } from './genericName';
 import { resolveCanonicalCharName } from './charReuse';
 import { recoverProfileFields } from './profileRecovery';
 import type { ImageInsertion } from './protocol';
@@ -25,9 +26,7 @@ import type { ImageInsertion } from './protocol';
  * 生成正常的 new op 写进本楼 delta，于是重放时和模型自己建档案走同一条路。
  */
 
-/** 这些名字是称呼不是人名：给她们建占位档案，等真名出现再 rename。 */
-const GENERIC_NAME_RE =
-  /^(?:她|她们|少女|女子|女孩|女生|姑娘|女人|女修|女士|小姐|夫人|太太|女仆|侍女|女官|女学生|女教师|女医生|护士|路人|陌生女子|陌生人|那女人|这女人|某女|无名氏|女人家)$/;
+/** 这些名字是称呼不是人名：给她们建占位档案，等真名出现再 rename（口径见 genericName.ts）。 */
 
 export const PROVISIONAL_PREFIX = '无名女子';
 
@@ -143,7 +142,7 @@ export function ensureImageProfiles(
         /\b\d*girls?\b|\bwoman\b|\bfemale\b/i.test(character.tag);
       if (!female) continue;
 
-      const looksLikeName = !!canonical && !GENERIC_NAME_RE.test(canonical);
+      const looksLikeName = !!canonical && !isGenericCharacterName(canonical);
       if (looksLikeName) {
         // 早先只按指代建过「无名女子」：外貌对得上就说明是同一个人，改名而不是新建第二条。
         const provisional = entries.find(
