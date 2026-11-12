@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import { openHairLock } from '@/floor/hairLock';
 import { setAppearancePolicy } from '@/state/appearancePolicy';
-import { CHAR_TAG_FIELDS, recomputeCharTags, upsertCharTag, findCharTag } from '@/state/charTags';
+import {
+  CHAR_TAG_FIELDS,
+  createCharTagNewOp,
+  recomputeCharTags,
+  upsertCharTag,
+  findCharTag,
+  type CharTagEntry,
+} from '@/state/charTags';
 import { imageAppearance, adoptLook } from '@/state/characterStudio';
 import { putStudioImage } from '@/data/loreThumbs';
+import { recoverProfileFields } from '@/autoTag/profileRecovery';
+import { openCharacterPicker } from '@/floor/characterPicker';
 import { computed, onMounted, ref, watch } from 'vue';
 
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
@@ -368,8 +377,17 @@ function openImage(): void {
     filename: downloadFileName(entry),
     onDelete: () => void removeEntry(entry, at),
     onAdopt:
-      parseImageTagContent(entry.prompt).characters.length === 1
-        ? () => void useAsPortrait(entry, openedChat)
+      parseImageTagContent(entry.prompt).characters.length >= 1
+        ? () => {
+            const cast = parseImageTagContent(entry.prompt).characters;
+            if (cast.length > 1)
+              openCharacterPicker({
+                src: entry.path,
+                cast,
+                onPick: (name) => void useAsPortrait(entry, openedChat, name),
+              });
+            else void useAsPortrait(entry, openedChat);
+          }
         : undefined,
     onReroll: () => {
       if (openedChat === getContext()?.getCurrentChatId?.()) void generate(true);
@@ -453,27 +471,57 @@ async function copyPrompt(): Promise<void> {
 }
 
 /** 另存当前展示的这张图(与灯箱共用 download.ts,免得两份逻辑漂移)。 */
-async function useAsPortrait(photo = shownEntry.value, expectedChat = getContext()?.getCurrentChatId?.()) {
+async function useAsPortrait(photo = shownEntry.value, expectedChat = getContext()?.getCurrentChatId?.(), pick?: string) {
   if (expectedChat !== getContext()?.getCurrentChatId?.()) return;
   const chat = getContext()?.getCurrentChatId?.(),
     cast = photo ? parseImageTagContent(photo.prompt).characters : [],
-    name = cast.length === 1 ? cast[0].name : '';
-  const entry = findCharTag(name),
+    chosen = pick ? cast.find((character) => character.name === pick) : cast[0],
+    name = chosen?.name ?? '',
     src = photo?.path ?? '';
-  if (!entry || !src) {
-    toastr.info('请使用有命名人物标签的单角色图片；多人图可先裁剪后到角色页上传', '无法直接保存形象');
+  if (!name || !src) {
+    toastr.info('这张图里没有可保存的角色；多人图请先在「画面角色」里选一个', '无法直接保存形象');
     return;
   }
   try {
+    let entry = findCharTag(name);
+    if (!entry && chosen) {
+      // 老图/单槽重写可能没跑出图即建档：点图保存形象时就地补一条档案，
+      // 只写这张图能确定的部分，后面剧情补全再继续往里写。
+      const fields = recoverProfileFields(chosen.tag);
+      const created = createCharTagNewOp({
+        name,
+        fields: { ...fields, sex: fields.sex.trim() ? fields.sex : '1girl' },
+        raw: chosen.tag,
+        nl: chosen.nl ?? '',
+        source: 'ai',
+        desc: '点图保存形象时自动建档',
+      });
+      const draft: CharTagEntry | null = created
+        ? {
+            name: created.name,
+            fields: created.fields,
+            raw: created.raw,
+            nl: created.nl,
+            source: created.source,
+            desc: created.desc,
+            history: [],
+          }
+        : null;
+      if (!draft || !upsertCharTag(draft, undefined, { recordChanges: true }))
+        throw new Error('无法为这个角色建档');
+      entry = findCharTag(name);
+    }
+    if (!entry) throw new Error('角色档案不存在');
+    const snapshot = entry;
     const response = await fetch(src);
     if (!response.ok) throw new Error('读取图片失败');
     const blob = await response.blob(),
       key = 'studio:' + crypto.randomUUID();
-    await putStudioImage(key, blob, JSON.stringify(entry.fields));
+    await putStudioImage(key, blob, JSON.stringify(snapshot.fields));
     if (chat !== getContext()?.getCurrentChatId?.()) return;
-    if (JSON.stringify(findCharTag(name)?.fields) !== JSON.stringify(entry.fields))
+    if (JSON.stringify(findCharTag(name)?.fields) !== JSON.stringify(snapshot.fields))
       throw new Error('保存期间角色档案已变化，请重新选择图片');
-    const appearance = imageAppearance(entry, cast[0].tag);
+    const appearance = imageAppearance(snapshot, chosen?.tag ?? '');
     if (!upsertCharTag(appearance, name, { recordChanges: true })) throw new Error('无法保存该图人物标签');
     setAppearancePolicy(name, {
       mode: appearance.fields.fandom ? 'fandom' : 'manual',

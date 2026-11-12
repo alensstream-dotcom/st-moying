@@ -47,6 +47,8 @@ import {
   type CastGap,
 } from '@/autoTag/castCheck';
 import { ensureFemaleSubjects, femaleCastNames } from '@/autoTag/femaleCast';
+import { ensureImageProfiles } from '@/autoTag/imageProfiles';
+import { characterAliases, saveCharacterAliases } from '@/state/characterAliases';
 import { prepareTargetText } from '@/autoTag/clean';
 import {
   buildCharReuseBlock,
@@ -1101,6 +1103,32 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         plan.images = guard.images;
         console.warn('[墨影] 跳过没有女性主体的图片:', guard.dropped.join('；'));
         toastr.warning(`已跳过 ${guard.dropped.length} 张没有女性角色的图`, '墨影');
+      }
+      // 出图即建档：画面里出现的女角色本楼就要有一条库档案，哪怕这一刻还没有
+      // 名字（先建「无名女子N」占位，后面认出真名再 rename），哪怕特征只有一半。
+      // 这样同楼后续图片和以后楼层都有同一份外貌可锁，而不是模型每张现编。
+      const profiles = ensureImageProfiles(plan.images, safeEntries, planIdentities, floor, source, {
+        locked: lockedNames,
+      });
+      for (const item of profiles.items) {
+        maleGuarded.push(item);
+        floorOps.push(item.op);
+      }
+      if (profiles.notes.length) {
+        appearanceChangeNotes.push(...profiles.notes);
+        diagnostic('profiles:auto', { floor, notes: profiles.notes });
+      }
+      if (profiles.aliases.length) {
+        try {
+          const names = safeEntries.map((entry) => entry.name);
+          for (const [canonical, alias] of profiles.aliases) {
+            const current = characterAliases(canonical, planIdentities);
+            if (current.includes(alias)) continue;
+            saveCharacterAliases(canonical, [...current, alias].join('、'), names);
+          }
+        } catch (error) {
+          console.warn('[墨影] 记录角色别名失败', error);
+        }
       }
     }
     const activeEntries = applyCharTagOps(safeEntries, floorOps, floor, lockedNames);

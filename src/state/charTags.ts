@@ -182,7 +182,16 @@ export interface CharTagSetOp {
   at: number;
 }
 
-export type CharTagAutoOp = CharTagNewOp | CharTagSetOp;
+export type CharTagAutoOp = CharTagNewOp | CharTagSetOp | CharTagRenameOp;
+
+/** 出图时把暂记的无名档案认到真名上（同一楼的自动建档用，模型不产出）。 */
+export interface CharTagRenameOp {
+  kind: 'rename';
+  name: string;
+  to: string;
+  reason: string;
+  at: number;
+}
 
 export interface CharTagFloorDelta {
   v: 1;
@@ -388,6 +397,17 @@ function normalizeAutoOp(raw: unknown): CharTagAutoOp | null {
       at,
     };
   }
+  if (value.kind === 'rename') {
+    const to = typeof value.to === 'string' ? value.to.trim() : '';
+    if (!to || to === name) return null;
+    return {
+      kind: 'rename',
+      name,
+      to,
+      reason: typeof value.reason === 'string' ? value.reason : '',
+      at,
+    };
+  }
   const field = typeof value.field === 'string' ? value.field : '';
   const next = typeof value.value === 'string' ? value.value.trim() : '';
   if (value.kind !== 'set' || !isSetField(field) || !next) return null;
@@ -454,6 +474,18 @@ export function createCharTagSetOp(
   return { kind: 'set', name: cleanName, field, value: cleanValue, reason, at };
 }
 
+export function createCharTagRenameOp(
+  name: string,
+  to: string,
+  reason = '',
+  at = Date.now(),
+): CharTagRenameOp | null {
+  const from = name.trim();
+  const next = to.trim();
+  if (!from || !next || from === next) return null;
+  return { kind: 'rename', name: from, to: next, reason, at };
+}
+
 export function applyCharTagOps(
   entries: CharTagEntry[],
   ops: CharTagAutoOp[],
@@ -464,6 +496,21 @@ export function applyCharTagOps(
   for (const op of ops) {
     // 锁定角色(全局库)不接受 AI changes:无论 new 还是 set 一律丢弃
     if (locked?.has(op.name) || ('field' in op && blocksAppearanceChange(op.name, op.field))) continue;
+    if (op.kind === 'rename') {
+      const entry = out.find((candidate) => candidate.name === op.name);
+      if (!entry || out.some((candidate) => candidate.name === op.to)) continue;
+      const from = entry.name;
+      entry.name = op.to;
+      pushHistory(entry, {
+        field: 'new',
+        from,
+        to: op.to,
+        reason: op.reason,
+        floor,
+        at: op.at,
+      });
+      continue;
+    }
     if (op.kind === 'new') {
       if (out.some((entry) => entry.name === op.name)) continue;
       const entry: CharTagEntry = {

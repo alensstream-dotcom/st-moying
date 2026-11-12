@@ -5,6 +5,7 @@ import {
   applyCharTagOps,
   computeLockedCharTagNames,
   createCharTagNewOp,
+  createCharTagRenameOp,
   createCharTagSetOp,
   deriveCharTags,
   emptyCharFields,
@@ -236,5 +237,33 @@ describe('global library merge & lock', () => {
     const base = [globalEntry('玩家', { sex: '1boy', hair: 'short black hair' })];
     expect(deriveCharTags(base, chat, chat.length, new Set(['玩家']))[0].fields.hair).toBe('short black hair');
     expect(deriveCharTags(base, chat)[0].fields.hair).toBe('long red hair');
+  });
+
+  it('rename: 无名占位档案在真名出现后改名，名字冲突时保持原样', () => {
+    const provisional = createCharTagNewOp({
+      name: '无名女子1',
+      fields: { ...emptyCharFields(), sex: '1girl', hair: 'black hair' },
+      raw: '1girl, black hair',
+      nl: '',
+      source: 'ai',
+      desc: '占位',
+    })!;
+    const rename = createCharTagRenameOp('无名女子1', '苏晚', '认出真名')!;
+    const chat = [floorMessage([provisional]), floorMessage([rename])];
+    const out = deriveCharTags([], chat, chat.length);
+    expect(out.map((entry) => entry.name)).toEqual(['苏晚']);
+    expect(out[0].fields.hair).toBe('black hair');
+
+    // 目标名已被别的档案占用时，改名作废，两条都保留。
+    const clash = createCharTagNewOp({
+      name: '苏晚',
+      fields: { ...emptyCharFields(), sex: '1girl' },
+      raw: '1girl',
+      nl: '',
+      source: 'ai',
+      desc: '',
+    })!;
+    const kept = deriveCharTags([], [floorMessage([provisional, clash]), floorMessage([rename])], 2);
+    expect(kept.map((entry) => entry.name).sort()).toEqual(['无名女子1', '苏晚']);
   });
 });
