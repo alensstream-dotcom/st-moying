@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { openHairLock } from '@/floor/hairLock';
-import { setAppearancePolicy } from '@/state/appearancePolicy';
 import {
-  CHAR_TAG_FIELDS,
   createCharTagNewOp,
   recomputeCharTags,
   upsertCharTag,
+  charTagLib,
   findCharTag,
   type CharTagEntry,
 } from '@/state/charTags';
-import { imageAppearance, adoptLook } from '@/state/characterStudio';
+import { imageAppearance, adoptLook, lookSettings, saveLook } from '@/state/characterStudio';
+import { lockedFields, setAppearancePolicy } from '@/state/appearancePolicy';
+import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 import { putStudioImage } from '@/data/loreThumbs';
 import { recoverProfileFields } from '@/autoTag/profileRecovery';
 import { openCharacterPicker } from '@/floor/characterPicker';
@@ -474,9 +475,12 @@ async function useAsPortrait(
   const chat = getContext()?.getCurrentChatId?.(),
     cast = photo ? parseImageTagContent(photo.prompt).characters : [],
     chosen = pick ? pick : undefined,
-    name = chosen?.name ?? cast[0]?.name ?? '',
+    rawName = chosen?.name ?? cast[0]?.name ?? '',
     src = photo?.path ?? '',
     castTag = chosen?.tag ?? cast[0]?.tag ?? '';
+  // 模型写的是「晚晴」「林小姐」而库主名是「林晚晴」时，按别名归一到主名再存，
+  // 否则会另建一条同人档案、锁定也只锁到那个称呼上。
+  const name = rawName ? resolveCanonicalCharName(rawName, charTagLib.entries) : '';
   if (!name || !src) {
     toastr.info('这张图里没有可保存的角色；多人图请先在「画面角色」里选一个', '无法直接保存形象');
     return;
@@ -524,15 +528,21 @@ async function useAsPortrait(
     if (!upsertCharTag(appearance, name, { recordChanges: true })) throw new Error('无法保存该图人物标签');
     setAppearancePolicy(name, {
       mode: appearance.fields.fandom ? 'fandom' : 'manual',
+      // 只锁有值的字段：空字段也写进 policy 会把档案里的发色/瞳色覆盖成空。
       fields: appearance.fields.fandom
         ? { fandom: appearance.fields.fandom }
-        : Object.fromEntries(
-            CHAR_TAG_FIELDS.filter((f) => f !== 'outfit').map((f) => [f, appearance.fields[f]]),
-          ),
+        : lockedFields(appearance),
     });
     recomputeCharTags();
     adoptLook(appearance, key);
-    toastr.success('已保存这张图的人物标签与头像；未训练模型，图片参考默认关闭', '墨影');
+    // 单人图能安全用参考图时顺手打开——参考图比纯文字锁得更死。
+    // 只在用户没手动关过、且档案指纹与定妆一致的顺风条件下开。
+    const look = lookSettings(name);
+    if (!look.reference) saveLook(name, { ...look, reference: true });
+    toastr.success(
+      '已固定该人物形象：后续每张图都会按档案校正外貌，参考图已开启（仅单人与 V4.5 生效）',
+      '墨影',
+    );
   } catch (e) {
     toastr.error(e instanceof Error ? e.message : String(e), '立绘保存失败');
   }
@@ -712,15 +722,22 @@ onMounted(() => {
                 <Icon name="download" :size="15" />
               </button>
               <button
-                v-if="shownEntry && characters.length === 1"
+                v-if="shownEntry && characters.length >= 1"
                 class="bbi-fab"
-                title="保存这张图的人物标签与头像（不自动开启图片参考）"
+                title="把这张图里的人物外貌固定下来（多人图会先让你选是谁）"
                 @click="
                   menuOpen = false;
-                  useAsPortrait();
+                  if (characters.length > 1)
+                    openCharacterPicker({
+                      src: shownEntry.path,
+                      cast: parseImageTagContent(shownEntry.prompt).characters,
+                      chat: getContext()?.getCurrentChatId?.(),
+                      onPick: (pick) => void useAsPortrait(shownEntry, undefined, pick),
+                    });
+                  else useAsPortrait();
                 "
               >
-                保存形象
+                固定形象
               </button>
               <button
                 v-if="shownEntry"

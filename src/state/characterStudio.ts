@@ -150,7 +150,9 @@ export function imageAppearance(entry: CharTagEntry, tag: string): CharTagEntry 
     (t) =>
       /^[^:()]+\s+\\?\([^()]+\\?\)(?:::\s*)?$/.test(t.replace(/^[-+\d.]+::/, '')) && !/artist|style/i.test(t),
   );
-  fields.fandom = identity ?? '';
+  // 图里没有「角色 (作品)」这种身份 tag 时不要清掉原有同人身份：
+  // 清掉会让 fandom 锁被降级成 manual，档案从此只剩这张图碰巧写到的几个词。
+  if (identity) fields.fandom = identity;
   const dynamic =
     /\b(?:holding|grabbing|touching|pulling|licking|kissing|looking|closed eyes|half.closed|tears|crying|sweat|wet|blush|smile|open mouth|breasts out)\b/i;
   for (const [field, pattern] of Object.entries(groups)) {

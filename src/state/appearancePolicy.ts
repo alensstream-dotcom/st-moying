@@ -1,5 +1,5 @@
 import { getContext } from '@/st/context';
-import type { CharTagEntry, CharTagField } from './charTags';
+import { CHAR_TAG_FIELDS, type CharTagEntry, type CharTagField } from './charTags';
 export type AppearanceMode = 'story' | 'manual' | 'fandom';
 export interface AppearancePolicy {
   backup?: Pick<CharTagEntry, 'fields' | 'raw' | 'nl' | 'desc'>;
@@ -91,4 +91,22 @@ export function appearancePolicyBlock() {
     ) +
     '。manual 中列出的字段必须原样复用，不能以剧情变化改写；未列出的字段按剧情。fandom 为完整替换形象：只使用 fields.fandom 和用户显式修正词，忽略原剧情中的发型、瞳色、脸型、年龄外观和体型。禁止为该人物补录或更新固定外貌（包括 raw、nl），但继续报告服装账本、动作、表情和临时湿发/伤势，可列出用户指定覆盖字段；story 恢复剧情模式。服装不属于本区块。'
   );
+}
+
+/**
+ * 从档案里取「要锁住的字段」。
+ *
+ * 只收有值的字段：空字段也写进 policy 的话，`blocksAppearanceChange` 会认它
+ * （它只看 hasOwn），而 `applyAppearancePolicies` 又会用 '' 覆盖档案里的真值，
+ * 结果模型写的外貌被剥掉、档案的空值补不上，人物直接丢发色/瞳色。
+ * outfit 不锁（服装归账本管）。
+ */
+export function lockedFields(entry: CharTagEntry): Partial<Record<CharTagField, string>> {
+  const fields: Partial<Record<CharTagField, string>> = {};
+  for (const field of [...CHAR_TAG_FIELDS]) {
+    if (field === 'outfit') continue;
+    const value = String(entry.fields[field] ?? '').trim();
+    if (value) fields[field] = value;
+  }
+  return fields;
 }
