@@ -2176,17 +2176,12 @@ export function onSettingsReady(cb: () => void): void {
 }
 
 function applyInto(target: ImageSettings, src: ImageSettings): void {
-  target.enabled = src.enabled;
-  target.ui = src.ui;
-  target.defaultBackend = src.defaultBackend;
-  target.webui = src.webui;
-  target.comfyui = src.comfyui;
-  target.nai = src.nai;
-  target.channels = src.channels;
-  target.assignments = src.assignments;
-  target.autoTag = src.autoTag;
-  target.excludes = src.excludes;
-  target.storage = src.storage;
+  // 逐字段手抄极易漏（historically: genPresets / activeGenPreset / promptPresetLinks
+  // 被漏在拷贝之外，用户新建的参数预设一退出就被内存里的默认值顶掉），
+  // 这里改成按键整体搬运：以后往 ImageSettings 加字段不需要再记得改这份清单。
+  for (const key of Object.keys(src) as Array<keyof ImageSettings>) {
+    (target as unknown as Record<string, unknown>)[key] = src[key];
+  }
 }
 
 /* —— 渠道共享存储:与柏宝书等「柏宝」插件共用同一份渠道列表 ——
