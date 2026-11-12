@@ -161,4 +161,19 @@ describe('ensureImageProfiles 出图即建档', () => {
     const result = ensureImageProfiles([image([])], [], [], 1, '');
     expect(result.items).toHaveLength(0);
   });
+
+  it('同一位无名女子出现在多张图里只建一条占位档案', () => {
+    const result = ensureImageProfiles(
+      [
+        image([{ name: '少女', tag: '1girl, blonde hair, green eyes' }], 1),
+        image([{ name: '少女', tag: '1girl, blonde hair, green eyes, smile' }], 4),
+      ],
+      [],
+      [],
+      1,
+      '少女抬起头，她笑了。',
+    );
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].op.kind).toBe('new');
+  });
 });

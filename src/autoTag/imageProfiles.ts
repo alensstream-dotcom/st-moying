@@ -85,6 +85,7 @@ export function ensureImageProfiles(
   const text = options.story ?? story;
   const known = entries.map((entry) => entry.name.trim());
   const taken = new Set(known);
+  const created: Array<{ name: string; fields: Record<string, string> }> = [];
   let counter = provisionalIndex(entries);
 
   for (const image of images) {
@@ -139,6 +140,9 @@ export function ensureImageProfiles(
 
       const name = looksLikeName ? canonical : `${PROVISIONAL_PREFIX}${(counter += 1)}`;
       if (taken.has(name)) continue;
+      // 同一张楼里同一位无名女子可能出现在好几张图上：外貌对上了就并回刚才
+      // 那条占位档案，别再建一堆「无名女子N」把形象拆散。
+      if (!looksLikeName && created.some((item) => sameLook(item.fields, fields))) continue;
       const op = createCharTagNewOp(
         {
           name,
@@ -154,6 +158,7 @@ export function ensureImageProfiles(
       );
       if (!op) continue;
       taken.add(name);
+      if (!looksLikeName) created.push({ name, fields });
       items.push({ op, sourceLine: image.sourceLine, charOffset: image.charOffset });
       notes.push(`${name}: 出图自动建档`);
     }
