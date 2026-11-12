@@ -610,7 +610,7 @@ ${characterRule}
   // 服装现状排在最近实拍 tag 之前:它是结论(该穿什么),实拍 tag 是证据。
   const outfitBlock = outfitStateBlock?.trim() ? `${outfitStateBlock.trim()}\n\n` : '';
   const anchorBlock = anchorText?.trim() ? `${anchorText.trim()}\n\n` : '';
-  const userContent = `${memoryText}\n\n${libraryBlock}\n\n${reuseBlock}${anchorBlock}${outfitBlock}${lastShotBlock}${loreBlock ? `${loreBlock}\n\n` : ''}${taskBlock}${previous ? `${previous}\n\n` : ''}--- 目标正文｜${roleLabel(context, targetFloor)} ---\n${preparedTarget.promptText}`;
+  const userContent = `${memoryText}\n\n${libraryBlock}\n\n${reuseBlock}${outfitBlock}${anchorBlock}${lastShotBlock}${loreBlock ? `${loreBlock}\n\n` : ''}${taskBlock}${previous ? `${previous}\n\n` : ''}--- 目标正文｜${roleLabel(context, targetFloor)} ---\n${preparedTarget.promptText}`;
   messages.push({ role: 'user', content: userContent });
   return messages;
 }
