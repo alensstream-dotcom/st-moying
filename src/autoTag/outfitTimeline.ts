@@ -5,6 +5,7 @@ import type { TargetSegment } from './clean';
 import type { ImageInsertion } from './protocol';
 import { extractGarment, readOutfitState, readWear, BBI_OUTFIT_EXTRA_KEY } from './outfitState';
 import { resolveCanonicalCharName } from './charReuse';
+import { isCollarToken, isPropToken, storyMentionsCollar, storyMentionsProp } from './props';
 import type { CharTagEntry } from '@/state/charTags';
 import type { STMessage } from '@/st/context';
 import { parseImageTagContent, parseImageTags, stripImageTags } from '@/st/imageTagRegex';
@@ -76,6 +77,7 @@ state 可用 location=worn/removed/held/floor/chair/unknown；fastening=closed/o
 例如上一楼 blouse 的 fastening=open，本楼仅聊天，不输出任何恢复事件，画面仍沿用敞开状态。
 人物库 changes 的永久外貌变更必须额外给 evidence（逐字原文且包含角色名），不得因补绘、光照或你自己的猜测修改档案。手动指定同人角色的档案不允许 AI 修改。
 服装不得写到人物库 changes.outfit/extra；当前穿搭只由 outfitChanges 管理。各图 tag/nl 与各自正文位置的状态一致。
+道具不是服装：刀、剑、枪、手铐、绳、锁链、托盘、杯子、伞这些跟着动作走的东西不要放进 outfitChanges，也不要写进人物 tag 的衣着位置（写了会变成永久挂件）。只有 choker、项链、耳环、腕饰、发饰这类真饰品属于服装。别再因为「被用手按住/被控制」就加 collar 或 handcuffs——正文没写颈部饰品或上铐，就不写。
 无论后端是否支持独立人物提示，都请提供有姓名的 characters 数组用于内部关联；程序再适配后端。`;
 const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 const text = (v: unknown) => (typeof v === 'string' ? v.trim().slice(0, 1600) : '');
@@ -1278,23 +1280,32 @@ export function enforceClothing(
   nl: boolean,
   independent: boolean,
   entries: CharTagEntry[] = [],
+  source = '',
 ): void {
   let managed = 0;
+  // 道具只在正文里还提到时保留：刀架脖子那一楼过去后，锚点与模型 tag 里的
+  // `knife at neck` 都该消失，不然它会一直挂在人物身上。
+  const keepProp = (token: string) =>
+    isCollarToken(token) ? storyMentionsCollar(source) : storyMentionsProp(token, source);
+  const dropProps = (tokens: string[]) =>
+    tokens.filter((t) => (!isPropToken(t) && !isCollarToken(t)) || keepProp(t));
   for (const c of image.characters) {
     // 账本按档案主名记。模型写「晚晴」「林小姐」而库里是「林晚晴」时，旧代码直接
     // state.get 落空 → 这张图的服装完全不锁（脸却因为 enforceAppearance 走了归一锁住了）。
     const canonical = entries.length ? resolveCanonicalCharName(c.name, entries) : c.name;
     const record = state.get(canonical) ?? state.get(c.name);
     if (!record) continue;
-    const caption = clothingCaption(record);
+  const caption = clothingCaption(record);
     // 账本一套衣服都没记下来(旧版残档 design 为空)时，别把模型写的衣服也剥掉，
     // 否则人物会变成「没写任何衣物」→ 出图直接裸。整条跳过，连 Base 也不剥。
     if (!caption.tag.trim()) continue;
     managed++;
-    const dynamic = c.tag
-      .split(',')
-      .map((t) => t.trim())
-      .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t));
+    const dynamic = dropProps(
+      c.tag
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t)),
+    );
     c.tag = [
       ...new Set([
         ...dynamic,
@@ -1316,11 +1327,12 @@ export function enforceClothing(
         .join(' ');
   }
   if (managed && independent) {
-    image.tag = image.tag
-      .split(',')
-      .map((t) => t.trim())
-      .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t))
-      .join(', ');
+    image.tag = dropProps(
+      image.tag
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t)),
+    ).join(', ');
     if (nl)
       image.nl = image.nl
         .split(/(?<=[.!?])\s+/)
@@ -1329,10 +1341,12 @@ export function enforceClothing(
   } else if (managed && image.characters.length === 1) {
     image.tag = [
       ...new Set([
-        ...image.tag
-          .split(',')
-          .map((t) => t.trim())
-          .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t)),
+        ...dropProps(
+          image.tag
+            .split(',')
+            .map((t) => t.trim())
+            .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t)),
+        ),
         ...image.characters[0].tag.split(',').map((t) => t.trim()),
       ]),
     ].join(', ');

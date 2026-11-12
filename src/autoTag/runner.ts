@@ -519,7 +519,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 那个是角色库文本,这个是画面事实。只留这会儿还在楼里的角色:名字出现在目标正文,
     // 或本来就是已建档角色(离场的人继续注入只会把镜头往空处带)。
     const anchorLedger = anchorBlock(
-      buildAnchors(context.chat, floor, (name) => source.includes(name) || entriesBefore.some((entry) => entry.name === name)),
+      buildAnchors(
+        context.chat,
+        floor,
+        (name) => source.includes(name) || entriesBefore.some((entry) => entry.name === name),
+        // 传本楼正文:道具(刀/手铐/绳)只有这里还提到才继续挂着
+        source,
+      ),
       entriesBefore.map((entry) => entry.name),
     );
     // 单槽重写:协议强制「恰好 1 张」,并把该槽位当前提示词与其余槽位摘要带给模型
@@ -1403,7 +1409,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       for (const [name, entry] of at)
         if (!wardrobe.has(name) && !accepted.changes.some((c) => c.name === name))
           completion.set(name, entry);
-      enforceClothing(image, at, profile.nl, profile.naiCharPrompts, activeEntries);
+      enforceClothing(image, at, profile.nl, profile.naiCharPrompts, activeEntries, source);
       frames.push({
         tag: serializeImageTag(image),
         sourceLine: image.sourceLine,

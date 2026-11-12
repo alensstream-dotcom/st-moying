@@ -383,6 +383,9 @@ export async function generateImage(
         state,
         !!input.nl || image.characters.some((c) => !!c.nl),
         status.supportsCharacters,
+        charTagLib.entries,
+        // 道具(刀/手铐)只在这楼正文还提到时保留，否则会变成永久挂件
+        chat[floor]?.mes ?? '',
       );
       input = {
         ...input,
@@ -423,6 +426,8 @@ export async function generateImage(
         bound,
         !!input.nl || image.characters.some((c) => !!c.nl),
         status.supportsCharacters,
+        charTagLib.entries,
+        chat[floor]?.mes ?? '',
       );
       appearanceNotes.push(...[...bound.values()].map((e) => e.name + '：' + suitNote(e)));
       input = { ...input, prompt: image.tag, nl: image.nl, characters: image.characters };

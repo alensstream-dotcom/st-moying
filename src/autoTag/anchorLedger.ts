@@ -1,6 +1,7 @@
 import type { STMessage } from '@/st/context';
 import { isGenericCharacterName } from './genericName';
 import { isClothingDescription } from './outfitTimeline';
+import { isCollarToken, isPropToken, storyMentionsCollar, storyMentionsProp } from './props';
 import { parseImageTagContent } from '@/st/imageTagRegex';
 
 /**
@@ -18,11 +19,13 @@ import { parseImageTagContent } from '@/st/imageTagRegex';
  * 下发的完整 tag 文本），删楼/换 swipe 后锚点自然失效。
  */
 
-/** 一条锚点：某角色最近一次入画时的外貌与着装 tag。 */
+/** 一条锚点：某角色最近一次入画时的外貌、着装 tag 与随身道具。 */
 export interface AnchorEntry {
   name: string;
   appear: string;
   costume: string;
+  /** 刀、手铐、绳这类一次性道具。只在正文还提到时保留。 */
+  props: string;
   floor: number;
 }
 
@@ -42,17 +45,24 @@ function tidy(value: string): string {
     .slice(0, MAX_TAG);
 }
 
-/** 把一条角色 tag 拆成「外貌」和「着装」两堆；都不属于外貌也不属于服装的丢弃。 */
-function splitCharacterTag(tag: string): { appear: string; costume: string } {
+/**
+ * 把一条角色 tag 拆成「外貌」「着装」「道具」三堆。
+ *
+ * 道具单独一堆是这次修 bug 的重点：旧代码把 `knife at neck`、`collar`、
+ * `handcuffs` 都当成外貌，于是锚点逐字复用后它们就变成了永久挂件。
+ */
+function splitCharacterTag(tag: string): { appear: string; costume: string; props: string } {
   const appear: string[] = [];
   const costume: string[] = [];
+  const props: string[] = [];
   for (const token of tidy(tag).split(',')) {
     const part = token.trim();
     if (!part) continue;
-    if (isClothingDescription(part)) costume.push(part);
+    if (isPropToken(part) || isCollarToken(part)) props.push(part);
+    else if (isClothingDescription(part)) costume.push(part);
     else appear.push(part);
   }
-  return { appear: appear.join(', '), costume: costume.join(', ') };
+  return { appear: appear.join(', '), costume: costume.join(', '), props: props.join(', ') };
 }
 
 /**
@@ -60,11 +70,15 @@ function splitCharacterTag(tag: string): { appear: string; costume: string } {
  *
  * `keep` 决定这个人还要不要留在锚点里：只留本楼还在场（名字出现在目标正文或
  * 已建档名单里）的角色，离场的人继续注入只会把镜头往空处带。通用称呼一律不进。
+ *
+ * `story` 是这一楼的正文：道具只在正文还提到时才带进锚点。刀架脖子的那一楼
+ * 之后正文不再提刀，锚点就不再把 `knife at neck` 传下去。
  */
 export function buildAnchors(
   chat: readonly STMessage[],
   beforeFloor: number,
   keep: (name: string) => boolean = () => true,
+  story = '',
 ): AnchorEntry[] {
   const table = new Map<string, AnchorEntry>();
   const from = Math.max(0, beforeFloor - LOOKBACK);
@@ -81,12 +95,29 @@ export function buildAnchors(
         if (isGenericCharacterName(name)) continue;
         if (!keep(name)) continue;
         const parts = splitCharacterTag(character.tag);
-        if (!parts.appear && !parts.costume) continue;
+        if (!parts.appear && !parts.costume && !parts.props) continue;
         table.set(name, { name, ...parts, floor });
       }
     }
   }
-  return [...table.values()].sort((a, b) => a.floor - b.floor).slice(-MAX_ENTRIES);
+  return [...table.values()]
+    .sort((a, b) => a.floor - b.floor)
+    .slice(-MAX_ENTRIES)
+    .map((entry) => ({ ...entry, props: keepProps(entry.props, story) }));
+}
+
+/** 只留正文里还提到的道具；一个都不剩就清空。 */
+function keepProps(props: string, story: string): string {
+  if (!props) return '';
+  return props
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => {
+      if (!part) return false;
+      if (isCollarToken(part)) return storyMentionsCollar(story);
+      return storyMentionsProp(part, story);
+    })
+    .join(', ');
 }
 
 /**
@@ -106,6 +137,7 @@ export function anchorBlock(
     const parts: string[] = [];
     if (!isKnown && entry.appear) parts.push(`上镜外貌: ${entry.appear}`);
     if (entry.costume) parts.push(`当前着装: ${entry.costume}`);
+    if (entry.props) parts.push(`随身道具: ${entry.props}`);
     if (!parts.length) continue;
     const suffix = isKnown ? '（角色库已录入，身份外貌取角色库，此处只作着装一致用）' : '';
     lines.push(`- ${entry.name}${suffix}｜${parts.join('｜')}`);
@@ -115,5 +147,6 @@ export function anchorBlock(
     '【上镜锚点】下列是这些角色最近一次实际入画时下发给模型的英文 tag，属于仍然成立的画面事实（不是新设定）：',
     lines.join('\n'),
     '逐字复用这些 tag；只有正文明确写出变化（染发、换装、受伤、脱下）才改写对应部分，正文与锚点冲突时以正文为准。',
+    '「随身道具」是一次性的（刀、手铐、绳、托盘…），拿到或放下都要看本楼正文，正文没再提就别画；饰品（choker、项链、耳环、腕饰）照常留着。',
   ].join('\n');
 }

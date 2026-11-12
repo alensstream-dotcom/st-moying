@@ -430,3 +430,45 @@ describe('clothingCaption 空账本', () => {
     expect(image.tag).toContain('white shirt');
   });
 });
+
+describe('enforceClothing 道具剔除', () => {
+  function build() {
+    const state: ClothingState = new Map([
+      [
+        '林晚晴',
+        {
+          name: '林晚晴',
+          outfitId: 'o',
+          source: 'init',
+          pieces: [{ id: 'top', design: 'white shirt', state: { location: 'worn' } }],
+        },
+      ],
+    ]);
+    const image: ImageInsertion = {
+      position: 'P1',
+      sourceLine: 0,
+      charOffset: 0,
+      tag: '1girl, knife at neck, white shirt, handcuffs',
+      nl: '',
+      negative: '',
+      size: 'portrait',
+      characters: [{ name: '林晚晴', tag: 'long hair, knife at neck, handcuffs', nl: '' }],
+    } as ImageInsertion;
+    return { state, image };
+  }
+
+  it('正文没再提刀和手铐时全部剔除', () => {
+    const { state, image } = build();
+    enforceClothing(image, state, false, true, [], '第二天她走进教室。');
+    expect(image.characters[0].tag).not.toContain('knife');
+    expect(image.characters[0].tag).not.toContain('handcuffs');
+    expect(image.tag).not.toContain('knife');
+    expect(image.characters[0].tag).toContain('white shirt');
+  });
+
+  it('正文还在用刀就保留', () => {
+    const { state, image } = build();
+    enforceClothing(image, state, false, true, [], '他把刀架在她脖子上。');
+    expect(image.characters[0].tag).toContain('knife at neck');
+  });
+});

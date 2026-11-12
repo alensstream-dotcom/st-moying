@@ -35,7 +35,8 @@ describe('extractGarment', () => {
 
   it('整词边界:bra 不会被 bracelet 命中', () => {
     const garment = extractGarment('1girl, silver bracelet');
-    expect(garment).not.toContain('bra');
+    expect(garment).toBe('silver bracelet');
+    expect(garment.split(', ')).not.toContain('bra');
   });
 
   it('同一部件只记一次', () => {

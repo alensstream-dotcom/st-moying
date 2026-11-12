@@ -19,6 +19,7 @@
  */
 
 import { resolveCanonicalCharName } from '@/autoTag/charReuse';
+import { isAccessoryToken, isCollarToken, isPropToken } from '@/autoTag/props';
 import { allWardrobeItems } from '@/data/loreIndex';
 import { clothingWords } from '@/data/materialLibrary';
 import type { CharTagEntry } from '@/state/charTags';
@@ -169,7 +170,7 @@ function vocab(): Set<string> {
  * 原样保留下来。只存裸词会把颜色和版型全丢掉,下一楼账本只剩 `shirt, skirt`,颜色照样乱飘。
  */
 const GARMENT_HEAD_RE =
-  /(?:^|\s)(?:dress|shirt|t-shirt|skirt|miniskirt|pants|trousers|slacks|shorts|jeans|jacket|blazer|coat|raincoat|trenchcoat|overcoat|vest|waistcoat|suit|bra|bralette|panties|knickers|briefs|underwear|lingerie|negligee|nightgown|pajamas|pyjamas|thighhighs|kneehighs|pantyhose|stockings|tights|leggings|fishnets|garter(?:\s+belt|\s+straps)?|suspenders|apron|uniform|serafuku|sailor\s+collar|kimono|yukata|haori|hakama|hanfu|cheongsam|qipao|robe|bathrobe|towel|scarf|neckerchief|necktie|bowtie|choker|collar|gloves|mittens|sleeves|wristbands|cuffs|boots|shoes|heels|loafers|sneakers|sandals|slippers|hoodie|sweater|pullover|turtleneck|cardigan|blouse|top|halterneck|tube\s+top|crop\s+top|tank\s+top|camisole|corset|bustier|leotard|bodysuit|jumpsuit|overalls|playsuit|romper|bikini|swimsuit|swimwear|trunks|bloomers|buruma|socks|anklets|tabi|belt|sash|obi|ribbon|cape|capelet|cloak|shawl|veil|headdress|headband|beret|hat|cap)(?:$|\s)/i;
+  /(?:^|\s)(?:dress|shirt|t-shirt|skirt|miniskirt|pants|trousers|slacks|shorts|jeans|jacket|blazer|coat|raincoat|trenchcoat|overcoat|vest|waistcoat|suit|bra|bralette|panties|knickers|briefs|underwear|lingerie|negligee|nightgown|pajamas|pyjamas|thighhighs|kneehighs|pantyhose|stockings|tights|leggings|fishnets|garter(?:\s+belt|\s+straps)?|suspenders|apron|uniform|serafuku|sailor\s+collar|kimono|yukata|haori|hakama|hanfu|cheongsam|qipao|robe|bathrobe|towel|scarf|neckerchief|necktie|bowtie|choker|collar|necklace|pendant|earrings?|piercing|bracelet|bangle|anklet|hairpin|hair ornament|tiara|circlet|gloves|mittens|sleeves|wristbands|cuffs|boots|shoes|heels|loafers|sneakers|sandals|slippers|hoodie|sweater|pullover|turtleneck|cardigan|blouse|top|halterneck|tube\s+top|crop\s+top|tank\s+top|camisole|corset|bustier|leotard|bodysuit|jumpsuit|overalls|playsuit|romper|bikini|swimsuit|swimwear|trunks|bloomers|buruma|socks|anklets|tabi|belt|sash|obi|ribbon|cape|capelet|cloak|shawl|veil|headdress|headband|beret|hat|cap)(?:$|\s)/i;
 
 const NON_GARMENT_SEGMENT_RE =
   /\b(?:hair|eyes|eyelashes|eyebrows|pupils|skin|breasts|nipples|cleavage|ass|butt|hips|thighs|legs|waist|stomach|belly|navel|back|shoulders|neck|collarbone|clavicle|face|lips|mouth|tongue|teeth|ears|hands|fingers|arms|feet|toes|nails|sweat|tears|saliva|blush|smile|smiling|looking|staring|gaze|expression|sitting|standing|kneeling|lying|leaning|bending|squatting|straddling|hugging|holding|grabbing|touching|pressing|rubbing|kissing|licking|sucking|biting|solo|1girl|2girls|1boy|2boys|multiple|pov|close-up|upper\s+body|lower\s+body|cowboy\s+shot|full\s+body|portrait|from\s+(?:above|below|behind|side)|indoors|outdoors|background|lighting|light|shadow|window|bed|couch|sofa|chair|desk|table|wall|floor|door)\b/i;
@@ -195,6 +196,12 @@ export function extractGarment(tag: string): string {
     if (found.length >= 12) break;
     if (COLOR_ONLY.has(seg)) continue;
     if (NON_GARMENT_SEGMENT_RE.test(seg)) continue;
+    // 一次性道具(刀/手铐/绳…)不是衣服，记进账本会变成永久挂件。
+    if (isPropToken(seg)) continue;
+    // 裸 `collar` / `black collar` 同理：它既可能是项圈也可能是错觉，
+    // 交给锚点按「本楼还提不提」决定，这里先不写进服装账本。
+    // 但 choker / 项链这类常驻饰品要照常当衣服记下来。
+    if (isCollarToken(seg) && !isAccessoryToken(seg)) continue;
     let matched = GARMENT_HEAD_RE.test(seg);
     if (!matched) {
       for (const word of words) {

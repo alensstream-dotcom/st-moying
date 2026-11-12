@@ -54,14 +54,32 @@ describe('buildAnchors', () => {
     const chat = [floor('a'), floor('b'), floor('c')];
     expect(buildAnchors(chat, 1)).toHaveLength(1);
   });
+
+  it('刀这类道具不算外貌，正文不再提就丢掉', () => {
+    const chat = [floor('long black hair, white dress, knife at neck', '林晚晴')];
+    const withKnife = buildAnchors(chat, 1, () => true, '男人的刀架在她脖子上');
+    expect(withKnife[0].props).toBe('knife at neck');
+    expect(withKnife[0].appear).toBe('long black hair');
+    const withoutKnife = buildAnchors(chat, 1, () => true, '第二天她回到教室');
+    expect(withoutKnife[0].props).toBe('');
+  });
+
+  it('choker 是常驻饰品，裸 collar 与手铐只在本楼还提到时保留', () => {
+    const chat = [floor('long hair, choker, black collar, handcuffs', '林晚晴')];
+    const pressed = buildAnchors(chat, 1, () => true, '他用手把她按住')[0];
+    expect(pressed.props).toBe('');
+    expect(pressed.appear).toBe('long hair, choker');
+    const bound = buildAnchors(chat, 1, () => true, '脖颈上的黑色项圈，手腕被手铐铐住')[0];
+    expect(bound.props).toBe('black collar, handcuffs');
+  });
 });
 
 describe('anchorBlock', () => {
   it('已建档角色只给着装，未建档才给外貌', () => {
     const text = anchorBlock(
       [
-        { name: '林晚晴', appear: 'long hair', costume: 'white dress', floor: 3 },
-        { name: '郑小雨', appear: 'short hair', costume: 'jeans', floor: 3 },
+        { name: '林晚晴', props: '', appear: 'long hair', costume: 'white dress', floor: 3 },
+        { name: '郑小雨', props: '', appear: 'short hair', costume: 'jeans', floor: 3 },
       ],
       ['林晚晴'],
     );
@@ -77,7 +95,7 @@ describe('anchorBlock', () => {
   });
 
   it('逐字复用与「正文优先」的口径写在区块里', () => {
-    const text = anchorBlock([{ name: '林晚晴', appear: '', costume: 'jeans', floor: 1 }]);
+    const text = anchorBlock([{ name: '林晚晴', appear: '', costume: 'jeans', props: '', floor: 1 }]);
     expect(text).toContain('逐字复用');
     expect(text).toContain('以正文为准');
   });
