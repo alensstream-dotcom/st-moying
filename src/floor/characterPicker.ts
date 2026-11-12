@@ -9,7 +9,8 @@ import CharacterPicker from '@/components/CharacterPicker.vue';
 export function openCharacterPicker(options: {
   src: string;
   cast: Array<{ name: string; tag: string; nl?: string }>;
-  onPick: (name: string) => void;
+  chat?: string;
+  onPick: (value: { name: string; tag: string }) => void;
 }): void {
   const root = document.getElementById('bbi-app-host')?.shadowRoot;
   if (!root) {
@@ -26,10 +27,11 @@ export function openCharacterPicker(options: {
     h(CharacterPicker, {
       src: options.src,
       cast: options.cast,
+      chat: options.chat,
       onClose: close,
-      onPick: (name: string) => {
+      onPick: (value: { name: string; tag: string }) => {
         close();
-        options.onPick(name);
+        options.onPick(value);
       },
     }),
     host,

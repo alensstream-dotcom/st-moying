@@ -1,30 +1,138 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import ModalMask from './ModalMask.vue';
+import { requestCompletion, requestViaMainApi } from '@/api/client';
 import { findCharTag } from '@/state/charTags';
+import { getTagGenChannel } from '@/state/settings';
+import { getContext } from '@/st/context';
 
 /**
  * 画面角色选择器。
  *
- * 生成的图里角色块是模型写的「这张图有谁」，点图就能看到。过去只有单角色图
- * 能一键存形象，多角色图直接劝退；出图即建档上线后，这里还要能把「没档案的
- * 女角色」当场认领进库。选中后由调用方负责存档案 + 存立绘。
+ * 生成图里角色块就是「这张图有谁」，点图就能看到；但老图或模型漏写角色块时
+ * 只能看像素。所以这里除了列出角色块，还能把图发给视觉模型现场认一遍女性
+ * 角色（长什么样、对应哪个已有档案），认出来的人可以当场建档/更新形象。
  */
 const props = defineProps<{
   src: string;
   cast: Array<{ name: string; tag: string; nl?: string }>;
-  /** 正在保存的名字，用于禁用按钮。 */
-  busyName?: string;
+  chat?: string;
 }>();
-const emit = defineEmits<{ (e: 'close'): void; (e: 'pick', name: string): void }>();
-const failed = ref(false);
+const emit = defineEmits<{
+  (e: 'close'): void;
+  (e: 'pick', value: { name: string; tag: string }): void;
+}>();
 
-const rows = computed(() =>
-  props.cast.map((item) => ({
-    ...item,
+interface Row {
+  name: string;
+  tag: string;
+  saved: boolean;
+  /** 视觉识别出来的行（不是角色块里写死的名字）。 */
+  recognised?: boolean;
+  /** 识别时给的中文说明，展示用。 */
+  reason?: string;
+}
+
+const extra = ref<Row[]>([]);
+const feedback = ref('');
+const busy = ref('');
+const failed = ref(false);
+const controller = new AbortController();
+onBeforeUnmount(() => controller.abort());
+
+const rows = computed<Row[]>(() => {
+  const fromTag: Row[] = props.cast.map((item) => ({
+    name: item.name,
+    tag: item.tag,
     saved: !!findCharTag(item.name),
-  })),
-);
+  }));
+  const seen = new Set(fromTag.map((row) => row.name));
+  return [...fromTag, ...extra.value.filter((row) => !seen.has(row.name))];
+});
+
+function checkChat() {
+  if (props.chat && props.chat !== getContext()?.getCurrentChatId?.())
+    throw new Error('聊天已切换，请重新打开图片');
+}
+
+async function imageData(): Promise<string> {
+  const response = await fetch(props.src, { signal: controller.signal });
+  if (!response.ok) throw new Error('图片读取失败');
+  const blob = await response.blob();
+  if (blob.size > 8 * 1024 * 1024) throw new Error('请使用8MB以内的图片');
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('图片读取失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function recognise() {
+  if (busy.value) return;
+  busy.value = 'recognise';
+  feedback.value = '';
+  try {
+    checkChat();
+    const data = await imageData();
+    const known = props.cast.map((item) => ({ name: item.name, tag: item.tag }));
+    const messages = [
+      {
+        role: 'system' as const,
+        content:
+          '只识别图片里真实可见的女性角色，返回 JSON {"characters":[{"label":"女1","name":"","tag":"","reason":""}]}。' +
+          'name 只能从给定名单里选（外貌/发型/服装明显对得上时才选），对不上留空；tag 用英文逗号分隔的 Danbooru 标签，只写这个角色本身稳定可见的特征（发色长度发型、瞳色、肤色、体型、显著特征），不写表情、动作、姿势、镜头、背景、画风、衣服状态。' +
+          '画面里没有女性角色时返回空数组。不要为男性或背景生成条目，不要猜名字。',
+      },
+      {
+        role: 'user' as const,
+        content: JSON.stringify({
+          known,
+          task: '识别这张图里出现的女性角色',
+        }),
+      },
+    ];
+    const reply = (getTagGenChannel()
+      ? await requestCompletion(getTagGenChannel()!, messages, {
+          signal: controller.signal,
+          imageData: data,
+          source: '画面角色：视觉识别',
+        })
+      : await requestViaMainApi(messages, {
+          signal: controller.signal,
+          imageData: data,
+          source: '画面角色：视觉识别',
+        })) as string;
+    checkChat();
+    const json = reply
+      .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
+      .match(/\{[\s\S]*\}/)?.[0];
+    if (!json) throw new Error('模型没有返回可解析的角色信息，请确认该渠道支持看图');
+    const parsed = JSON.parse(json) as {
+      characters?: Array<{ label?: string; name?: string; tag?: string; reason?: string }>;
+    };
+    const found = (parsed.characters ?? [])
+      .filter((item) => typeof item.tag === 'string' && item.tag.trim())
+      .slice(0, 4);
+    if (!found.length) throw new Error('没有识别到女性角色');
+    extra.value = found.map((item, index) => {
+      const named = (item.name ?? '').trim();
+      const name = named || `无名女子${index + 1}`;
+      return {
+        name,
+        tag: (item.tag ?? '').trim(),
+        saved: !!findCharTag(name),
+        recognised: true,
+        reason: (item.reason ?? '').trim(),
+      };
+    });
+    feedback.value = `识别到 ${extra.value.length} 位女性角色，核对标签后点右侧保存。`;
+  } catch (error) {
+    feedback.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    busy.value = '';
+  }
+}
 </script>
 
 <template>
@@ -47,22 +155,30 @@ const rows = computed(() =>
           @error="failed = true"
           v-show="!failed"
         />
+        <div class="bbi-cast-pick__tools">
+          <button class="bbi-cast-pick__vision" type="button" :disabled="!!busy" @click="recognise">
+            {{ busy === 'recognise' ? '识别中…' : '让 AI 看图标出女角色' }}
+          </button>
+          <span v-if="feedback" class="bbi-cast-pick__feedback">{{ feedback }}</span>
+        </div>
         <ul class="bbi-cast-pick__list">
           <li v-for="row in rows" :key="row.name" class="bbi-cast-pick__row">
             <div class="bbi-cast-pick__info">
               <div class="bbi-cast-pick__name">
                 {{ row.name }}
                 <span v-if="!row.saved" class="bbi-cast-pick__badge">未建档</span>
+                <span v-if="row.recognised" class="bbi-cast-pick__badge">识别</span>
               </div>
               <div class="bbi-cast-pick__tags">{{ row.tag }}</div>
+              <div v-if="row.reason" class="bbi-cast-pick__reason">{{ row.reason }}</div>
             </div>
             <button
               class="bbi-cast-pick__save"
               type="button"
-              :disabled="!!busyName"
-              @click="emit('pick', row.name)"
+              :disabled="!!busy"
+              @click="emit('pick', { name: row.name, tag: row.tag })"
             >
-              {{ busyName === row.name ? '保存中…' : row.saved ? '更新形象' : '建档并固定' }}
+              {{ row.saved ? '更新形象' : '建档并固定' }}
             </button>
           </li>
         </ul>
@@ -125,6 +241,30 @@ const rows = computed(() =>
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.25);
 }
+.bbi-cast-pick__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.bbi-cast-pick__vision {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px dashed var(--bbi-border, #4a4e57);
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.bbi-cast-pick__vision:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.bbi-cast-pick__feedback {
+  font-size: 12px;
+  opacity: 0.75;
+  line-height: 1.5;
+}
 .bbi-cast-pick__list {
   list-style: none;
   margin: 0;
@@ -166,6 +306,12 @@ const rows = computed(() =>
   opacity: 0.65;
   line-height: 1.5;
   word-break: break-word;
+}
+.bbi-cast-pick__reason {
+  margin-top: 3px;
+  font-size: 11px;
+  opacity: 0.55;
+  line-height: 1.5;
 }
 .bbi-cast-pick__save {
   flex: none;

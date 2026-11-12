@@ -376,19 +376,13 @@ function openImage(): void {
     prompt: lightboxPrompt.value,
     filename: downloadFileName(entry),
     onDelete: () => void removeEntry(entry, at),
-    onAdopt:
-      parseImageTagContent(entry.prompt).characters.length >= 1
-        ? () => {
-            const cast = parseImageTagContent(entry.prompt).characters;
-            if (cast.length > 1)
-              openCharacterPicker({
-                src: entry.path,
-                cast,
-                onPick: (name) => void useAsPortrait(entry, openedChat, name),
-              });
-            else void useAsPortrait(entry, openedChat);
-          }
-        : undefined,
+    onAdopt: () =>
+      openCharacterPicker({
+        src: entry.path,
+        cast: parseImageTagContent(entry.prompt).characters,
+        chat: openedChat,
+        onPick: (pick) => void useAsPortrait(entry, openedChat, pick),
+      }),
     onReroll: () => {
       if (openedChat === getContext()?.getCurrentChatId?.()) void generate(true);
     },
@@ -471,28 +465,33 @@ async function copyPrompt(): Promise<void> {
 }
 
 /** 另存当前展示的这张图(与灯箱共用 download.ts,免得两份逻辑漂移)。 */
-async function useAsPortrait(photo = shownEntry.value, expectedChat = getContext()?.getCurrentChatId?.(), pick?: string) {
+async function useAsPortrait(
+  photo = shownEntry.value,
+  expectedChat = getContext()?.getCurrentChatId?.(),
+  pick?: { name: string; tag: string },
+) {
   if (expectedChat !== getContext()?.getCurrentChatId?.()) return;
   const chat = getContext()?.getCurrentChatId?.(),
     cast = photo ? parseImageTagContent(photo.prompt).characters : [],
-    chosen = pick ? cast.find((character) => character.name === pick) : cast[0],
-    name = chosen?.name ?? '',
-    src = photo?.path ?? '';
+    chosen = pick ? pick : undefined,
+    name = chosen?.name ?? cast[0]?.name ?? '',
+    src = photo?.path ?? '',
+    castTag = chosen?.tag ?? cast[0]?.tag ?? '';
   if (!name || !src) {
     toastr.info('这张图里没有可保存的角色；多人图请先在「画面角色」里选一个', '无法直接保存形象');
     return;
   }
   try {
     let entry = findCharTag(name);
-    if (!entry && chosen) {
+    if (!entry) {
       // 老图/单槽重写可能没跑出图即建档：点图保存形象时就地补一条档案，
       // 只写这张图能确定的部分，后面剧情补全再继续往里写。
-      const fields = recoverProfileFields(chosen.tag);
+      const fields = recoverProfileFields(castTag);
       const created = createCharTagNewOp({
         name,
         fields: { ...fields, sex: fields.sex.trim() ? fields.sex : '1girl' },
-        raw: chosen.tag,
-        nl: chosen.nl ?? '',
+        raw: castTag,
+        nl: '',
         source: 'ai',
         desc: '点图保存形象时自动建档',
       });
@@ -521,7 +520,7 @@ async function useAsPortrait(photo = shownEntry.value, expectedChat = getContext
     if (chat !== getContext()?.getCurrentChatId?.()) return;
     if (JSON.stringify(findCharTag(name)?.fields) !== JSON.stringify(snapshot.fields))
       throw new Error('保存期间角色档案已变化，请重新选择图片');
-    const appearance = imageAppearance(snapshot, chosen?.tag ?? '');
+    const appearance = imageAppearance(snapshot, castTag);
     if (!upsertCharTag(appearance, name, { recordChanges: true })) throw new Error('无法保存该图人物标签');
     setAppearancePolicy(name, {
       mode: appearance.fields.fandom ? 'fandom' : 'manual',
