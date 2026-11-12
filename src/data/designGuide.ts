@@ -28,6 +28,13 @@ export const DESIGN_CHAIN = [
 export const DESIGN_TAG_RULE =
   '设计结果先写成可读中文描述,再压成独立英文标签(每件衣物一组,含版型/主色/关键部件,如 off shoulder black corset top;不要把整段中文塞进 tag)。';
 
+/**
+ * 设计自查清单。与 auditDesign 同源:模型照这条写,程序就照这条验。
+ * 只列「能画出来」的最低要件,不追加风格要求——风格已经由决策链负责。
+ */
+export const DESIGN_AUDIT_RULE =
+  '写完自查:这套衣服有没有可画的部件?至少要能点出剪裁(领型/袖长/下摆/裤型其一)、材质或工艺(缎/纱/绒/皮/绣/褶)、以及颜色分块;只有 white shirt, black skirt 两个词算不合格,回去补到能画的密度再落 tag。';
+
 /** 具身理解:姿势、接触、支撑、道具与衣物反应。 */
 export const EMBODIED_BLOCK = [
   '【具身画面:动作要有因果】把这一格当成一秒钟的暂停画面,而不是标签堆。',
@@ -51,6 +58,12 @@ const BAGU =
 const PRAISE = /(?:美丽动人|惊艳绝伦|令人移不开目光|独特魅力|宛若仙子|风华绝代|高贵优雅|提升整体气质|更加精致)/gu;
 const CONCRETE =
   /(?:领|袖|裙|裤|摆|腰|襟|肩|袜|鞋|跟|缎|纱|绒|皮|绣|纹|褶|扣|带|珠|链|扣|金|银)/gu;
+/**
+ * 英文 tag 侧的「可画细节」：只认剪裁/材质/工艺/配色/长度这些能改画面的词。
+ * 故意不收 shirt/skirt/dress 这类纯品类词——它们是「有衣服」，不是「衣服长什么样」。
+ */
+const CONCRETE_EN =
+  /\b(?:off[- ]shoulder|shoulder|sleeveless|sleeves?|long sleeves?|short sleeves?|three-quarter sleeves?|collar|lapel|v-neck|scoop neck|halter|tube|strapless|backless|corset|bustier|high[- ]waist|low[- ]rise|waist|belt|sash|ribbon|bow|lace|frill|ruffle|pleat(?:s|ed)?|gather(?:s|ed)?|smock(?:ed)?|shirred|quilted|embroider(?:y|ed)|appliqu|bead(?:s|ed)?|sequin(?:s|ed)?|pearl(?:s)?|chain(?:s)?|stud(?:s|ded)?|zipper|button(?:s|ed)?|lacing|corset lacing|slit|split|hem|train|midi|maxi|mini|knee-length|ankle-length|floor-length|thigh[- ]high|silk|satin|silk-like|chiffon|tulle|lace|velvet|corduroy|leather|suede|denim|linen|wool|knit|mesh|sheer|transparent|patent|glossy|matte|gold|silver|bronze|copper)/gi;
 
 /**
  * 检查一段服装设计文字是否够"能画出来"。
@@ -67,4 +80,16 @@ export function auditDesign(text: string): DesignAudit {
   if (praise >= 2 && concrete < 2) issues.push('只有赞美词,没有可画细节');
   if (concrete < 3) issues.push('具体部件太少(领/袖/裙长/材质/鞋跟等)');
   return { issues, ok: !issues.length };
+}
+
+/**
+ * 只判「部件密度」这一条,给 tag 串用。
+ *
+ * 服装账本里的 design 本身就是 tag 串(不含中文长句),套不上 auditDesign 的字数门槛,
+ * 但它同样可能只有 white shirt 两个词——那种衣服画出来就是一块白布。
+ */
+export function thinDesign(design: string): boolean {
+  const body = String(design ?? '');
+  const hits = (body.match(CONCRETE)?.length ?? 0) + (body.match(CONCRETE_EN)?.length ?? 0);
+  return hits < 3;
 }

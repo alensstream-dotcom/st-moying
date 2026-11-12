@@ -11,6 +11,7 @@ import {
   imageTagSlotScript,
   parseImageTagContent,
   parseImageTags,
+  readCenter,
   replaceImageTagAt,
   serializeImageTag,
   stripImageTags,
@@ -467,5 +468,43 @@ describe('managed bbi image-tag regex registration', () => {  it('registers both
       replaceString: SLOT_DIV,
     });
     expect(saveSettingsDebounced).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('角色落点 center', () => {
+  it('A1—E5 网格按列自左向右、行自上向下换算', () => {
+    expect(readCenter('A1')).toEqual({ x: 0.1, y: 0.1 });
+    expect(readCenter('c3')).toEqual({ x: 0.5, y: 0.5 });
+    expect(readCenter('E5')).toEqual({ x: 0.9, y: 0.9 });
+    expect(readCenter(' B2 ')).toEqual({ x: 0.3, y: 0.3 });
+  });
+
+  it('也收 {x,y} 与 0—100 百分比,并夹到 0.1—0.9', () => {
+    expect(readCenter({ x: 0.72, y: 0.35 })).toEqual({ x: 0.72, y: 0.35 });
+    expect(readCenter({ x: 70, y: 30 })).toEqual({ x: 0.7, y: 0.3 });
+    expect(readCenter({ x: 0, y: 1 })).toEqual({ x: 0.1, y: 0.9 });
+  });
+
+  it('解不出来就是 undefined,不编坐标', () => {
+    expect(readCenter('')).toBeUndefined();
+    expect(readCenter('中')).toBeUndefined();
+    expect(readCenter('F6')).toBeUndefined();
+    expect(readCenter(undefined)).toBeUndefined();
+  });
+
+  it('经序列化往返后落点还在', () => {
+    const text = serializeImageTag({
+      tag: '2girls',
+      nl: '',
+      negative: '',
+      characters: [
+        { name: '林晚晴', tag: 'girl, black hair', nl: '', center: { x: 0.3, y: 0.3 } },
+        { name: '苏晚', tag: 'girl, white hair', nl: '' },
+      ],
+      size: 'portrait',
+    });
+    const parsed = parseImageTagContent(text);
+    expect(parsed.characters[0].center).toEqual({ x: 0.3, y: 0.3 });
+    expect(parsed.characters[1].center).toBeUndefined();
   });
 });

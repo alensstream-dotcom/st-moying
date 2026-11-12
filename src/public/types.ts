@@ -111,6 +111,11 @@ export interface PublicCharacterPrompt {
   tag: string;
   /** 该角色的自然语言描述(可空)。 */
   nl?: string;
+  /**
+   * 该角色在画面里的落点:A1—E5 网格(列 A—E 自左向右,行 1—5 自上向下)或 {x,y}(0—1)。
+   * 多人画面用,缺省落正中。
+   */
+  center?: string | { x: number; y: number };
 }
 
 export interface GenerateRequest {

@@ -6,7 +6,7 @@ import { backendStatus, decideSeed, generateImage } from '@/generate';
 import type { GenerationMeta } from '@/generationMeta';
 import { saveExternalImage } from '@/floor/storage';
 import { getContext } from '@/st/context';
-import { serializeImageTag } from '@/st/imageTagRegex';
+import { readCenter, serializeImageTag } from '@/st/imageTagRegex';
 import {
   buildEntryTag,
   charTagLib,
@@ -190,7 +190,9 @@ function normalizeCharacters(raw: GenerateRequest['characters']): ImageCharacter
     const name = typeof item.name === 'string' ? item.name.trim() : '';
     const tag = typeof item.tag === 'string' ? item.tag.trim() : '';
     const nl = typeof item.nl === 'string' ? item.nl.trim() : '';
-    return name && tag ? [{ name, tag, nl }] : [];
+    const center = readCenter(item.center);
+    if (!name || !tag) return [];
+    return center ? [{ name, tag, nl, center }] : [{ name, tag, nl }];
   });
 }
 

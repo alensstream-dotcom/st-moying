@@ -784,3 +784,34 @@ describe('二创剧情画风预设', () => {
     expect(preset?.prompt).not.toContain('dark simple background');
   });
 });
+
+describe('char_caption 的落点', () => {
+  function build(characters: { name: string; tag: string; nl: string; center?: { x: number; y: number } }[]) {
+    const settings = nai({ model: 'nai-diffusion-4-5-full' });
+    const params = buildNaiParameters(settings, {
+      prompt: '2girls, classroom',
+      nl: '',
+      characters,
+      seed: 1,
+    });
+    return params.v4_prompt as {
+      caption: { char_captions: Array<{ char_caption: string; centers: unknown[] }> };
+    };
+  }
+
+  it('给了落点就用她的落点,不再一律钉正中', () => {
+    const out = build([
+      { name: 'A', tag: 'girl', nl: '', center: { x: 0.3, y: 0.4 } },
+      { name: 'B', tag: 'girl', nl: '', center: { x: 0.7, y: 0.4 } },
+    ]);
+    expect(out.caption.char_captions.map((c) => c.centers)).toEqual([
+      [{ x: 0.3, y: 0.4 }],
+      [{ x: 0.7, y: 0.4 }],
+    ]);
+  });
+
+  it('没给落点时保持旧行为(正中)', () => {
+    const out = build([{ name: 'A', tag: 'girl', nl: '' }]);
+    expect(out.caption.char_captions[0].centers).toEqual([{ x: 0.5, y: 0.5 }]);
+  });
+});

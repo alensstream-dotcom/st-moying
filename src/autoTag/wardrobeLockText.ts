@@ -59,7 +59,15 @@ function render(state: ClothingState, names: readonly string[]): string[] {
     const worn = record.pieces.filter((piece) => piece.state?.location !== 'removed' && piece.state?.location !== 'floor');
     const off = record.pieces.filter((piece) => piece.state?.location === 'removed' || piece.state?.location === 'floor');
     const parts = [...worn.map(describePiece), ...off.map((piece) => `${piece.design || '衣物'}已脱`)];
-    if (parts.length) lines.push(`- ${name}：${parts.join('、')}`);
+    // 用户绑定的套装与档案里的固定着装都要点名：这段是写给正文模型的，
+    // 不告诉它「这套是钉死的」，它就会照着「更好看」把睡裙写成衬衫。
+    const lock =
+      record.suitMode === 'always'
+        ? '［用户固定整套：只能写穿脱，不许换款式］'
+        : record.suitMode === 'style'
+          ? '［款式已固定：要换必须写明确换装动作］'
+          : '';
+    if (parts.length) lines.push(`- ${name}：${parts.join('、')}${lock}`);
   }
   return lines;
 }
@@ -87,6 +95,6 @@ export function wardrobeLockText(
     '【着装锁定：唯一真源，必须逐字沿用】',
     ...lines,
     '写这一楼正文时，上述人物只穿这些衣物、只处于这些状态。没有明确写下换装/脱下动作前，不得自行更换款式、颜色或穿脱状态（例：上一条写长牛仔裤，就一直写长牛仔裤）。',
-    '要脱或要换，必须在这一段里写出动作与衣物；没写动作就当没发生。',
+    '要脱或要换，必须在这一段里写出动作与衣物；没写动作就当没发生。标了［款式已固定］的人，只写穿脱与半脱，别改廓形、颜色与长度；真要换装就明确写「换上/换成 + 新衣物」。',
   ].join('\n');
 }

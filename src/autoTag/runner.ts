@@ -119,6 +119,7 @@ import {
   type CharTagField,
 } from '@/state/charTags';
 import { injectImageTags, parseImagePlan, type ImageInsertion, type ImagePlan } from '@/autoTag/protocol';
+import { thinDesign } from '@/data/designGuide';
 import { clearAutoGenerateForFloor, consumeAutoGenerate, markForAutoGenerate } from '@/floor/autoGenerate';
 import {
   cancelBackgroundFloorJobs,
@@ -1299,6 +1300,17 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       ...appearanceChangeNotes,
       ...costumeNotes,
       ...costumeRepairs.notes,
+      // 首次建档 / 明确换装做出来的新套装如果只有 white shirt, black skirt 这种密度，
+      // 画出来就是一块布。只提示不改账本——账本是模型写的，程序补不出他没有的剪裁。
+      ...(slot
+        ? []
+        : accepted.changes
+            .filter((c) => c.operation === 'change' || c.operation === 'init')
+            .flatMap((c) =>
+              c.pieces
+                .filter((p) => p.design.trim() && thinDesign(p.design))
+                .map((p) => `服装偏薄：${c.name} 的「${p.design.trim()}」缺剪裁/材质，画出来没有轮廓`),
+            )),
     ];
     // @占位符按正文位置替换：变化前图片用旧档，变化位置及之后用新档。
     const unknownNames = new Set<string>();

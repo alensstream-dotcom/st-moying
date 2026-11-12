@@ -162,10 +162,15 @@ export function clothingBefore(
   entries: CharTagEntry[],
 ): ClothingState {
   const state: ClothingState = new Map();
+  // 档案里写了「固定着装」就等于 mvu-helper 的 [Clothes] 默认段:它是这个人的基准套装,
+  // 剧情不能随手把它换掉,但正文明确写了换装就该换——所以是 style(锁款式),不是 always
+  // (always 会拒掉整套换装,正好又回到「剧情换了衣服、画面还是那一套」)。
+  // 只有字段为空的人才是「首次未知、可合理决定一次」。
   for (const e of entries)
     if (e.fields.outfit.trim())
       state.set(e.name, {
         ...legacyRecord(e.name, e.fields.outfit, 'worn', ''),
+        suitMode: 'style',
         manual:
           e.source === 'manual' &&
           (!e.history.some((h) => h.field === 'outfit') ||
@@ -662,11 +667,50 @@ export function clothingAt(
   for (const c of changes) if (reached(c, line, offset)) applyOne(result, c, scope);
   return result;
 }
+const SUIT_MODE_NOTE: Record<string, string> = {
+  always: '用户固定整套（不改因剧情换装；穿脱状态仍记）',
+  style: '款式锁定（只允许明确换装；穿脱与半脱照记）',
+};
+
+/**
+ * 账本渲染成人能读的清单。
+ *
+ * 以前是 `JSON.stringify([...state.values()])`：模型要在 JSON 里自己找「谁·穿了什么·什么状态」，
+ * 一旦角色多、部件多就整串被它当背景噪音跳过，于是改成逐人一行、部件用账本 caption 的 tag 口径
+ * （与 enforceClothing 实际写进提示词的串同源）。JSON 兜底保留未识别的部件字段。
+ */
 export function clothingBlock(state: ClothingState): string {
-  return (
-    '【服装现状：唯一账本】没有变化就逐字段继承；仅初次未知可以 init，不能根据图片 tag 重新记账。\n' +
-    JSON.stringify([...state.values()])
-  );
+  const lines = [
+    '【服装现状：唯一账本】没有变化就逐字段继承；仅初次未知可以 init，不能根据图片 tag 重新记账。',
+    '每行是「人物：当前穿着（部件状态）」；穿脱状态词照抄，别自己改款式。',
+  ];
+  for (const record of state.values()) {
+    const wearing: string[] = [];
+    const off: string[] = [];
+    for (const piece of record.pieces) {
+      const design = (piece.design ?? '').trim();
+      const location = piece.state?.location ?? '';
+      if (location === 'removed' || location === 'floor' || location === 'chair' || location === 'held')
+        off.push(`${design || '未知衣物'}[${piece.id}]`);
+      else if (design) {
+        const marks = [
+          piece.state?.fastening && piece.state.fastening !== 'closed' ? piece.state.fastening : '',
+          piece.state?.arrangement && piece.state.arrangement !== 'normal' ? piece.state.arrangement : '',
+          piece.state?.damage && piece.state.damage !== 'intact' ? piece.state.damage : '',
+          piece.state?.wetness && piece.state.wetness !== 'dry' ? piece.state.wetness : '',
+        ].filter(Boolean);
+        wearing.push(marks.length ? `${design}（${marks.join('/')}）` : design);
+      }
+    }
+    const note = record.suitMode ? `｜${SUIT_MODE_NOTE[record.suitMode]}` : '';
+    lines.push(
+      `- ${record.name}：${wearing.length ? wearing.join('、') : '（没穿任何记下的部件）'}` +
+        (off.length ? `；已脱下：${off.join('、')}` : '') +
+        note,
+    );
+  }
+  if (!state.size) lines.push('- （账本为空：本楼首次出现，可按正文与候选决定一次，之后固定）');
+  return lines.join('\n');
 }
 export function clothingTrace(message: STMessage | undefined, rawTag: string): string[] {
   const floor = readClothingFloor(message),

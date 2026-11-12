@@ -9,6 +9,8 @@ import {
   enforceClothing,
   adoptChangedClothing,
   clothingAt,
+  clothingBefore,
+  clothingBlock,
   clothingCaption,
   initialiseClothingFromImage,
   parseClothingChanges,
@@ -470,5 +472,57 @@ describe('enforceClothing 道具剔除', () => {
     const { state, image } = build();
     enforceClothing(image, state, false, true, [], '他把刀架在她脖子上。');
     expect(image.characters[0].tag).toContain('knife at neck');
+  });
+});
+
+describe('服装账本的呈现与固定着装', () => {
+  function record(name: string, design: string, location = 'worn'): ClothingRecord {
+    return {
+      name,
+      outfitId: `outfit_${name}`,
+      pieces: [{ id: 'p1', design, state: { location } }],
+      source: '正文',
+    };
+  }
+
+  it('账本按人一行渲染,不再整串 JSON', () => {
+    const state: ClothingState = new Map([
+      ['林晚晴', record('林晚晴', 'white blouse, long jeans')],
+      ['苏晚', record('苏晚', 'black skirt', 'floor')],
+    ]);
+    const text = clothingBlock(state);
+    expect(text).toContain('- 林晚晴：white blouse, long jeans');
+    expect(text).toContain('已脱下：black skirt');
+    expect(text).not.toContain('[{');
+  });
+
+  it('半脱状态跟着部件写出来,不丢位置', () => {
+    const worn = record('林晚晴', 'white blouse');
+    worn.pieces[0].state = { location: 'worn', arrangement: 'pulled_aside' };
+    expect(clothingBlock(new Map([['林晚晴', worn]]))).toContain('white blouse（pulled_aside）');
+  });
+
+  it('用户固定整套会在行尾点名', () => {
+    const state: ClothingState = new Map([
+      ['林晚晴', { ...record('林晚晴', 'white blouse'), suitMode: 'always' }],
+    ]);
+    expect(clothingBlock(state)).toContain('用户固定整套');
+  });
+
+  it('空账本给一次性提示,不是空白', () => {
+    expect(clothingBlock(new Map())).toContain('账本为空');
+  });
+
+  it('档案里的固定着装进基准账本,并锁成 style', () => {
+    const state = clothingBefore([], 0, [
+      { ...entry('林晚晴'), fields: { ...entry('林晚晴').fields, outfit: 'navy sailor uniform' } },
+    ]);
+    expect(state.get('林晚晴')?.pieces[0].design).toBe('navy sailor uniform');
+    // always 会拒掉整套换装,必须用 style:锁款式但允许有证据的换装。
+    expect(state.get('林晚晴')?.suitMode).toBe('style');
+  });
+
+  it('没有固定着装的角色不进基准账本', () => {
+    expect(clothingBefore([], 0, [{ ...entry('无名'), fields: { ...entry('无名').fields, outfit: '' } }]).size).toBe(0);
   });
 });

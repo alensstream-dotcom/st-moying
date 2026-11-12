@@ -25,7 +25,7 @@ import { openLightbox } from '@/floor/lightbox';
 import { settings, getTagGenChannel } from '@/state/settings';
 import { requestCompletion, requestViaMainApi } from '@/api/client';
 import { materialPrompt } from '@/data/materialPrompt';
-import { DESIGN_CHAIN } from '@/data/designGuide';
+import { DESIGN_AUDIT_RULE, DESIGN_CHAIN } from '@/data/designGuide';
 import type { GenerationMeta } from '@/generationMeta';
 import { clothingBefore } from '@/autoTag/outfitTimeline';
 import type { WardrobeSlot } from '@/data/loreTypes';
@@ -378,6 +378,7 @@ async function designFresh() {
           DESIGN_CHAIN +
           '。tags 是逗号分隔的英文标签，只能从下面词表逐字选取，不能拼长句，不带穿脱状态与画风；' +
           '部位要拆开写（外套/上衣/内衣/下装/丝袜/鞋/配饰），8～14 个标签。' +
+          DESIGN_AUDIT_RULE +
           'era 只能是 ancient/modern/fantasy/any；category 只能是 ' +
           SUIT_CATEGORIES.map((c) => c[0]).join('/') +
           '；slot 只能是 full/top/bottom/underwear/hosiery/shoes/accessory。词表：' +
@@ -385,7 +386,12 @@ async function designFresh() {
       },
       { role: 'user' as const, content: brief },
     ];
-    const options = { signal: controller!.signal, source: '衣橱：AI 设计新款式' };
+    const options = {
+      signal: controller!.signal,
+      source: '衣橱：AI 设计新款式',
+      // 设计要收敛:创作者渠道温度多半是聊天的 1.0,那温度出的是「平均款」。
+      temperature: 0.35,
+    };
     const reply = api
       ? await requestCompletion({ ...api, stream: false }, messages, options)
       : await requestViaMainApi(messages, options);

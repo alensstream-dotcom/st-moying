@@ -76,6 +76,11 @@ export interface RequestOptions {
    * 由调用方决定重试/放弃。
    */
   validate?: (content: string, meta?: { finishReason?: string | null }) => void;
+  /**
+   * 覆盖温度。设计/结构化这类「要收敛」的任务用低温,不要跟着聊天渠道的 1.0 走;
+   * 不传仍用渠道值,存量行为不变。
+   */
+  temperature?: number;
 }
 
 /* ============ 请求历史埋点(纯辅助,绝不允许影响主流程) ============ */
@@ -221,12 +226,13 @@ export function buildRequestBody(
   messages: ChatMsg[],
   reverseProxy: string,
   stream: boolean,
+  temperature?: number,
 ): Record<string, unknown> {
   const effort = channel.reasoningEffort?.trim() ?? '';
   const common = {
     model: channel.model,
     messages,
-    temperature: channel.temperature ?? 1.0,
+    temperature: temperature ?? channel.temperature ?? 1.0,
     max_tokens: Math.max(MIN_OUTPUT_TOKENS, channel.maxTokens ?? MIN_OUTPUT_TOKENS),
     stream,
     // 不用工具:见函数头注释,防第三方 fetch 拦截器把生图 tag 改写成工具调用
@@ -270,7 +276,7 @@ async function requestCompletionAtUrl(
   if (!channel.url || !channel.model) throw new ApiError('副 API 渠道未配置完整(缺 url 或 model)');
 
   const stream = channel.stream ?? false;
-  const body = buildRequestBody(channel, messages, reverseProxy, stream);
+  const body = buildRequestBody(channel, messages, reverseProxy, stream, opts.temperature);
   if (opts.imageData) {
     if (!/^data:image\/(?:png|jpeg|webp);base64,/.test(opts.imageData) || opts.imageData.length > 12 * 1024 * 1024)
       throw new ApiError('服装参考图格式或大小不正确');

@@ -50,3 +50,16 @@ describe('wardrobeLockText', () => {
     expect(wardrobeLockText([msg('林晚晴站在门口。')], [])).toBe('');
   });
 });
+
+describe('固定着装的标注', () => {
+  it('档案里写了固定着装就标款式已固定,并让模型明确写换装', () => {
+    const text = wardrobeLockText([msg('林晚晴站在门口。')], [entry('林晚晴', 'navy sailor uniform')]);
+    expect(text).toContain('款式已固定');
+    expect(text).toContain('换上/换成');
+  });
+
+  it('没有固定着装的角色不打锁定标注', () => {
+    const text = wardrobeLockText([msg('林晚晴站在门口。')], [entry('林晚晴', '')]);
+    expect(text).toBe('');
+  });
+});

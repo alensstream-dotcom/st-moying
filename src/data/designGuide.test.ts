@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { auditDesign, DESIGN_CHAIN, DESIGN_TAG_RULE, EMBODIED_BLOCK } from './designGuide';
+import { auditDesign, DESIGN_AUDIT_RULE, DESIGN_CHAIN, DESIGN_TAG_RULE, EMBODIED_BLOCK, thinDesign } from './designGuide';
 
 describe('DESIGN_CHAIN', () => {
   it('covers silhouette, colour, material, pattern and shoes', () => {
@@ -43,5 +43,20 @@ describe('auditDesign', () => {
     const result = auditDesign(text);
     expect(result.issues).toEqual([]);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('thinDesign', () => {
+  it('只有两个词的白衬衫黑裙算薄', () => {
+    expect(thinDesign('white shirt, black skirt')).toBe(true);
+    expect(thinDesign('')).toBe(true);
+  });
+
+  it('带剪裁材质颜色的算够用', () => {
+    expect(thinDesign('off shoulder black corset top, silk ribbon, long pleated skirt')).toBe(false);
+  });
+
+  it('自查口径里写清了至少要能点出哪几类', () => {
+    for (const key of ['剪裁', '材质', '颜色分块', '不合格']) expect(DESIGN_AUDIT_RULE).toContain(key);
   });
 });

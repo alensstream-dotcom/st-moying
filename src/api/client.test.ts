@@ -342,3 +342,18 @@ describe('upstream finish metadata', () => {
     expect(meta).toEqual({ finishReason: 'stop', nativeFinishReason: 'eos' });
   });
 });
+
+describe('buildRequestBody:温度覆盖', () => {
+  const msgs = [{ role: 'user' as const, content: 'hi' }];
+  const base = { ...channel, temperature: 1.1 };
+
+  it('不传温度时仍用渠道值', () => {
+    const body = buildRequestBody(base, msgs, 'https://api.example.com/v1', false);
+    expect(body.temperature).toBe(1.1);
+  });
+
+  it('传了就覆盖渠道值(设计任务用低温)', () => {
+    const body = buildRequestBody(base, msgs, 'https://api.example.com/v1', false, 0.35);
+    expect(body.temperature).toBe(0.35);
+  });
+});

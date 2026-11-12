@@ -15,7 +15,12 @@ import {
 } from '@/autoTag/context';
 import type { BookMemoryContext } from '@/autoTag/bookMemory';
 import { resolveJailbreakText } from '@/autoTag/jailbreak';
-import { DESIGN_CHAIN, DESIGN_TAG_RULE, EMBODIED_BLOCK } from '@/data/designGuide';
+import {
+  DESIGN_AUDIT_RULE,
+  DESIGN_CHAIN,
+  DESIGN_TAG_RULE,
+  EMBODIED_BLOCK,
+} from '@/data/designGuide';
 import { buildLoreBlock } from '@/data/loreIndex';
 import { isAiStoryMessage, isStoryMessage, type STContext } from '@/st/context';
 import { parseImageTagContent } from '@/st/imageTagRegex';
@@ -373,7 +378,7 @@ export async function buildAutoTagMessages(
   });
   // NAI 两种写法共用的尾段:角色块的取舍与 Base / 角色的分工不随自然语言开关变
   const naiCharacterRuleTail =
-    'This includes visible characters who have no library profile: a one-off unnamed individual gets a Character Prompt too, keyed by the term the story uses for them. Anonymous crowds visible in the frame remain in Base. Character tag uses girl/boy without a numeric count and contains that character appearance, outfit, and action. Do not include quality tags, negative tags, or XML.';
+    'This includes visible characters who have no library profile: a one-off unnamed individual gets a Character Prompt too, keyed by the term the story uses for them. Anonymous crowds visible in the frame remain in Base. Character tag uses girl/boy without a numeric count and contains that character appearance, outfit, and action. Do not include quality tags, negative tags, or XML. When two or more characters share the frame, give each one a center on the A1–E5 grid (columns A–E left to right, rows 1–5 top to bottom, e.g. "center":"B2") so they do not stack in the middle; omit center for a lone character.';
   const contentRule = naiCharPromptsOn
     ? nlOn
       ? `4. Every image must include Base tag, English Base nl, and characters. Write every nl in English even when the story text is in another language, but keep every character name exactly as in the story: Chinese names stay Chinese (小雪, never Xiaoxue or Snow) in characters[].name, changes[].name, and inside any tag/nl text. Base contains only global counts, scene, composition, lighting, and shared relations — this applies to the Base nl as much as to the Base tag. Give each individual character visible inside the selected frame one Character Prompt ordered left-to-right then top-to-bottom; name/tag/nl are all required. ${naiCharacterRuleTail}`
@@ -527,6 +532,7 @@ ${characterRule}
   - **先看【服装现状】再挑**：区块里写着某人「穿着」时，她的衣服已经定了，别重新挑——照抄那套装束；正文没提衣着不代表没穿。区块里没有这个人（首次出场）才从候选里挑，挑定后长期固定。候选库只在两种情况有用：给她挑第一套，或正文明确写了换装。**区块里那套装束可能是从她的固定着装档案带过来的**——那也是定死的答案，不是建议，不许因为「今天换个造型更好看」就换掉。
   - **给她挑第一套、或正文只给了模糊场合（上班、赴宴、床上）时，按下面的设计链走一遍，别只填 white shirt + black skirt 交差**：${DESIGN_CHAIN.split('\n').join('\n  ')}
   - ${DESIGN_TAG_RULE}
+  - ${DESIGN_AUDIT_RULE}
   - **【上镜锚点】是上一张图里实际用过的写法**：外貌与着装都要逐字复用，改动只限于正文明确写了的变化。锚点与【服装现状】冲突时以账本为准（账本记的是穿脱事实，锚点只是当时的措辞）。
   - **道具是一次性的，别让它长在身上**：刀、剑、枪、手铐、绳、锁链、扇子、托盘、杯子这些跟着动作走的东西，只在正文这一格还在用、还在手里、还架着时才写；情节过去了就不写。反过来，choker、项链、耳环、腕饰、发饰是真饰品，要一直留着。**别把「被按住」「被控制」写成项圈或手铐**——只要正文没写颈部饰品或上铐，就别加 collar / handcuffs。
   - **半脱是独立状态，不是全裸也不是全穿**：露肩、露背、露臀、掀裙、领口被扯开这类姿势，衣服要留在身上并被写出来——off shoulder、slipped down、pulled aside、breasts out、skirt lifted、clothes around waist。只写 nude/topless 会丢掉「衣服还在身上」这一半信息，直接画成光人；只写原封不动的整套衣服，又变成没脱。状态词照抄【服装现状】里已有的那些，不自己造新说法。

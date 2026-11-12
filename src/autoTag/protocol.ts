@@ -2,7 +2,7 @@ import { normalizeOrientation, type Orientation } from '@/backends/size';
 import type { TargetSegment } from '@/autoTag/clean';
 import { parseClothingChanges, type ClothingChange } from './outfitTimeline';
 import { parseIdentityClaims, type IdentityClaim } from '@/state/characterIdentity';
-import { FORBIDDEN_SUBTAG, serializeImageTag } from '@/st/imageTagRegex';
+import { FORBIDDEN_SUBTAG, readCenter, serializeImageTag } from '@/st/imageTagRegex';
 import {
   CHAR_TAG_FIELDS,
   normalizeCharAge,
@@ -14,6 +14,12 @@ export interface ImageCharacterPrompt {
   name: string;
   tag: string;
   nl: string;
+  /**
+   * 该角色在画面里的落点，归一化 0—1。模型写 A1..E5 网格或 {x,y} 都收。
+   * NAI 的 char_caption 靠 centers 定位，旧代码一律钉 {.5,.5}，
+   * 于是两人以上永远重叠在正中（多人图糊成一团）。缺省仍是正中，行为不变。
+   */
+  center?: { x: number; y: number };
 }
 
 export interface ImageInsertion {
@@ -157,6 +163,16 @@ function sanitizeContent(value: unknown, field: string, index: number): string {
   return text;
 }
 
+const GRID_COL: Record<string, number> = { A: 0.1, B: 0.3, C: 0.5, D: 0.7, E: 0.9 };
+const GRID_ROW: Record<string, number> = { '1': 0.1, '2': 0.3, '3': 0.5, '4': 0.7, '5': 0.9 };
+
+/**
+ * 画面落点：收 "A1".."E5" 网格、也收 {x,y}；越界夹到 0.1—0.9。
+ * 解不出来返回 undefined（调用方保持旧行为，落在正中）。
+ * 实现放在 imageTagRegex（存储格式那一侧），这里 re-export 给外部调用方。
+ */
+export { readCenter } from '@/st/imageTagRegex';
+
 function sanitizeCharacters(value: unknown, imageIndex: number): ImageCharacterPrompt[] {
   if (!Array.isArray(value)) return [];
   const characters: ImageCharacterPrompt[] = [];
@@ -168,7 +184,10 @@ function sanitizeCharacters(value: unknown, imageIndex: number): ImageCharacterP
       const name = sanitizeContent(item.name, `characters[${index}].name`, imageIndex);
       const tag = sanitizeContent(item.tag ?? item.prompt, `characters[${index}].tag`, imageIndex);
       const nl = sanitizeContent(item.nl, `characters[${index}].nl`, imageIndex);
-      if (name && tag) characters.push({ name, tag, nl });
+      if (name && tag) {
+        const center = readCenter(item.center ?? item.position_in_frame ?? item.at);
+        characters.push(center ? { name, tag, nl, center } : { name, tag, nl });
+      }
     } catch {
       // A malformed character prompt must not discard an otherwise valid image plan.
     }

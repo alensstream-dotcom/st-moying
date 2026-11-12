@@ -180,8 +180,7 @@ export function containsTagMarkup(text: string): boolean {
 
 export interface ImageTagContent {
   /** danbooru 短 tag 部分：显式 <tag> 子标签内容，或剔除子标签后的裸文本（存量格式）。 */
-  tag: string;
-  /** 自然语言部分：<nl> 子标签内容，无则空串。 */
+  tag: string;  /** 自然语言部分：<nl> 子标签内容，无则空串。 */
   nl: string;
   /** 本画面动态负面 tag：<negative> 子标签内容，无则空串。 */
   negative: string;
@@ -198,6 +197,33 @@ export interface ImageTagContent {
  * 裸文本与显式 <tag> 同时存在时按「裸文本在前」以 ", " 合并进 tag 部分，不丢内容。
  * <size>/<nl>/<negative> 必须先剥掉，不能漏进正向提示词。
  */
+const GRID_COL: Record<string, number> = { A: 0.1, B: 0.3, C: 0.5, D: 0.7, E: 0.9 };
+const GRID_ROW: Record<string, number> = { '1': 0.1, '2': 0.3, '3': 0.5, '4': 0.7, '5': 0.9 };
+
+/**
+ * 画面落点：收 "A1".."E5" 网格、也收 {x,y}；越界夹到 0.1—0.9。
+ * 解不出来返回 undefined（调用方保持旧行为，落在正中）。
+ *
+ * 定在这里而不是 protocol.ts：protocol 已经 import 本文件的值，
+ * 反向依赖会成环；而 characters 的存取格式本来就在这一份里。
+ */
+export function readCenter(value: unknown): { x: number; y: number } | undefined {
+  const clamp = (n: number) => Math.min(0.9, Math.max(0.1, n));
+  if (typeof value === 'string') {
+    const match = value.trim().toUpperCase().match(/^([A-E])\s*([1-5])$/);
+    if (match) return { x: GRID_COL[match[1]], y: GRID_ROW[match[2]] };
+    return undefined;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const pair = value as Record<string, unknown>;
+  const x = Number(pair.x);
+  const y = Number(pair.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  // 归一化坐标之外也容忍 0—100 的百分比写法。
+  const scale = x > 1 || y > 1 ? 100 : 1;
+  return { x: clamp(x / scale), y: clamp(y / scale) };
+}
+
 export function parseImageTagContent(raw: string): ImageTagContent {
   // 内容统一折叠成单行:手写 tag 可能跨行,而提示词里换行没有意义
   const oneLine = (text: string) => text.trim().replace(/[\r\n]+/g, ' ');
@@ -218,7 +244,9 @@ export function parseImageTagContent(raw: string): ImageTagContent {
           const name = oneLine(typeof rawItem.name === 'string' ? rawItem.name : '');
           const tag = oneLine(typeof rawItem.tag === 'string' ? rawItem.tag : '');
           const nl = oneLine(typeof rawItem.nl === 'string' ? rawItem.nl : '');
-          return name && tag ? [{ name, tag, nl }] : [];
+          const center = readCenter(rawItem.center ?? rawItem.at);
+          if (!name || !tag) return [];
+          return center ? [{ name, tag, nl, center }] : [{ name, tag, nl }];
         });
       }
     } catch {

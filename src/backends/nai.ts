@@ -446,10 +446,15 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
   } else {
     // NAI4/4.5/V5: v4 caption structure; Vibe uses a model-specific cached encoding.
     params.reference_image_multiple_cached = [];
+    // 每人的 centers 用她自己的落点（模型给 A1..E5 就按格），缺省才落正中。
+    // 旧代码一律 {.5,.5}:两人以上全叠在画面中心，这也是多人图糊成一团的直接原因。
+    const centerOf = (character: ImageCharacterPrompt) => [
+      { x: character.center?.x ?? 0.5, y: character.center?.y ?? 0.5 },
+    ];
     const charCaptions = naiSupportsCharacterPrompts(nai.model)
       ? (values.characters ?? []).map((character) => ({
           char_caption: characterCaption(character),
-          centers: [{ x: 0.5, y: 0.5 }],
+          centers: centerOf(character),
         }))
       : [];
     params.characterPrompts = [];
@@ -461,9 +466,9 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
     params.v4_negative_prompt = {
       caption: {
         base_caption: negative,
-        char_captions: charCaptions.map(() => ({
+        char_captions: (values.characters ?? []).slice(0, charCaptions.length).map((character) => ({
           char_caption: '',
-          centers: [{ x: 0.5, y: 0.5 }],
+          centers: centerOf(character),
         })),
       },
       legacy_uc: false,

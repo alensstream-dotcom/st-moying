@@ -906,6 +906,14 @@ watch(
                   dictionaryReady ? explainTags(draft.fields[f]) : ''
                 }}</small></label
               >
+              <label class="field"
+                ><span>固定着装（基准套装，她说这句话时穿的）</span
+                ><input
+                  v-model="draft.fields.outfit"
+                  class="bbi-input"
+                  placeholder="white shirt, long jeans（留空则每次按剧情挑）"
+                /><small>填了就锁款式：剧情不能随手换掉，写明换装才会换；穿脱状态仍按正文记。</small></label
+              >
               <label>英文外貌说明<textarea v-model="draft.nl" class="bbi-input" rows="3" /></label>
               <p>
                 {{ draft.desc || '原文与用户设定优先。补全候选会显示中文说明。' }}
