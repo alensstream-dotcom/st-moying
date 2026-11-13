@@ -124,6 +124,7 @@ import {
   type CharTagNewOp,
 } from '@/state/charTags';
 import { injectImageTags, parseImagePlan, type ImageInsertion, type ImagePlan } from '@/autoTag/protocol';
+import { appendExplicitTags, explicitSentence, explicitTagsFor } from '@/autoTag/explicitTags';
 import { thinDesign } from '@/data/designGuide';
 import { clearAutoGenerateForFloor, consumeAutoGenerate, markForAutoGenerate } from '@/floor/autoGenerate';
 import {
@@ -1486,6 +1487,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         if (!wardrobe.has(name) && !accepted.changes.some((c) => c.name === name))
           completion.set(name, entry);
       enforceClothing(image, at, profile.nl, profile.naiCharPrompts, activeEntries, source);
+      // gemini 档让模型只写「可拍摄的构图」,性器官/性行为/体液这些词由这里按原文补。
+      // 其它档不补:模型本来就写了,重复追加只会让 tag 更长、稀释主体。
+      if (promptOptions.jailbreakTier === 'gemini') {
+        const extra = explicitTagsFor(explicitSentence(source, image.sourceLine, image.charOffset), image.tag);
+        if (extra.length) image.tag = appendExplicitTags(image.tag, extra);
+      }
       // 账本与档案都按主名记，快照筛选也要归一，否则模型写别称时这帧的
       // appearance/entries 是空的，出图时二次锁定就没了依据。
       const castNames = new Set(

@@ -89,6 +89,18 @@ export function expandNlSections(text: string, nlOn: boolean): string {
  * - webui → 暂不附加。
  * 两个后端都先展开自然语言条件段(expandNlSections)。
  */
+/**
+ * gemini 档与后端规范打架时,以破限档为准。
+ *
+ * 后端规范里有一条「显式场景 tag:逐个写性器官与动作」——那正是 pg- 通道判违规的东西。
+ * 规范文本是用户可编辑的(有人会自己改),所以这里不改默认值,而是在它后面压一段覆盖说明:
+ * 档位选到 gemini 时,解剖与行为词一律交给插件侧补(见 autoTag/explicitTags.ts)。
+ */
+const GEMINI_SPEC_OVERRIDE = `【本档与上面的书写规范冲突时,以本段为准】
+上一段要求的「逐个写出身体部位与动作」在本档一律不执行:任何器官名称、行为名称、体液名称、解剖细节都不要写。
+只写到「哪副身体、什么姿态、接触的方位、衣物到哪一步」为止。
+插件侧会按目标正文原文把该有的英文 tag 补进去——你写了反而会让整份 JSON 被判违规截断。`;
+
 function backendPromptSpec(options: AutoTagSettings, nlOn: boolean, naiCharPromptsOn: boolean): string {
   if (settings.defaultBackend === 'comfyui') {
     const template = expandNlSections((options.prompts?.comfySpec ?? '').trim() || DEFAULT_COMFY_SPEC, nlOn);
@@ -99,15 +111,22 @@ function backendPromptSpec(options: AutoTagSettings, nlOn: boolean, naiCharPromp
         ? `${template}\n\n${nlSpec}`
         : template;
     // 宏置空后可能留下连续空行,折叠掉
-    return resolved.replace(/\n{3,}/g, '\n\n').trim();
+    return withGeminiOverride(resolved.replace(/\n{3,}/g, '\n\n').trim(), options);
   }
   if (settings.defaultBackend === 'nai') {
     const template = naiCharPromptsOn
       ? (options.prompts?.naiV5Spec ?? '').trim() || DEFAULT_NAI_V5_SPEC
       : (options.prompts?.naiSpec ?? '').trim() || DEFAULT_NAI_SPEC;
-    return expandNlSections(template, nlOn);
+    return withGeminiOverride(expandNlSections(template, nlOn), options);
   }
   return '';
+}
+
+/** gemini 档:在后端规范末尾压一段「不写露骨词」的覆盖说明;其它档原样返回。 */
+function withGeminiOverride(spec: string, options: AutoTagSettings): string {
+  if (!spec.trim()) return spec;
+  if (options.jailbreakTier !== 'gemini') return spec;
+  return `${spec.trim()}\n\n${GEMINI_SPEC_OVERRIDE}`;
 }
 
 /**

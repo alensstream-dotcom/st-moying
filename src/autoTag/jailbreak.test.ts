@@ -9,7 +9,14 @@ import {
 
 describe('破限挡位', () => {
   it('五个档位都在,默认档是 strong 而不是最狠那档', () => {
-    expect(JAILBREAK_TIERS.map(t => t.id)).toEqual(['off', 'light', 'standard', 'strong', 'max']);
+    expect(JAILBREAK_TIERS.map(t => t.id)).toEqual([
+      'off',
+      'light',
+      'standard',
+      'strong',
+      'max',
+      'gemini',
+    ]);
     expect(DEFAULT_JAILBREAK_TIER).toBe('strong');
   });
 
@@ -20,13 +27,21 @@ describe('破限挡位', () => {
   });
 
   it('越严的档位文本越长,且都要求输出 JSON', () => {
-    const sizes = JAILBREAK_TIERS.map(t => t.text.length);
-    // off 是空串,单调性只从 light 起算
-    expect(sizes[1]).toBeGreaterThan(0);
-    expect(sizes[4]).toBeGreaterThan(sizes[1]);
+    const byId = (id: string) => getJailbreakTier(id).text.length;
+    // off 是空串,单调性只从 light 起算;gemini 是「换形态」不是「更狠」,不参与单调链
+    expect(byId('light')).toBeGreaterThan(0);
+    expect(byId('max')).toBeGreaterThan(byId('light'));
     for (const tier of JAILBREAK_TIERS.filter(t => t.text)) {
       expect(tier.text).toContain('JSON');
     }
+  });
+
+  // 这一档的判据与其它档相反:它靠「少写露骨词」过网关,而不是靠更强的授权话术。
+  it('gemini 档要求只写可拍摄构图,并说明露骨词由本地补齐', () => {
+    const text = getJailbreakTier('gemini').text;
+    expect(text).toContain('镜头能拍到');
+    expect(text).toContain('本地词典');
+    expect(text).toContain('器官名称');
   });
 });
 
