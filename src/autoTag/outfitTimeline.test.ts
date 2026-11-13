@@ -315,6 +315,37 @@ describe('adoptChangedClothing 采纳剧情换装', () => {
     );
     expect(adopted.changes).toHaveLength(0);
   });
+
+  /**
+   * 陈述句也算数。
+   *
+   * 「她今天穿着一条长牛仔裤」没有换装动词，却已经把款式写死了；只看动作词的话，
+   * 账本记成短牛仔裤就永远纠不回来——这正是用户报的「剧情写了服装，图里还是旧的」。
+   */
+  it('正文陈述她穿着什么时按正文纠正记错的款式', () => {
+    const wardrobe = wardrobeOf('林晚晴', [piece('a', 'denim shorts')]);
+    const adopted = adoptChangedClothing(
+      imageOf('林晚晴', 'denim shorts, long hair'),
+      wardrobe,
+      '林晚晴今天穿着一条长牛仔裤。',
+    );
+    expect(adopted.changes).toHaveLength(1);
+    const at = clothingAt(wardrobe, adopted.changes, 'scope');
+    expect(clothingCaption(at.get('林晚晴')!).tag).toContain('long jeans');
+  });
+
+  /**
+   * 陈述里没有衣物词（「她穿着衣服」）不足以接管，否则每句「穿着」都要重记一次账本。
+   */
+  it('陈述句里没有具体衣物词时不接管', () => {
+    const wardrobe = wardrobeOf('林晚晴', [piece('a', 'denim shorts')]);
+    const adopted = adoptChangedClothing(
+      imageOf('林晚晴', 'white shirt'),
+      wardrobe,
+      '林晚晴穿着衣服坐在床边。',
+    );
+    expect(adopted.changes).toHaveLength(0);
+  });
 });
 
 describe('clothingCaption', () => {

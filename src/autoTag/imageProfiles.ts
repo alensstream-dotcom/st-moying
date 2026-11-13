@@ -2,6 +2,7 @@ import {
   createCharTagNewOp,
   createCharTagRenameOp,
   createCharTagSetOp,
+  normalizeCharAge,
   type CharTagAutoOp,
   type CharTagEntry,
   type CharTagField,
@@ -66,6 +67,60 @@ export function isProvisionalName(name: string): boolean {
   return name.trim().startsWith(PROVISIONAL_PREFIX);
 }
 
+/**
+ * 从正文里找这个名字附近有没有年龄线索（「十二岁的少女」「三十多岁的女人」）。
+ *
+ * 建档时 age 是**体型锚唯一的开关**（见 `appearanceLock` 的骨架词）：模型写进角色 tag 的
+ * 年龄词可遇不可求，绝大多数时候整条档案没有任何身高体量。留空就等着它每张图各画一个
+ * 身高。所以先按正文就近猜，猜不到再落到中性档。
+ */
+const AGE_WORD =
+  /(小女孩|儿童|幼女|萝莉|小学生|少女|女高中生|高中生|中学生|jk|年轻女性|大学生|成熟女性|熟女|人妻|少妇|三十多岁|四十多岁|四十岁|五十岁|老妇|老婆婆|奶奶|(?:\d|[一二三四五六七八九十]{1,3}|十[一二三四五六七八九]?|二十|三十|四十|五十)\s*(?:多)?\s*岁|young woman|young adult|mature female|teenager|child|elderly|old woman)/i;
+
+function ageNear(text: string, name: string): string {
+  if (!text || !name) return '';
+  const at = text.indexOf(name);
+  if (at < 0) return '';
+  // 只取这句的前后一小段：整楼里别人的年龄不该算到她头上。
+  const window = text.slice(Math.max(0, at - 24), Math.min(text.length, at + name.length + 24));
+  const word = window.match(AGE_WORD)?.[0];
+  if (!word) return '';
+  const band = normalizeCharAge(chineseYears(word));
+  // 只写「12 岁」时 normalizeCharAge 不会给出档位，而骨架词只认档位词——
+  // 按岁数自己补一档，否则这条年龄等于白记。
+  if (/\d+\s*岁/.test(band) && !/child|teenager|young adult|mature female/.test(band)) {
+    const years = Number(band.match(/(\d+)\s*岁/)?.[1] ?? 0);
+    // 档位边界按中文语感取：13 岁以下算儿童，20 岁以下少女，30 岁以下年轻女性，再往上成熟。
+    const guess =
+      years && years < 13 ? 'child' : years && years < 20 ? 'teenager' : years && years < 30 ? 'young adult' : 'mature female';
+    return `${guess}, ${band}`;
+  }
+  return band;
+}
+
+/** 「十二岁」→「12岁」：归一表只认阿拉伯数字，中文数字要自己转。 */
+const DIGITS: Record<string, number> = {
+  一: 1,
+  二: 2,
+  两: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+};
+
+function chineseYears(text: string): string {
+  return text.replace(/([一二两三四五六七八九十]{1,3})\s*(?:多)?\s*岁/g, (_, word: string) => {
+    if (!word.includes('十')) return `${DIGITS[word] ?? 0}岁`;
+    const [tens, ones] = word.split('十');
+    const value = (tens ? (DIGITS[tens] ?? 0) : 1) * 10 + (ones ? (DIGITS[ones] ?? 0) : 0);
+    return `${value}岁`;
+  });
+}
+
 function provisionalIndex(entries: readonly CharTagEntry[]): number {
   let max = 0;
   for (const entry of entries) {
@@ -113,6 +168,11 @@ export function ensureImageProfiles(
         // 档案先建、形象后补：只填空白字段，绝不覆盖已有值，也不动用户手锁的档案。
         if (!options.locked?.has(existing.name) && existing.source !== 'manual') {
           const filled = recoverProfileFields(character.tag);
+          // age 还要看正文：老档案普遍只建了头发眼睛，age 空着就永远没有体型锚。
+          if (!filled.age?.trim()) {
+            const guessed = ageNear(text, canonical);
+            if (guessed) filled.age = guessed;
+          }
           for (const field of FILL_FIELDS) {
             if (existing.fields[field]?.trim()) continue;
             const value = filled[field]?.trim();
@@ -190,10 +250,21 @@ export function ensureImageProfiles(
       // 只岔空着的与撞车的特征，正文写过的词一律不动。
       const diverse = diversifyLook(fields, [...entries, ...created], text);
       if (diverse.notes.length) notes.push(`${name}: 形象错开 ${diverse.notes.join('；')}`);
+      /**
+       * 年龄必须落地，否则这条档案永远没有体型锚。
+       *
+       * 篡位顺序：模型写在角色 tag 里的 → 正文这个名字附近写的 → 空的。
+       * 猜不到就留空（让骨架词继续缺席），绝不硬塞一个可能不对的年龄段。
+       */
+      const age = fields.age?.trim() || ageNear(text, canonical);
       const op = createCharTagNewOp(
         {
           name,
-          fields: { ...diverse.fields, sex: fields.sex?.trim() ? fields.sex : '1girl' },
+          fields: {
+            ...diverse.fields,
+            sex: fields.sex?.trim() ? fields.sex : '1girl',
+            ...(age ? { age } : {}),
+          },
           raw: character.tag,
           nl: character.nl ?? '',
           source: 'ai',

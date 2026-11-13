@@ -230,3 +230,48 @@ describe('ensureImageProfiles 出图即建档', () => {
     expect(result.items.map((item) => item.op.kind)).toEqual(['rename', 'new']);
   });
 });
+
+describe('年龄是体型锚的开关', () => {
+  it('模型没写年龄时，从正文这个名字附近补', () => {
+    const result = ensureImageProfiles(
+      [image([{ name: '苏晚', tag: '1girl, black hair, blue eyes' }], 0)],
+      [],
+      [],
+      1,
+      '十二岁的苏晚抬起头，她笑了。',
+    );
+    const op = result.items[0].op;
+    if (op.kind !== 'new') throw new Error('应建档');
+    expect(op.fields.age).toContain('child');
+    expect(op.fields.age).toContain('12岁');
+  });
+
+  it('正文没写年龄就不硬塞，留空等后面补', () => {
+    const result = ensureImageProfiles(
+      [image([{ name: '苏晚', tag: '1girl, black hair, blue eyes' }], 0)],
+      [],
+      [],
+      1,
+      '苏晚抬起头，她笑了。',
+    );
+    const op = result.items[0].op;
+    if (op.kind !== 'new') throw new Error('应建档');
+    expect(op.fields.age ?? '').toBe('');
+  });
+
+  it('老档案缺 age 时靠出图补上，已有值不动', () => {
+    const old = entry('苏晚', { hair: 'long black hair' });
+    const result = ensureImageProfiles(
+      [image([{ name: '苏晚', tag: '1girl' }], 0)],
+      [old],
+      [femaleFact('苏晚')],
+      2,
+      '三十多岁的苏晚端着茶杯走进来。',
+    );
+    const op = result.items[0].op;
+    if (op.kind !== 'set') throw new Error('应补字段');
+    expect(op.field).toBe('age');
+    expect(op.value).toContain('mature female');
+    expect(op.value).toContain('30岁');
+  });
+});

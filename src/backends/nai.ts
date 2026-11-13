@@ -277,6 +277,33 @@ export const NAI_STORY_POSITIVE_QUALITY =
 export const NAI_STORY_NEGATIVE =
   'lowres, worst quality, low quality, bad quality, normal quality, jpeg artifacts, compression artifacts, blurry, out of focus, scan artifacts, unfinished, incomplete, upscaled, interpolated, text, logo, watermark, signature, username, bad anatomy, distorted anatomy, anatomical errors, bad proportions, bad limb, bad legs, bad feet, bad hands, mutated hands, extra fingers, missing fingers, fused fingers, extra limbs, missing limbs, mutation, deformed, disfigured, fused body, deformed face, asymmetrical face, deformed eyes, bad eyes, blank eyes, cloudy eyes, cross-eyed, lazy eye, uneven eyes, low detail eyes, unnatural pupils, unnatural hair, messy lines, sketch lines, rough lines, style mix, artist collaboration, mixed styles, inconsistent style, conflicting styles, bad composition, distorted composition, bad perspective, multiple views, split screen, animation error, chromatic aberration, vertical banding, moire pattern, halftone, dithering, screentones, monochrome, greyscale, variant set, character sheet, turnaround, reference sheet, comic, toon, chibi, dated, 1990s (style), neck abnormality, long neck';
 
+/**
+ * 画风锚：每一次出图都显式写死"这幅画是什么风格"。
+ *
+ * 病因：画风过去只靠两处偶然——要么用户选了带 `semi-realistic anime` 的内置配方，
+ * 要么靠负面词碰巧排除。而 4-5 系的官方负面词里根本没有 comic/toon/chibi，只有
+ * 5-full 有。结果同一楼里前一张还在卡通、后一张变回写实，用户看到的画师串、质量词、
+ * 负面词却完全一致——因为决定风格的那一行从来不存在。
+ *
+ * 所以风格必须是正向词里的一等公民。选了带风格词的画师串就交给画师串（不重复），
+ * 否则由插件补一条稳定基准。用户想改成纯 anime 只需在质量词里写死自己的风格，
+ * 这条的权重排在质量词之后，会被压过去。
+ */
+export const NAI_STYLE_ANCHOR = 'semi-realistic anime, cinematic illustration, consistent art style';
+
+/** 画师串或质量词里已经写明风格时不再追加锚，避免同一风格词叠两遍。 */
+const STYLE_WORD =
+  /\b(?:anime|semi-realistic|realistic|photoreal|cinematic|pixiv|illustration|watercolor|oil painting|pixel art|3d|blender|flat color|lineart)\b/i;
+
+/** 本次出图要不要补画风锚；用户已在画师串/质量词里管风格就让位。 */
+export function naiStyleAnchor(nai: NaiSettings): string {
+  const preset = naiActivePreset(nai);
+  // 内置「剧情原味」配方自带 semi-realistic anime，不必再叠
+  if (preset && STYLE_WORD.test(preset.prompt)) return '';
+  if (STYLE_WORD.test(nai.qualityTags)) return '';
+  return NAI_STYLE_ANCHOR;
+}
+
 export const BUILTIN_NAI_ARTISTS: readonly NaiArtistPreset[] = [
   {
     id: 'bi_default',
@@ -363,12 +390,28 @@ export function naiUndesiredContent(nai: NaiSettings): string {
  * ⚠ 本函数在 buildNaiParameters(v4_prompt 的来源)与 generateNaiImage 的顶层 input
  * 字段处各调一次,两处必须同源。拼装改动一律留在本函数内部——在某个调用点单独加料会让
  * NAI3(读 input)与 NAI4/4.5(读 v4_prompt)拿到不同的提示词,且只在 NAI3 上暴露。
+ *
+ * 顺序固定为 画师串 → 画面 → 质量词 → 画风锚:锚是最后一道保险,分量排在质量词之后,
+ * 同时又在 nl 之前(它属于 tag 段)。
  */
 export function fullPositivePrompt(nai: NaiSettings, prompt: string, nl = ''): string {
   const artist = naiArtistPrompt(nai);
   const quality = naiQualityTags(nai);
-  const tags = [artist, prompt.trim(), quality].filter(Boolean).join(', ');
+  const style = naiStyleAnchor(nai);
+  const tags = [artist, prompt.trim(), quality, style].filter(Boolean).join(', ');
   return naiSupportsCharacterPrompts(nai.model) && nl.trim() ? `${tags}. ${nl.trim()}` : tags;
+}
+
+/**
+ * 多人图缺少 center 时的兜底落点。
+ *
+ * 把角色沿水平方向等距摊开：两人各占 1/3、2/3；三人 1/4、1/2、3/4；四人 1/5…4/5。
+ * 这是「别叠在正中」的最低限度，模型真给了 A1–E5 就以模型为准。
+ */
+export function spreadCenters(characters: ReadonlyArray<ImageCharacterPrompt>): number[] {
+  const count = characters.length;
+  if (count <= 1) return [0.5];
+  return characters.map((_, index) => Number(((index + 1) / (count + 1)).toFixed(3)));
 }
 
 function characterCaption(character: ImageCharacterPrompt): string {
@@ -448,13 +491,18 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
     params.reference_image_multiple_cached = [];
     // 每人的 centers 用她自己的落点（模型给 A1..E5 就按格），缺省才落正中。
     // 旧代码一律 {.5,.5}:两人以上全叠在画面中心，这也是多人图糊成一团的直接原因。
-    const centerOf = (character: ImageCharacterPrompt) => [
-      { x: character.center?.x ?? 0.5, y: character.center?.y ?? 0.5 },
+    //
+    // 模型经常漏填 center（协议只在多人时"建议"写）。多人图全缺时一律钉在正中，
+    // 等于没写，所以这里兜一层：缺省的人按顺序沿水平方向摊开，再按人数收窄间距，
+    // 至少不会叠在一起。单人照旧落正中。
+    const spread = spreadCenters(values.characters ?? []);
+    const centerOf = (character: ImageCharacterPrompt, index: number) => [
+      { x: character.center?.x ?? spread[index] ?? 0.5, y: character.center?.y ?? 0.5 },
     ];
     const charCaptions = naiSupportsCharacterPrompts(nai.model)
-      ? (values.characters ?? []).map((character) => ({
+      ? (values.characters ?? []).map((character, index) => ({
           char_caption: characterCaption(character),
-          centers: centerOf(character),
+          centers: centerOf(character, index),
         }))
       : [];
     params.characterPrompts = [];
@@ -468,9 +516,9 @@ export function buildNaiParameters(nai: NaiSettings, values: NaiGenerateValues):
     params.v4_negative_prompt = {
       caption: {
         base_caption: negative,
-        char_captions: (values.characters ?? []).slice(0, charCaptions.length).map((character) => ({
+        char_captions: (values.characters ?? []).slice(0, charCaptions.length).map((character, index) => ({
           char_caption: '',
-          centers: centerOf(character),
+          centers: centerOf(character, index),
         })),
       },
       legacy_uc: false,

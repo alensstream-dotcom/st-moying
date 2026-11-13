@@ -1414,6 +1414,14 @@ export function synthesiseSceneClothing(
 // 一旦采纳就把账本款式换掉——长牛仔裤被写成短牛仔裤就是这么来的。
 const CHANGE_SCENE =
   /换上|换成|换好|换上一|换了一身|换了|换身|新衣|更衣|换装|穿回|重新穿|披上|套上|系上/;
+/**
+ * 正文在**陈述她此刻的穿着**（不是动作，是状态）。
+ *
+ * 「她今天穿了一件红色连衣裙」没有换装动词，却已经把款式写死了。只看 CHANGE_SCENE
+ * 的话，账本里记错的款式永远不会被正文纠正——用户说的「剧情里明明写了她穿的什么服装，
+ * 图片里还是原本的衣服」就是这条。陈述句也算数，但必须点名到本人（下面 still 查 called）。
+ */
+const WEARING_STATE = /穿着|身穿|身着|穿了|套着|披着|一身|换了|换成了|已经是/;
 const MAIN_GARMENTS = new Set(['shirt', 'skirt', 'pants', 'dress']);
 /**
  * 剧情明确换装、但模型只写了 patch（或压根没报）时，采纳图片里模型给的新衣物，
@@ -1457,7 +1465,7 @@ export function adoptChangedClothing(
           piece.design.trim().toLowerCase() !== named.toLowerCase(),
       );
     if (!novel.length && !swapped) continue;
-    if (!CHANGE_SCENE.test(window.text)) continue;
+    if (!CHANGE_SCENE.test(window.text) && !WEARING_STATE.test(window.text)) continue;
     const entry = entries.find((e) => e.name === canonical);
     const called =
       window.text.includes(canonical) ||

@@ -93,4 +93,46 @@ describe('enforceAppearance 用角色库锁死同一身外貌', () => {
     enforceAppearance(a, [girl], false, true, []);
     expect(a.characters[0].tag.match(/flat chest/g)).toHaveLength(1);
   });
+
+  it('没有年龄档就不编体型锚', () => {
+    // 只在 tag 里写 hair/eyes/body，不谈年龄：不该凭空冒出 short stature 这种断言，
+    // 但已有的 body 词（slim figure）必须照旧保留下来。
+    const girl = entry({
+      fields: { ...emptyCharFields(), sex: '1girl', hair: 'braided hair', body: 'slim figure' },
+    });
+    const a = image('1girl, braided hair', '1girl, braided hair');
+    enforceAppearance(a, [girl], false, true, []);
+    expect(a.characters[0].tag).toContain('slim figure');
+    expect(a.characters[0].tag).not.toContain('short stature');
+  });
+
+  it('档案只写年龄、没写 body 时身高仍然锁住', () => {
+    // body 为空不等于不锁：骨架词来源于 age，身高在 nl 与 tag 两侧都要管。
+    const girl = entry({
+      fields: { ...emptyCharFields(), sex: '1girl', age: 'child', hair: 'long black hair' },
+    });
+    const a = image('1girl, long black hair, tall woman', '1girl, long black hair, tall woman');
+    a.characters[0].nl = 'A tall woman with long black hair.';
+    enforceAppearance(a, [girl], true, true, []);
+    expect(a.characters[0].nl).toContain('short');
+    expect(a.characters[0].tag).not.toMatch(/\btall\b/);
+  });
+
+  /**
+   * nl 里的身高三张图必须一个说法。
+   *
+   * 模型每张图顺手写的 a small girl / a tall woman 不会被 tag 侧的骨架词管住——
+   * nl 送进 NAI 时分量比 tag 还重。而旧版把整串「small tanned girl」换掉，连 tanned
+   * 这种别的信息一起吞了。
+   */
+  it('nl 里的身高跟着档案走，其余修饰保留', () => {
+    const girl = entry({
+      fields: { ...emptyCharFields(), sex: '1girl', age: 'child', hair: 'long black hair' },
+    });
+    const a = image('1girl, long black hair', '1girl, long black hair');
+    a.characters[0].nl = 'The tall tanned girl with long black hair smiles.';
+    enforceAppearance(a, [girl], true, true, []);
+    expect(a.characters[0].nl).toContain('short tanned girl');
+    expect(a.characters[0].nl).not.toMatch(/\btall\b/);
+  });
 });

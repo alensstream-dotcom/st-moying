@@ -140,17 +140,34 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
   if (!result) return canonical.map(plain).join(', ') + '.';
   const first = (value: string, fallback: string) => plain(split(value)[0] ?? fallback);
   const colors =
-    'black|white|silver|grey|gray|blond|blonde|golden|brown|auburn|red|pink|blue|green|purple|violet|orange';
+    'black|white|silver|grey|gray|blond|blonde|golden|brown|auburn|red|pink|blue|navy|green|purple|violet|orange|dark|light|pale|platinum|ash|gold|ash-blonde|chestnut';
+  /*
+   * 发型的尾巴要一起吃掉。
+   *
+   * 只替换「dark hair」会留下「her long straight hair in a bun with a hairstyle」这种半截句：
+   * 前半是档案值、后半是模型原句，读起来还多了个没头没尾的 hairstyle。所以 hair 后面
+   * 紧跟的「in a bun / with a ribbon / tied back」这类描述也一并算进这个词组。
+   */
+  const STYLE_TAIL =
+    '(?:\\s+(?:in|with)\\s+(?:an?\\s+|the\\s+)?(?:buns?|ponytails?|twin tails|twintails|braids?|plaits?|updo|knot|tail|bob(?: cut)?|pixie cut|hair ?band|hair ?clip|hairpin|ribbon)(?:\\s+(?:with\\s+)?(?:an?\\s+)?(?:hairstyle|hair ornament|ribbon|clip|band))?)?(?:\\s+(?:tied|pulled|gathered|tucked|pinned)\\s+(?:back|up|loose|down))?';
+  // braided / braid / twin tail 这类修饰也算发型词组的一部分，否则「navy braided hair」匹配不上。
   const hair = new RegExp(
-    `\\b(?:(?:${colors}|long|short|straight|curly|wavy|flowing|silky|waist-length|shoulder-length)\\s+){1,5}hair\\b`,
+    `\\b(?:(?:${colors}|long|short|straight|curly|wavy|flowing|silky|waist-length|shoulder-length|braided|braid|tied|loose|messy)\\s+){1,5}hair\\b${STYLE_TAIL}`,
     'gi',
   );
+  const hairOnce = new RegExp(hair.source, 'i');
   const eyes = new RegExp(
     `\\b(?:(?:${colors}|amber|hazel|ruby|emerald|bright|dark|light|deep)\\s+){1,3}eyes\\b`,
     'gi',
   );
-  if (locked || entry.fields.hair)
-    result = result.replace(hair, locked ? 'hair' : first(entry.fields.hair, 'hair'));
+  // 原句有没有写过头发：决定末尾还要不要补一句 Fixed hairstyle，写过就别重复。
+  let hadHair = false;
+  if (locked || entry.fields.hair) {
+    // 句中只放一个泛指 hairstyle，完整档案串交给末尾那句 Fixed hairstyle：把逗号标签
+    // 直接塞进句子会读成「her hairstyle, dark brown hair, single side ponytail, smiling」。
+    hadHair = hairOnce.test(result);
+    result = result.replace(hair, 'hairstyle');
+  }
   if (locked || entry.fields.eyes)
     result = result.replace(eyes, locked ? 'eyes' : first(entry.fields.eyes, 'eyes'));
   if (locked || entry.fields.skin)
@@ -158,7 +175,9 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
       /\b(?:(?:pale|fair|white|tan|tanned|dark|brown|smooth|porcelain)\s+){1,3}skin\b/gi,
       locked ? 'skin' : first(entry.fields.skin, 'skin'),
     );
-  if (!locked && entry.fields.body) {
+  // age 也进这个分支：档案只写了年龄段、没写 body 时，身高仍然必须锁住
+  // （child 骨架词就是 short stature / small frame），否则模型每张图自己挑高矮。
+  if (!locked && (entry.fields.body || entry.fields.age)) {
     const breast = split(entry.fields.body).find((t) => /\b(?:breasts|bust)\b/i.test(t));
     result = result.replace(
       /\b(?:large|huge|small|flat|medium|ample)\s+(?:breasts|bust)\b/gi,
@@ -172,13 +191,24 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
       figure ? plain(figure) : 'figure',
     );
     // 身高/体量也锁：不锁的话模型每张图自己挑「a tall woman / a petite girl」，
-    // 同一个人在两张图里能差出一整个头。
+    // 同一个人在两张图里能差出一整个头。形容词后面常常还夹着 tanned / beautiful 一串
+    // 修饰（the small tanned girl），所以中间的形容词要一并吃掉，否则换了词却没换到人。
     const build = split(charAgeBuild(entry.fields.age)).filter((t) =>
       /\b(?:stature|frame|flat chest)\b/i.test(t),
     );
-    if (build.length)
+    // 只换开头那个身高形容词，保留后面的人称与修饰（the small tanned girl → the slim tanned girl）。
+    // 整串换掉会把 tanned 这类别的信息一起吞了；档案没写 age 时也还有体量词可顶。
+    const stature = (build.join(', ').match(/\b(?:short|small|petite|tall)\b/i)?.[0] ?? '')
+      || (figure ?? '').match(/^\w+/)?.[0]
+      || '';
+    if (stature)
       result = result.replace(
-        /\b(?:tall|short|petite|slender|delicate|tiny|small)\s+(?:woman|girl|figure|stature|frame)\b/gi,
+        /\b(?:tall|short|petite|slender|delicate|tiny|small)\b(?=(?:\s+\w+){0,3}\s+(?:woman|girl|figure|stature|frame)\b)/gi,
+        stature,
+      );
+    else if (build.length)
+      result = result.replace(
+        /\b(?:tall|short|petite|slender|delicate|tiny|small)\s+(?:(?:tanned|tan|pale|fair|young|curvy|busty|beautiful|pretty|lovely|older|elder)\s+)*(?:woman|girl|figure|stature|frame)\b/gi,
         plain(build.join(', ')),
       );
   }
@@ -212,14 +242,18 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
       );
   }
   if (!locked && entry.fields.hair) {
+    // 剩下没被上面吃掉、单独出现的发型词（black ponytail 这种不带 hair 的写法）也归成
+    // 泛称。
     result = result.replace(
       /\b(?:(?:short|long|straight|curly|wavy|high|low|single|twin|side|black|blonde?|brown|silver|white|red|blue|pink)\s+){0,5}(?:ponytails?|twintails|twin tails|braids?|bob(?: cut)?|pixie cut|updo|hair buns?)\b/gi,
       'hairstyle',
     );
-    result += ` Fixed hairstyle: ${entry.fields.hair}.`;
+    // 原句没写过头发时才在末尾补一句：写过就已经在上面替换掉了，重复追加会变成
+    // 「Fixed hairstyle: hairstyle, dark brown hair, hairstyle」。
+    if (!hadHair) result += ` Fixed hairstyle: ${entry.fields.hair}.`;
   }
   // Tags carry every fixed field. Keep the scene/action prose rather than replacing it with a profile dump.
-  return result;
+  return result.replace(/\.{2,}/g, '.').replace(/\s+([.,])/g, '$1').replace(/\s{2,}/g, ' ').trim();
 }
 
 /** Resolve only named blocks. Never expand @ references or impose traits on unnamed people. */

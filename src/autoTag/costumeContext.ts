@@ -21,6 +21,20 @@ function hash(s: string): string { let n = 2166136261; for (const c of s) n = Ma
 const ANCIENT = /仙侠|修仙|修真|古代|古风|古装|王朝|皇朝|江湖武侠|武侠世界|中世纪|封建时代|战国时代|平安时代|ancient|medieval|xianxia|cultivation world/i;
 const MODERN = /现代社会|现代都市|现代世界|当代社会|现代校园|都市修仙|现代修仙|现代背景|现代时代|modern (?:world|setting|society|era)|contemporary/i;
 const FUTURE = /未来世界|未来时代|星际时代|赛博朋克|cyberpunk|futuristic|space age/i;
+/**
+ * 去掉引号里的内容再判时代。
+ *
+ * 病因：正文里一句台词「妈的，着要是古代就好了」就命中了 ANCIENT，整楼被判成古代，
+ * 之后所有现代衣物被当「无剧情依据」剥掉。台词是人物在评论，不是设定陈述。
+ */
+function outsideQuotes(text: string): string {
+  return text
+    .replace(/「[^」]{0,400}」/g, ' ')
+    .replace(/『[^』]{0,400}』/g, ' ')
+    .replace(/“[^”]{0,400}”/g, ' ')
+    .replace(/"[^"\n]{0,400}"/g, ' ');
+}
+const STORY_ERA_HINT = /(?:时代|世界|背景|设定|朝代|年间|世纪|纪元|架空|穿越|来到|转生|重生|现世)/;
 export function inferCostume(text: string, source: 'setting' | 'story'): CostumeContext {
   const eras: CostumeEra[] = []; if (ANCIENT.test(text)) eras.push('ancient'); if (MODERN.test(text)) eras.push('modern'); if (FUTURE.test(text)) eras.push('future');
   const culture: CostumeCulture = /仙侠|修仙|修真|武侠|古代中国|中国古代|中式古风|汉服|大唐|大明|xianxia|ancient china/i.test(text) ? 'chinese'
@@ -29,6 +43,24 @@ export function inferCostume(text: string, source: 'setting' | 'story'): Costume
   const era = eras.length > 1 ? (MODERN.test(text) && !/古代|古风|古装|王朝|皇朝|中世纪|ancient|medieval|穿越/i.test(text) && !FUTURE.test(text) ? 'modern' : 'mixed') : eras[0] ?? 'unknown';
   const lines = text.split(/\n/).filter(s => ANCIENT.test(s) || MODERN.test(s) || FUTURE.test(s));
   return { era, culture, evidence: lines.join(' / ').slice(0, 1000), source };
+}
+/**
+ * 正文里的时代推断：只信「叙述」，不信「台词」。
+ *
+ * 判断顺序：
+ * 1. 引号外的正文完全没命中 → unknown（台词再怎么说古代也不算）；
+ * 2. 命中的句子还带有时代/世界/背景一类的词 → 视为设定陈述，直接采信；
+ * 3. 否则要求至少两句命中、或首句即命中且另有他处呼应，才采信——单句台词
+ *    「要是古代就好了」在引号外为零命中，仍然落到 unknown。
+ */
+export function inferStoryCostume(text: string, source: 'setting' | 'story'): CostumeContext {
+  const plain = outsideQuotes(text);
+  const nothing = !ANCIENT.test(plain) && !MODERN.test(plain) && !FUTURE.test(plain);
+  if (nothing) return { era: 'unknown', culture: 'unknown', evidence: '', source };
+  const hits = plain.split(/\n/).filter(s => ANCIENT.test(s) || MODERN.test(s) || FUTURE.test(s));
+  const hinted = hits.filter(s => STORY_ERA_HINT.test(s));
+  if (!hinted.length && hits.length < 2) return { era: 'unknown', culture: 'unknown', evidence: '', source };
+  return inferCostume(hinted.length ? hinted.join('\n') : plain, source);
 }
 export function costumeBefore(chat: STMessage[], floor: number): CostumeContext | undefined {
   // Validate against the entire upstream chain: edited chapters/swipes cannot leak a later setting backwards.
@@ -44,8 +76,17 @@ export function prepareCostumeRequest(request: CostumeRequest, setting: string, 
   // Story changes are positioned by the LLM, rather than applying the end of a time jump to earlier images.
   request.seed = request.inherited ? { ...request.inherited } : fromSetting;
   if ((request.seed.era === 'unknown' || request.inherited?.settingHash !== request.settingHash) && fromSetting.era !== 'unknown') request.seed = fromSetting;
-  const fromStory = inferCostume(story, 'story');
+  const fromStory = inferStoryCostume(story, 'story');
   if (request.seed.era === 'unknown' && !/穿越|回忆|梦境|返回|回到|闪回/.test(story) && fromStory.era !== 'mixed') request.seed = fromStory;
+  /**
+   * 上一楼判成古代、这一楼正文全是现代生活，就别让错误的「古代」一路传下去。
+   *
+   * 台词误判是温和的：它不会当场改衣服，但会把 ancient 一路继承下去，
+   * 下一楼开始所有现代衣物被 removeUnbackedCostume 当「无剧情依据」剥掉。
+   * 这里的判据要求**叙述里**出现现代生活物件，且本节没有任何古代叙述标记。
+   */
+  if (request.seed.era === 'ancient' && !request.inherited?.evidence && fromStory.era === 'modern') request.seed = fromStory;
+  if (request.seed.era === 'ancient' && fromStory.era === 'modern' && !ANCIENT.test(outsideQuotes(story))) request.seed = fromStory;
 }
 export const COSTUME_PROTOCOL = `服饰时代协议：最终 JSON 额外返回 costumeContexts 数组，每项 {position,era,culture,source,evidence}。
 era 只能 ancient/modern/future/mixed/unknown，culture 只能 chinese/japanese/western/other/unknown。source 只能 setting/story；evidence 必须逐字引用对应设定/目标正文中说明时代与服饰文化的原文。不要把“她穿长裙”当作古代证据，也不要靠同人身份推断时代。
@@ -89,7 +130,15 @@ const FAMILIES: Array<{ id: string; tag: RegExp; story: RegExp }> = [
   { id: 'uniform', tag: /\b(?:school uniform|school blazer|school swimsuit|jk|sailor (?:uniform|collar)|serafuku|business suit|office lady|necktie|bow tie)\b/i, story: /JK|jk|校服|水手服|西装|领带|school uniform|serafuku|business suit|necktie/i },
   { id: 'modern-costume', tag: /\b(?:qipao|cheongsam|maid outfit|maid headdress|french maid|bunny suit|bunny girl|race queen|cheerleader|idol costume)\b/i, story: /旗袍|女仆装|女仆服|兔女郎|赛车女郎|啦啦队服|偶像服|qipao|cheongsam|maid outfit|bunny suit|cheerleader/i },
   { id: 'western', tag: /\b(?:ball gown|victorian dress|gothic dress|lolita fashion|gothic lolita)\b/i, story: /欧式礼服|西式礼服|维多利亚|洛丽塔|哥特裙|ball gown|victorian|lolita|gothic dress/i },
-  { id: 'casual', tag: /\b(?:hoodie|sweatshirt|t[- ]shirt|jeans|denim|tracksuit|track suit|baseball cap|baseball jacket|bomber jacket|leather jacket|sweatpants|cargo pants|polo shirt)\b/i, story: /卫衣|T恤|t恤|牛仔|运动服|棒球帽|皮夹克|hoodie|jeans|denim|tracksuit|t-shirt/i },
+  /**
+   * 现代日常族补 blouse / trousers / apron / cardigan 等基础款。
+   *
+   * 过去表里只有 JK、西装、牛仔、卫衣、运动鞋这些「现代专有」词，blouse、trousers、
+   * apron 一个都不在。于是它们既不进 costumeConflicts（不会改），也不进
+   * `costumeAllows` 的白名单——一旦时代被判成古代就被 removeUnbackedCostume 整条剥掉，
+   * 人物明明穿着上衣却画成没穿。补进来之后它们至少能靠正文证据自证。
+   */
+  { id: 'casual', tag: /\b(?:hoodie|sweatshirt|t[- ]shirt|jeans|denim|tracksuit|track suit|baseball cap|baseball jacket|bomber jacket|leather jacket|sweatpants|cargo pants|polo shirt|blouse|trousers|cardigan|pullover|jumper|apron|slacks|chinos|crop top)\b/i, story: /卫衣|T恤|t恤|牛仔|运动服|棒球帽|皮夹克|hoodie|jeans|denim|tracksuit|t-shirt|衬衫|女式衬衫|长裤|西裤|开衫|套头衫|毛衣|围裙|blouse|trousers|cardigan|apron/i },
   { id: 'shoes', tag: /\b(?:sneakers?|running shoes|trainers|stilettos?|high heels|platform shoes|loafers)\b/i, story: /运动鞋|跑鞋|球鞋|高跟鞋|厚底鞋|乐福鞋|sneaker|high heels|stiletto/i },
   { id: 'underwear', tag: /\b(?:bra|panties|lingerie|bikini|microkini|swimsuit|pantyhose|thighhighs|nylon|fishnet|garter belt|garter straps|latex|leotard|bodysuit)\b/i, story: /胸罩|文胸|内裤|比基尼|泳衣|情趣内衣|丝袜|连裤袜|吊带袜|乳胶|bra\b|panties|bikini|lingerie|pantyhose|thighhigh/i },
   { id: 'electronic', tag: /\b(?:headphones|earbuds|smartwatch|headset)\b/i, story: /耳机|智能手表|headphones|earbuds|smartwatch|headset/i },
@@ -133,7 +182,7 @@ function garmentRegion(design: string): string {
   if (/\b(?:headphones|earbuds|headset|smartwatch|cap|necktie|bow tie|hairpin|sash|scarf|headdress|obi)\b/i.test(value)) return 'accessory';
   if (/\b(?:uniform|dress|gown|robe|hanfu|kimono|yukata|qipao|cheongsam|miko|suit)\b/i.test(value)) return 'full';
   if (/\b(?:skirt|pants|jeans|trousers|hakama|shorts)\b/i.test(value)) return 'lower';
-  if (/\b(?:shirt|hoodie|sweatshirt|jacket|blouse|blazer|coat|top|tunic|sweater|cardigan)\b/i.test(value)) return 'upper';
+  if (/\b(?:shirt|hoodie|sweatshirt|jacket|blouse|blazer|coat|top|tunic|sweater|cardigan|pullover|jumper|apron|corset|bodice)\b/i.test(value)) return 'upper';
   return 'unknown';
 }
 function fallbackDesign(design: string, context: CostumeContext): string {
