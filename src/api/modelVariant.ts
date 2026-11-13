@@ -60,15 +60,41 @@ export function antiTruncationModel(model: string): string | null {
 }
 
 /**
- * 被拦后的模型降级梯队(按尝试顺序)。
+ * 各厂商池的「兜底模型」——被拦/输出不稳时退到这一级。
+ *
+ * 为什么按厂商分表:网关按前缀(`agy-` / `pg-`)路由到完全不同的上游账号池,
+ * 两边的可用模型与过滤口径都不一样,实测:
+ *
+ *   agy 池:会做内容过滤(IN/OUT),退到老一代后过滤口径明显更松。
+ *           `抗截断-agy-gemini-2.5-flash` 在开篇即露骨的第 1 楼上 9/10 通过。
+ *   pg 池:同样会做内容过滤,而且是在**输出侧边写边过滤** ——
+ *           裸 `pg-gemini-3.6-flash` 真实应答只吐了 19 个 token 就
+ *           `finish_reason: content_filter`(内容停在 `"tag":"1girl, 1boy, indoor`),
+ *           同一楼换 `抗截断-` 变体就能拿回整份合法 JSON。
+ *           真正端到端(真实楼层 + 真实插件布局)3/3 通过,但**每一轮都要走到第三级**
+ *           `抗截断-pg-gemini-3.5-flash-lite` 才成 —— 所以 pg 这一级不能省。
+ *           另外 pg 池根本没有 2.5 系列(21 个 pg 模型里零命中),照搬 agy 那一级
+ *           只会得到一个不存在的模型名。
+ *
+ * 表里的名字来自实测,换网关后可能不存在 —— 调用方会按「模型不存在」自动跳过该级。
+ */
+const VENDOR_FALLBACK: Record<string, string[]> = {
+  agy: ['抗截断-agy-gemini-2.5-flash'],
+  pg: ['抗截断-pg-gemini-3.5-flash-lite'],
+};
+
+/**
+ * 失败后的模型降级梯队(按尝试顺序)。
  *
  * 只给出「名字」,不预检可用性:预检要多花一次请求,而这里每一步本来就是在
- * 失败之后走的。调用方拿 `looksLikeMissingModel` 判断名字不存在并退回。
+ * 失败之后走的。调用方拿 `looksLikeMissingModel` 判断名字不存在并跳过该级。
  *
  * 梯队构成(全部来自实测,不猜):
- *   1. `抗截断-<原名>` —— 同一模型换网关路径,对中等尺度内容有效。
- *   2. `抗截断-<厂商>-gemini-2.5-flash` —— 开篇即露骨的楼层只有这一级稳(9/10)。
- *      只在原名属于 gemini 3/4 系时给出,2.5 及更早本来就没必要再退。
+ *   1. `抗截断-<原名>` —— 同一模型换网关路径。对 agy 池能提高过审率,
+ *      对 pg 池能解决「裸模型输出坏 JSON」。
+ *   2. `VENDOR_FALLBACK[厂商]` —— 该池里实测最稳的那一个。
+ *
+ * 两个池的失败模式不同,所以第 2 级不能共用同一个名字(见上表注释)。
  */
 export function fallbackModels(model: string): string[] {
   const name = (model ?? '').trim();
@@ -84,9 +110,11 @@ export function fallbackModels(model: string): string[] {
   push(`${ANTI_TRUNCATION_PREFIX}${base}`);
 
   // 厂商前缀(agy-/pg-/…)保留:网关按前缀路由到不同上游账号池,换厂商等于换账号。
-  const vendor = /^([a-z]+)-/i.exec(base)?.[1] ?? '';
-  if (vendor && /gemini-(?:3|4)[.-]/i.test(base)) {
-    push(`${ANTI_TRUNCATION_PREFIX}${vendor}-gemini-2.5-flash`);
+  const vendor = /^([a-z]+)-/i.exec(base)?.[1]?.toLowerCase() ?? '';
+  for (const candidate of VENDOR_FALLBACK[vendor] ?? []) {
+    // 已经是这一级本身(例如用户就是选的它)就不再重复。
+    if (candidate === name) continue;
+    push(candidate);
   }
   return out;
 }
@@ -109,4 +137,28 @@ export function looksLikeMissingModel(message: string): boolean {
   if (!text) return false;
   if (/content_filter|sensitive|moderation|被渠道内容过滤/i.test(text)) return false;
   return MISSING_MODEL_RE.test(text);
+}
+
+/**
+ * 「模型没按协议吐 JSON」的形态。
+ *
+ * 为什么它也要进梯队:pg 池实测**不做内容过滤**,失败模式全在这里 ——
+ * 同一份第 1 楼真实请求,裸模型 `pg-gemini-3.6-flash` / `3.5-flash-lite` /
+ * `3-flash-preview` 各 4/4 全 BADJSON,而同名的 `抗截断-` 变体 4/4 给出合法计划。
+ * 也就是说对这个池子,「换个模型」比「重发同一份」有效得多。
+ *
+ * 只认**语法/结构**层面的失败(解析不出对象、缺 images、一张都落不了位)。
+ * 刻意不把「景别过远」「画面事实不符」这类语义校验算进来:那是内容问题,
+ * 换个模型照样会犯,只会白花一次请求。
+ */
+const BAD_JSON_RE =
+  /(?:AI 没有返回可解析的 JSON|AI 返回的 JSON 缺少\s*images|都没有可落地的位置|Unexpected end of JSON|Unexpected token|is not valid JSON)/i;
+
+export function looksLikeBadSchema(message: string): boolean {
+  const text = message ?? '';
+  if (!text) return false;
+  // 拦截/截断/模型不存在各有各的处理路径,不要在这里抢。
+  if (/content_filter|sensitive|moderation|被渠道内容过滤|输出被截断/i.test(text)) return false;
+  if (looksLikeMissingModel(text)) return false;
+  return BAD_JSON_RE.test(text);
 }

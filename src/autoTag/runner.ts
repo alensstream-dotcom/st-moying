@@ -35,7 +35,7 @@ import {
   type IdentitySources,
 } from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
-import { fallbackModels, looksLikeMissingModel } from '@/api/modelVariant';
+import { fallbackModels, looksLikeBadSchema, looksLikeMissingModel } from '@/api/modelVariant';
 import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { repairQuotes, shieldMessages, type Shielded } from '@/autoTag/geminiShield';
 import { readBookMemory } from '@/autoTag/bookMemory';
@@ -1138,18 +1138,28 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             ? { ...channel, model: modelLadder[ladderStep] }
             : channel;
         }
-        // 被拦之后换下一级模型再发。降载(改请求内容)与换模型(改走上游哪条路)是两件事,
-        // 实测开篇即露骨的楼层上换模型才是决定性的那一半。
-        if (channel && blockedOnce && !looksLikeMissingModel(lastError) && ladderStep < modelLadder.length) {
-          const from = activeChannel?.model ?? channel.model;
-          activeChannel = { ...channel, model: modelLadder[ladderStep] };
+        // 换下一级模型再发的两种触发:
+        //   ① 被内容过滤拦下 —— agy 池的主要失败模式,换路径能明显提高过审率;
+        //   ② 输出不是合规 JSON —— pg 池的主要失败模式(该池几乎不过滤内容),
+        //      裸模型全 BADJSON、抗截断变体全 OK,换名字才是对症的那一半。
+        // 降载(改请求内容)与换模型(改走上游哪条路)是两件事,两者都不冲突。
+        const shouldAdvance =
+          !!channel &&
+          !looksLikeMissingModel(lastError) &&
+          ladderStep < modelLadder.length &&
+          (blockedOnce || looksLikeBadSchema(lastError));
+        if (shouldAdvance) {
+          const from = activeChannel?.model ?? channel!.model;
+          activeChannel = { ...channel!, model: modelLadder[ladderStep] };
           ladderStep += 1;
           // 换模型是新的尝试,不占用户设的重试次数(见上面 granted 的注释)。
           granted += 1;
-          console.info('[墨影] 上一条请求被渠道拦下，改用下一级模型重试', {
-            from,
-            to: activeChannel.model,
-          });
+          console.info(
+            blockedOnce
+              ? '[墨影] 上一条请求被渠道拦下，改用下一级模型重试'
+              : '[墨影] 上一条输出不是合规 JSON，改用下一级模型重试',
+            { from, to: activeChannel.model },
+          );
         }
         console.warn(`[墨影] 第 ${floor} 楼第 ${attempt + 1}/${retries + 1} 次生成 tag 失败`, error);
       }
