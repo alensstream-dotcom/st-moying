@@ -224,11 +224,31 @@ export function repairQuotes(jsonText: string, story: Shielded | null): string {
 export function shieldMessages<T extends { role: string; content: string }>(
   messages: readonly T[],
 ): { messages: T[]; story: Shielded | null } {
+  // 正文不一定在 user 里:gemini 档把正文与账本都挪进了 system(那条通道按
+  // 「单条 user 的露骨密度」在提交阶段拦人,挪走之后才过)。所以不能假定
+  // 「story = 最后一条 user」——认错来源,引文还原全废、服装证据全对不上。
+  // 按段落头定位正文;定位不到(例如只发了锚点)就退回最后一条 user,与旧行为一致。
+  let storyIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (STORY_HEADER.test(messages[i].content)) {
+      storyIndex = i;
+      break;
+    }
+  }
+  if (storyIndex < 0) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        storyIndex = i;
+        break;
+      }
+    }
+  }
   let story: Shielded | null = null;
-  const out = messages.map((message) => {
-    if (message.role !== 'user') return { ...message, content: shieldText(message.content) };
+  // 每条都整条清:上一楼正文、服装账本、实拍 tag 里同样有露骨词,只清正文那一段
+  // 照样能把请求顶回去(实测控制组 10 次里 9 次被输入侧拦下)。
+  const out = messages.map((message, index) => {
     const shielded = shieldWithMap(message.content);
-    story = shielded;
+    if (index === storyIndex) story = shielded;
     return { ...message, content: shielded.text };
   });
   return { messages: out, story };

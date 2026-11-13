@@ -83,6 +83,41 @@ export interface RequestOptions {
   temperature?: number;
 }
 
+/**
+ * 流式回复被渠道「按输出内容过滤」斩断的判据。
+ *
+ * 实测(agy-gemini-3.8-flash-high,同一份 50K 字符请求各发一次):
+ *   stream=false → finish_reason=stop,完整 1211 字符
+ *   stream=true  → finish_reason=content_filter,只有 100 字符
+ * 也就是说这类网关是在**流式逐块提交**时做过滤:一旦越界就整段掐掉,
+ * 而不是像非流式那样先拼完再判。所以「一直被截断」不是提示词不够狠,
+ * 是同一条请求的传输方式选错了——改非流式重发即可拿回完整结果。
+ */
+const STREAM_CUT_RE = /content_filter|sensitive|moderation/i;
+
+interface CompletionResult {
+  content: string;
+  usage: { prompt: number | null; completion: number | null };
+  finishReason: string | null;
+  nativeFinishReason: string | null;
+}
+
+/** 文本看起来已经写完整了(JSON 以右花括号收尾,允许外面套 ``` 围栏)。 */
+function looksComplete(text: string): boolean {
+  const trimmed = (text ?? '').trim().replace(/`+$/, '').trim();
+  return trimmed.endsWith('}');
+}
+
+/**
+ * 这次流式返回是否属于「被输出侧过滤斩断」。
+ *
+ * 只看 finish_reason 不够:少数渠道会对**已经完整输出**的回复也标 content_filter
+ * (事后审核),那种内容拿来用就好,重发一次纯属多花钱。所以还要看文本有没有写完。
+ */
+function isStreamCut(result: CompletionResult): boolean {
+  return !!result.finishReason && STREAM_CUT_RE.test(result.finishReason) && !looksComplete(result.content);
+}
+
 /* ============ 请求历史埋点(纯辅助,绝不允许影响主流程) ============ */
 
 /** 从响应体取 OpenAI 标准 usage。ST 代理非流式分支原样透传上游 JSON,故这里拿到的是真值。 */
@@ -276,16 +311,28 @@ async function requestCompletionAtUrl(
   if (!channel.url || !channel.model) throw new ApiError('副 API 渠道未配置完整(缺 url 或 model)');
 
   const stream = channel.stream ?? false;
-  const body = buildRequestBody(channel, messages, reverseProxy, stream, opts.temperature);
   if (opts.imageData) {
     if (!/^data:image\/(?:png|jpeg|webp);base64,/.test(opts.imageData) || opts.imageData.length > 12 * 1024 * 1024)
       throw new ApiError('服装参考图格式或大小不正确');
-    const at = messages.map(m => m.role).lastIndexOf('user');
-    if (at < 0) throw new ApiError('图片识别缺少用户指令');
-    body.messages = messages.map((m, i) => i !== at ? m : { role: m.role, content: [
-      { type: 'text', text: m.content }, { type: 'image_url', image_url: { url: opts.imageData, detail: 'auto' } },
-    ] });
+    if (messages.map(m => m.role).lastIndexOf('user') < 0) throw new ApiError('图片识别缺少用户指令');
   }
+
+  /**
+   * 按指定 stream 重建请求体。
+   *
+   * 为什么是工厂而不是算一次:流式被斩断后要用**同一份内容**改非流式重发,
+   * 唯一允许变化的字段就是 stream。图片消息也要跟着重放,否则重发会丢图。
+   */
+  const makeBody = (useStream: boolean): Record<string, unknown> => {
+    const out = buildRequestBody(channel, messages, reverseProxy, useStream, opts.temperature);
+    if (opts.imageData) {
+      const at = messages.map(m => m.role).lastIndexOf('user');
+      out.messages = messages.map((m, i) => i !== at ? m : { role: m.role, content: [
+        { type: 'text', text: m.content }, { type: 'image_url', image_url: { url: opts.imageData, detail: 'auto' } },
+      ] });
+    }
+    return out;
+  };
 
   const timeoutSec = validTimeoutSec(channel.timeoutSec);
 
@@ -300,12 +347,13 @@ async function requestCompletionAtUrl(
     }),
   );
 
-  try {
-    const result = await withTimeout(timeoutSec, opts.signal, '副 API 请求', async signal => {
+  /** 发一次;流式按 SSE 拼,非流式读 JSON。各自吃满自己的超时预算。 */
+  const sendOnce = (useStream: boolean): Promise<CompletionResult> =>
+    withTimeout(timeoutSec, opts.signal, '副 API 请求', async signal => {
       const resp = await fetch(GENERATE_URL, {
         method: 'POST',
         headers: ctx.getRequestHeaders(),
-        body: JSON.stringify(body),
+        body: JSON.stringify(makeBody(useStream)),
         signal,
       });
 
@@ -315,12 +363,11 @@ async function requestCompletionAtUrl(
       }
 
       // 流式:按 SSE 增量拼接;非流式:直接解析 JSON。
-      if (stream) {
+      if (useStream) {
         const finish = { finishReason: null as string | null, nativeFinishReason: null as string | null };
         const streamed = await readSseContent(resp, finish);
-        // 空内容带上 finish_reason:被渠道过滤时它往往是 content_filter,空串本身看不出区别,
-        // 而调用方要靠它决定「重发同一份」还是「改淡了再发」。
-        if (!streamed) throw new ApiError(`副 API 返回空内容${finishTag(finish.finishReason)}`);
+        // 空内容不在这里抛:被过滤时常常是「空 or 一小截 + content_filter」,
+        // 交给上层判是「斩断」还是「真空」,才有机会改非流式救回来。
         // 流式无 usage:ST 构造上游请求体是字段白名单,不含 stream_options,
         // 没法让上游在末尾回 usage chunk。只能事后本地估算。
         return { content: streamed, usage: { prompt: null, completion: null }, ...finish };
@@ -331,17 +378,34 @@ async function requestCompletionAtUrl(
         throw new ApiError(data.error.message || '副 API 返回错误');
       }
 
-      const parsed = extractContent(data);
       // ST 代理非流式分支是 response.send(json) 原样透传,故 usage 是上游真值。
       const choice = data?.choices?.[0];
-      if (!parsed) throw new ApiError(`副 API 返回空内容${finishTag(choice?.finish_reason)}`);
       return {
-        content: parsed,
+        content: extractContent(data),
         usage: readUsage(data),
         finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : null,
         nativeFinishReason: typeof choice?.native_finish_reason === 'string' ? choice.native_finish_reason : null,
       };
     });
+
+  try {
+    let result = await sendOnce(stream);
+    // 流式被输出侧过滤斩断 → 同一条请求改非流式重发一次。
+    //
+    // 这一步吃掉的是「渠道的传输方式问题」,不是模型问题:内容一个字没改,
+    // 只是让网关先拼完整再判。实测同一请求 stream=false 能拿回完整 1211 字符,
+    // 而 stream=true 只有 100 字符 + content_filter。不重发的话,上层会把它当
+    // 「被渠道拦」去降载加重试,方向全错,用户看到的就是「一直截断」。
+    if (stream && isStreamCut(result)) {
+      console.info('[墨影] 流式回复被渠道按输出内容过滤斩断，改非流式重发同一份请求', {
+        finishReason: result.finishReason,
+        streamedLength: result.content.length,
+      });
+      result = await sendOnce(false);
+    }
+    if (!result.content) {
+      throw new ApiError(`副 API 返回空内容${finishTag(result.finishReason)}`);
+    }
 
     // Preserve the raw answer and finish metadata before validation: failed JSON is diagnostic evidence.
     if (historyId !== null) {

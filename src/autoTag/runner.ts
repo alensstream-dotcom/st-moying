@@ -85,7 +85,7 @@ import {
 } from '@/autoTag/outfitTimeline';
 import { enforceAppearance } from '@/autoTag/appearanceLock';
 import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
-import { autoTagProfile, buildAutoTagMessages } from '@/autoTag/prompt';
+import { autoTagProfile, buildAutoTagMessages, flattenToSystem } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
 import {
@@ -615,7 +615,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
      * 用同一个函数而不是另存一份文案,是因为世界书/角色卡/记忆/账本这些上下文也都要
      * 跟着一起重取——只替换契约而留着旧上下文,等于两份口径打架。
      */
-    const assemble = async (lean: boolean) => {
+    const assemble = async (lean: boolean, flatten = false) => {
       const built = await buildAutoTagMessages(
         context,
         floor,
@@ -646,7 +646,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         content:
           IDENTITY_PROTOCOL + '\n已核实身份（旧绘图档案不是性别证据）：' + JSON.stringify(knownIdentities),
       });
-      return built;
+      return flatten ? flattenToSystem(built) : built;
     };
     const messages = await assemble(false);
     costumeRequest.story = source;
@@ -685,8 +685,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         processed.delete(identity);
         return;
       }
+      // 被拦过一次之后改发「user 只留一句指令」的布局:实测把正文与账本挪进 system 后
+      // 同一份内容从 0/4 翻成 4/4。原样重发只会再被拦一次,还多花一次钱。
       const baseMessages =
-        blockedOnce || leanOnce ? await assemble(leanOnce) : messages;
+        blockedOnce ? await assemble(leanOnce, true) : leanOnce ? await assemble(true) : messages;
       const attempted: ChatMsg[] = retryNote
         ? [...(blockedOnce ? neutralizeMessages(baseMessages) : baseMessages), { role: 'system', content: retryNote }]
         : blockedOnce

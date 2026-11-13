@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { autoTagProfile, buildAutoTagMessages, expandNlSections } from '@/autoTag/prompt';
+import { autoTagProfile, buildAutoTagMessages, expandNlSections, flattenToSystem } from '@/autoTag/prompt';
 import {
   activeComfyPreset,
   DEFAULT_NAI_V5_SPEC,
@@ -10,6 +10,7 @@ import {
   type AutoTagSettings,
 } from '@/state/settings';
 import type { STContext } from '@/st/context';
+import type { ChatMsg } from '@/api/client';
 
 /**
  * 提示词集:全部留空(= 回落内置默认),只把本用例关心的那几项覆盖掉。
@@ -1519,5 +1520,90 @@ describe('思考块预算上限', () => {
     // 标记不能漏进最终文本
     expect(lean).not.toContain('⟪');
     expect(full).not.toContain('⟪');
+  });
+});
+// gemini 档的请求布局:实测这条网关在**提交阶段**按「单条 user 里的露骨素材密度」拦人,
+// 把账本与正文都挪进 system、user 只留一句指令后,同一份内容 4/4 通过(对照 0/4)。
+// 这组断言锁住三件事:user 只剩指令、正文在 system、其它档位仍是原来那条合并 user。
+describe('gemini 档把正文与账本挪进 system', () => {
+  function options(tier: AutoTagSettings['jailbreakTier']): AutoTagSettings {
+    return {
+      enabled: true,
+      contextMessages: 2,
+      minImages: 0,
+      maxImages: 2,
+      retryCount: 1,
+      autoGenerate: true,
+      jailbreakTier: tier,
+      lore: {
+        enabled: true,
+        maxNsfw: 3,
+        wardrobeLimit: 8,
+        poseLimit: 6,
+        faces: true,
+        faceLimit: 8,
+        thumbModel: '',
+        thumbIntervalMs: 10000,
+      },
+      prompts: prompts(),
+    };
+  }
+
+  it('user 只剩一句指令，正文与库都进 system', async () => {
+    const messages = await buildAutoTagMessages(
+      context(),
+      1,
+      options('gemini'),
+      null,
+      undefined,
+      '【上镜锚点】锚点文本',
+    );
+    const user = messages.at(-1)!;
+    expect(user.role).toBe('user');
+    expect(user.content).toContain('按上面【本楼正文】输出本楼图片计划 JSON');
+    // 正文不许留在 user 里 —— 它就是触发点
+    expect(user.content).not.toContain('目标第一行');
+    expect(user.content.length).toBeLessThan(120);
+    const systems = messages.filter(m => m.role === 'system').map(m => m.content);
+    expect(systems.some(text => text.includes('--- 目标正文｜'))).toBe(true);
+    expect(systems.some(text => text.includes('目标第一行'))).toBe(true);
+    expect(systems.some(text => text.includes('【上镜锚点】'))).toBe(true);
+  });
+
+  it('其它档位仍合成一条 user（正文和库都在里面）', async () => {
+    const messages = await buildAutoTagMessages(
+      context(),
+      1,
+      options('strong'),
+      null,
+      undefined,
+      '【上镜锚点】锚点文本',
+    );
+    const user = messages.at(-1)!;
+    expect(user.role).toBe('user');
+    expect(user.content).toContain('目标第一行');
+    expect(user.content).toContain('【上镜锚点】');
+    expect(user.content).toContain('--- 目标正文｜');
+  });
+});
+
+describe('被渠道拦截后的扁平布局 flattenToSystem', () => {
+  it('user 只剩指令，原来的 user 内容进 system', () => {
+    const before: ChatMsg[] = [
+      { role: 'system', content: '系统一' },
+      { role: 'user', content: '--- 目标正文｜Char ---\n她低下头，凑近。' },
+      { role: 'system', content: '系统二' },
+    ];
+    const after = flattenToSystem(before);
+    expect(after.filter(m => m.role === 'user')).toHaveLength(1);
+    expect(after.at(-1)!.content).toContain('只输出 JSON 本体');
+    expect(after.some(m => m.role === 'system' && m.content.includes('她低下头'))).toBe(true);
+    expect(after.some(m => m.role === 'system' && m.content === '系统一')).toBe(true);
+    expect(after.some(m => m.role === 'system' && m.content === '系统二')).toBe(true);
+  });
+
+  it('没有 user 消息时原样返回同一个数组', () => {
+    const before: ChatMsg[] = [{ role: 'system', content: '只有系统' }];
+    expect(flattenToSystem(before)).toBe(before);
   });
 });

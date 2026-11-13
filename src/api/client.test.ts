@@ -257,6 +257,71 @@ describe('readSseContent:流式', () => {
   });
 });
 
+describe('stream:被输出侧过滤斩断后改非流式重发', () => {
+  /**
+   * 实测故障(agy-gemini-3.8-flash-high,同一份 50K 字符请求):
+   *   stream=false → finish_reason=stop,完整 1211 字符
+   *   stream=true  → finish_reason=content_filter,只有 100 字符
+   * 用户在真实酒馆里看到的就是「agy 渠道一直显示被截断」。
+   * 修法不是把提示词写更狠,而是识别出「这是传输方式问题」→ 用同一份内容改非流式重发。
+   */
+  const cutSse = (partial: string) => [
+    `data: ${JSON.stringify({ choices: [{ delta: { content: partial } }] })}`,
+    'data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}',
+    'data: [DONE]',
+    '',
+  ].join('\n');
+
+  const full = '{"images":[{"position":"P1","tag":"1girl, solo","size":"portrait"}],"changes":[]}';
+
+  it('流式返回半截 + content_filter → 自动用非流式重发,拿到完整内容', async () => {
+    const calls: any[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      calls.push({ stream: body.stream });
+      if (body.stream) return sseResponse(cutSse('{"images":[{"position":"P1"'));
+      return jsonResponse({
+        choices: [{ message: { content: full }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
+      });
+    }));
+
+    const text = await requestCompletion({ ...channel, stream: true }, messages);
+    expect(text).toBe(full);
+    // 第一次流式、第二次非流式:内容一字未改,只有 stream 变了
+    expect(calls).toEqual([{ stream: true }, { stream: false }]);
+  });
+
+  it('重发只在流式时发生:非流式拿到 content_filter 不重发', async () => {
+    let hits = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      hits++;
+      return jsonResponse({ choices: [{ message: { content: '半截' }, finish_reason: 'content_filter' }] });
+    }));
+    await expect(requestCompletion({ ...channel, stream: false }, messages)).resolves.toBe('半截');
+    expect(hits).toBe(1);
+  });
+
+  it('已经写完却标了 content_filter(事后审核)→ 不重发,直接用', async () => {
+    let hits = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      hits++;
+      return sseResponse(cutSse(full));
+    }));
+    await expect(requestCompletion({ ...channel, stream: true }, messages)).resolves.toBe(full);
+    expect(hits).toBe(1);
+  });
+
+  it('流式被切断且非流式也失败 → 抛出非流式那条错误(不是静默返回半截)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      if (body.stream) return sseResponse(cutSse('{"images":'));
+      return new Response('upstream boom', { status: 502 });
+    }));
+    await expect(requestCompletion({ ...channel, stream: true }, messages)).rejects.toThrow('502');
+  });
+});
+
 describe('validate:历史「成功」= 调用方验收通过', () => {
   beforeEach(() => {
     h.beginLlm.mockClear();

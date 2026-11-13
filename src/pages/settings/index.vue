@@ -1171,6 +1171,11 @@ async function confirmUpdate() {
           <span class="bbi-modal-label">流式传输</span>
           <input v-model="editingChannel.stream" type="checkbox" class="bbi-checkbox" />
         </label>
+        <span class="bbi-field-hint">
+          有些网关（如 Gemini 系）是在**流式逐块提交时**做内容过滤的，越界就整段掐断，
+          表现为「一直被截断」。本插件遇到这种回复会自动用同一份请求改非流式重发一次，
+          不需要你手动关流式；只是想少一次往返，可以直接关掉它。
+        </span>
         <label class="bbi-modal-field">
           <span class="bbi-modal-label">排除参数</span>
           <input
