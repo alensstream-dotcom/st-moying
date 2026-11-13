@@ -60,13 +60,13 @@ const total = (messages: Array<{ content: string }>) =>
 describe('输出预算护栏', () => {
   it('降载版明显短于完整版(思考清单与长解释都要被砍掉)', async () => {
     const full = await buildAutoTagMessages(context(), 1, options, null);
-    const lean = await buildAutoTagMessages(context(), 1, options, null, undefined, '', '', undefined, undefined, undefined, undefined, undefined, undefined, true);
+    const lean = await buildAutoTagMessages(context(), 1, options, null, undefined, '', '', undefined, undefined, undefined, undefined, undefined, undefined, true, undefined);
     // 少说也要砍掉四分之一,否则重试等于原样再断一次。
     expect(total(lean)).toBeLessThan(total(full) * 0.85);
   });
 
   it('降载版保留协议骨架(位置/角色/服装仍然要得到)', async () => {
-    const lean = await buildAutoTagMessages(context(), 1, options, null, undefined, '', '', undefined, undefined, undefined, undefined, undefined, undefined, true);
+    const lean = await buildAutoTagMessages(context(), 1, options, null, undefined, '', '', undefined, undefined, undefined, undefined, undefined, undefined, true, undefined);
     const text = lean.map((m) => m.content).join('\n');
     expect(text).toContain('<bbi_image>');
     expect(text).toContain('outfitChanges');

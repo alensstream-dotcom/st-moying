@@ -163,6 +163,59 @@ const BODY = [
   'voluptuous',
 ];
 
+/**
+ * 体型词按年龄分池。
+ *
+ * 现实问题：正文没写长相时，词表一视同仁地挑「没人用过」的那个值，于是角色卡里
+ * 被叫「阿姨」的人分到 petite——娇小是儿童的骨架词，画出来直接换了一辈人。
+ * 所以先定年龄段，再从该段允许的词里挑；定不出年龄段时按中性处理，不碰
+ * 「娇小/骨架小/矮小」这类会改年龄观感的词。
+ */
+const SMALL_BUILD = new Set(['petite', 'small build', 'short stature']);
+const FULL_BUILD = new Set(['voluptuous', 'hourglass figure', 'curvy']);
+
+/** 称呼本身就是年龄证据：「阿姨/夫人/太太」这些词出现在名字里时不用再找正文。 */
+const MATURE_TITLE =
+  /(?:阿姨|大姨|小姨|姨妈|姨母|姨娘|婶婶|伯母|叔母|舅妈|妈妈|母亲|婆婆|岳母|夫人|太太|老板娘|师娘|嫂子|大娘|大婶|大妈|熟女|人妻|少妇)/;
+/** 反过来：这些称呼已经说明她是少女/年轻女性。 */
+const YOUNG_TITLE = /(?:妹妹|学姐|学妹|萝莉|小丫头|丫头|少女)/;
+
+export type AgeBand = 'child' | 'teenager' | 'young adult' | 'mature female' | '';
+
+/** 从档案的 age 字段读出年龄段（只认规范词，读不出返回空）。 */
+export function bandFromAge(age: string): AgeBand {
+  const text = (age ?? '').toLowerCase();
+  if (!text) return '';
+  if (/mature female|熟女|人妻|少妇|三十多岁|四十|五十|old|elderly/.test(text)) return 'mature female';
+  if (/\bchild\b|小女孩|儿童|幼女|萝莉|小学生/.test(text)) return 'child';
+  if (/teenager|高中生|中学生|少女|女高中生|\bjk\b|\bteen\b/.test(text)) return 'teenager';
+  if (/young adult|大学生|年轻女性|二十多岁/.test(text)) return 'young adult';
+  return '';
+}
+
+/** 名字里的称呼能定年龄段时就用它；定不出返回空。 */
+export function bandFromName(name: string): AgeBand {
+  const text = (name ?? '').trim();
+  if (!text) return '';
+  if (MATURE_TITLE.test(text)) return 'mature female';
+  if (YOUNG_TITLE.test(text)) return 'teenager';
+  return '';
+}
+
+/**
+ * 该年龄段允许使用的体型词。
+ *
+ * 只有「已知是成熟女性」与「已知是儿童」这两档需要收紧（成熟女性不该娇小、
+ * 儿童不该丰腴）；定不出年龄段时按中性处理，两类极端词都不用——宁可写
+ * slender，也不要让一个没交代年龄的阿姨变成娇小少女。
+ */
+export function bodyPool(band: AgeBand): string[] {
+  if (band === 'child') return BODY.filter((value) => !FULL_BUILD.has(value));
+  if (band === 'mature female') return BODY.filter((value) => !SMALL_BUILD.has(value));
+  if (band === 'teenager' || band === 'young adult') return [...BODY];
+  return BODY.filter((value) => !SMALL_BUILD.has(value) && !FULL_BUILD.has(value));
+}
+
 const EXTRA = [
   'hairpin',
   'hair ribbon',
@@ -192,7 +245,6 @@ const ASPECTS: Aspect[] = [
   { field: 'body', whole: true, pool: BODY, match: /[\s\S]*/ },
   { field: 'extra', whole: true, pool: EXTRA, match: /[\s\S]*/ },
 ];
-
 const norm = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
 
 function tokens(value: string): string[] {
@@ -237,38 +289,63 @@ export interface DiverseLook {
  *
  * 只动 hair/eyes/body/extra 四个字段，不碰 sex/age/outfit，也不碰用户在档案里
  * 手写、且与别人不撞的值。
+ *
+ * `name` 用来定年龄段：角色卡里被叫「阿姨」的角色，不该分到 petite 这种儿童骨架词。
+ * 年龄段来源是档案的 age 字段优先，其次是名字里的称呼（阿姨/夫人/嫂子…）。
  */
 export function diversifyLook(
   fields: CharFields,
   others: ReadonlyArray<Pick<CharTagEntry, 'fields'>>,
   story = '',
+  name = '',
 ): DiverseLook {
   const used = usedTraits(others);
   const notes: string[] = [];
   const next: CharFields = { ...emptyCharFields(), ...fields } as CharFields;
+  const band = bandFromAge(next.age ?? '') || bandFromName(name);
 
   for (const aspect of ASPECTS) {
+    const pool = aspect.field === 'body' ? bodyPool(band) : aspect.pool;
+    const allowed = new Set(pool.map(norm));
     const current = tokens(next[aspect.field] ?? '');
     const mine = aspect.whole ? current : current.filter((token) => aspect.match.test(token));
     const keeps = mine.filter((token) => !used.has(token) || storyHas(story, token));
     const collided = mine.filter((token) => !keeps.includes(token));
+    /**
+     * 体型还有一个额外淘汰条件：与年龄对不上。
+     *
+     * 「没人用过」不等于「可以用」——阿姨的 petite 如果库里只有她一个人用，旧逻辑
+     * 会原样留着，于是同一个档案里 age=mature female、body=petite，出图每次都在
+     * 「成熟女性」与「娇小」之间摇摆。年龄对不上且正文没写，就当撞车处理。
+     */
+    const outOfBand =
+      aspect.field === 'body'
+        ? mine.filter((token) => !allowed.has(norm(token)) && !storyHas(story, token))
+        : [];
     // 都还站得住，或者撞了但那几个是正文写明的，就整轴不动
-    if (keeps.length && !collided.length) continue;
-    if (collided.length && collided.every((token) => storyHas(story, token))) continue;
+    if (keeps.length && !collided.length && !outOfBand.length) continue;
+    if (outOfBand.length === 0 && collided.length && collided.every((token) => storyHas(story, token)))
+      continue;
 
     const taken = tokens(next[aspect.field] ?? '');
-    const free = aspect.pool.filter((value) => !used.has(norm(value)) && !taken.includes(norm(value)));
+    const free = pool.filter((value) => !used.has(norm(value)) && !taken.includes(norm(value)));
     if (!free.length) continue;
     // 正文里点了名的候选优先：「正文说她银发、档案里却写着撞车的蓝发」时，
     // 结果应该是银发，而不是随便挑一个没人用过的黑发。
     const chosen = free.find((value) => storyHas(story, value)) ?? free[0];
     // 整体轴(body/extra)一个字段只放一个值：撞车的那个要被换掉，不能留着叠加成
     // 「petite, slender」——两个词同时下发，模型画出来的体型是四个都不像。
+    const drop = new Set([...collided, ...outOfBand]);
     const rest = aspect.whole
-      ? current.filter((token) => keeps.includes(token))
-      : current.filter((token) => !aspect.match.test(token) || keeps.includes(token));
+      ? current.filter((token) => keeps.includes(token) && !drop.has(token))
+      : current.filter((token) => !aspect.match.test(token) || (keeps.includes(token) && !drop.has(token)));
     next[aspect.field] = [...new Set([...rest, norm(chosen)])].join(', ');
-    notes.push(`${mine.length ? `与已有角色撞车的「${mine.join('/')}」` : '空着的特征'} → ${chosen}`);
+    const reason = outOfBand.length
+      ? `体型与年龄档（${band || '未定'}）不符的「${outOfBand.join('/')}」`
+      : mine.length
+        ? `与已有角色撞车的「${mine.join('/')}」`
+        : '空着的特征';
+    notes.push(`${reason} → ${chosen}`);
   }
 
   return { fields: next, notes };
@@ -289,7 +366,7 @@ export function diversifyNewOps<T extends { name: string; fields: CharFields }>(
 ): T[] {
   const accepted: Array<Pick<CharTagEntry, 'fields'>> = [];
   for (const item of items) {
-    const diverse = diversifyLook(item.fields, [...entries, ...accepted], story);
+    const diverse = diversifyLook(item.fields, [...entries, ...accepted], story, item.name);
     item.fields = diverse.fields;
     if (diverse.notes.length) notes.push(`${item.name}: 形象错开 ${diverse.notes.join('；')}`);
     accepted.push({ fields: diverse.fields });

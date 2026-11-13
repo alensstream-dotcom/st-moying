@@ -41,13 +41,16 @@ import { applyPositionedCharRefs, resolveCharAnchors, type PositionedCharOp } fr
 import {
   diagnoseCast,
   diagnoseContact,
+  diagnoseDirection,
   diagnoseFemaleSubject,
   diagnosePropTarget,
   castRetryNote,
   type CastGap,
 } from '@/autoTag/castCheck';
 import { ensureFemaleSubjects, femaleCastNames } from '@/autoTag/femaleCast';
+import { hasFemaleSignal } from '@/autoTag/femaleSignal';
 import { anchorBlock, buildAnchors } from '@/autoTag/anchorLedger';
+import { buildShotLedger, shotLedgerBlock } from '@/autoTag/shotLedger';
 import { ensureImageProfiles } from '@/autoTag/imageProfiles';
 import { diversifyLook, diversifyNewOps } from '@/autoTag/lookDiversity';
 import { characterAliases, saveCharacterAliases } from '@/state/characterAliases';
@@ -514,6 +517,25 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     });
     const knownIdentities = mergeIdentityFacts([...currentIdentityFacts(), ...structuredFacts]);
     const entriesBefore = eligibleIdentityEntries(libraryAtStart, knownIdentities);
+    /**
+     * 空楼跳过：本楼通篇没有女性线索时，直接按「无需插图」收工，不上传历史也不请求模型。
+     *
+     * 批量跑几十楼时这是最大的一笔浪费——用户并不知道哪一楼有女角，插件却为每一楼
+     * 付一次完整的上下文分析费，最后还因为「没有女性主体」把图丢掉。判据故意放宽
+     * （见 femaleSignal.ts）：漏判一楼该出的图，比多花一次 token 严重得多。
+     *
+     * 只在前台手动点按钮时跳过闸门：那是用户对着这一楼按下去的，要给他一个交代，
+     * 不能悄悄什么都不做。阅读器批量(manual+headless)属于自动流水线，照跳。
+     */
+    if (!slot && !(opts.manual && !opts.headless)) {
+      const signalNames = femaleCastNames(entriesBefore, knownIdentities, source);
+      if (!hasFemaleSignal(source, signalNames, entriesBefore)) {
+        diagnostic('runForFloor:skip', { floor, reason: 'no-female-signal', sourceLength: source.length });
+        console.debug(`[墨影] 第 ${floor} 楼没有女性角色线索，跳过分析`);
+        opts.onNoImages?.();
+        return;
+      }
+    }
     // 锁定名(全局库 ⊖ 本聊天基线):AI 的 changes 对这些名字一律无效,库文本里带 [locked] 标记
     const lockedNames = lockedCharTagNames();
     // 纯本地渲染:建档由主请求在同一次输出里完成(changes 的 field="new")
@@ -531,6 +553,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         entriesBefore,
       ),
       entriesBefore.map((entry) => entry.name),
+    );
+    // 已出过的画面:上下文窗口之外的楼层模型看不见,同一体位与机位会被反复画。
+    // 与上镜锚点同源(读 frames 里实际下发过的 tag),只多抽一层「动作签名」。
+    const shotLedger = shotLedgerBlock(
+      buildShotLedger(context.chat, floor, (target) => context.chat[target]?.mes ?? ''),
     );
     // 单槽重写:协议强制「恰好 1 张」,并把该槽位当前提示词与其余槽位摘要带给模型
     // (锚住同一个画面、别抢别人的画面)。min/max 要同时覆盖 build 的规则文案与下面的
@@ -602,6 +629,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         costumeRequest,
         anchorLedger,
         lean,
+        shotLedger,
       );
       built.push({
         role: 'system',
@@ -956,6 +984,14 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               source,
               candidate.images.flatMap((image) => (image.characters ?? []).map((c) => c.name)),
             );
+            // 男性名单只用来判「source# 是不是挂在男主身上」：施受写反了图就整张废。
+            const maleNames = [
+              ...new Set(
+                [...entriesBefore]
+                  .filter((entry) => isMaleIdentity(entry.name, knownIdentities))
+                  .map((entry) => entry.name),
+              ),
+            ];
             for (const image of candidate.images) {
               const text = segmentText.get(image.position) ?? '';
               const aliasPresent = findCharAliases(entriesBefore, text).map((hit) => hit.name);
@@ -967,9 +1003,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               ];
               const charTagList = (image.characters ?? []).map((character) => character.tag);
               const found = [
-                ...diagnoseCast(text, image.tag, image.characters ?? [], present, profile.naiCharPrompts),
+                ...diagnoseCast(text, image.tag, image.characters ?? [], present, profile.naiCharPrompts, femaleNames),
                 ...diagnosePropTarget(text, image.tag, charTagList),
                 ...diagnoseContact(text, image.tag, charTagList),
+                ...diagnoseDirection(text, image.characters ?? [], maleNames),
                 ...diagnoseFemaleSubject(text, image, femaleNames),
               ];
               for (const gap of found) {

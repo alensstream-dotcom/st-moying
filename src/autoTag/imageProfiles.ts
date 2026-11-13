@@ -12,7 +12,7 @@ import { femaleName } from './femaleCast';
 import { isGenericCharacterName } from './genericName';
 import { resolveCanonicalCharName } from './charReuse';
 import { recoverProfileFields } from './profileRecovery';
-import { diversifyLook } from './lookDiversity';
+import { bandFromName, diversifyLook } from './lookDiversity';
 import type { ImageInsertion } from './protocol';
 
 /**
@@ -244,19 +244,25 @@ export function ensureImageProfiles(
       // 同一张楼里同一位无名女子可能出现在好几张图上：外貌对上了就并回刚才
       // 那条占位档案，别再建一堆「无名女子N」把形象拆散。
       if (!looksLikeName && created.some((item) => sameLook(item.source, fields))) continue;
+      /**
+       * 年龄必须落地，否则这条档案永远没有体型锚。
+       *
+       * 篡位顺序：模型写在角色 tag 里的 → 正文这个名字附近写的 → 名字里的称呼
+       * （「阿姨/夫人/嫂子」本身就是年龄证据）→ 空的。猜不到就留空，绝不硬塞。
+       */
+      const age = fields.age?.trim() || ageNear(text, canonical) || bandFromName(canonical);
       // 新档的形象要和库里已有的女角色岔开，否则几个「没写长相的少女」会全是同一张脸。
       // 同一楼里**同批新建的人之间也要岔开**：只拿 entries 当参照时，两个本楼新角色
       // 谁都还没进库，于是都留着同一头黑发同一双蓝眼，同框就是双胞胎。
       // 只岔空着的与撞车的特征，正文写过的词一律不动。
-      const diverse = diversifyLook(fields, [...entries, ...created], text);
+      // 年龄段先定好再挑体型词：角色卡里叫「阿姨」的人不能分到 petite 这种儿童骨架词。
+      const diverse = diversifyLook(
+        { ...fields, ...(age ? { age } : {}) },
+        [...entries, ...created],
+        text,
+        name,
+      );
       if (diverse.notes.length) notes.push(`${name}: 形象错开 ${diverse.notes.join('；')}`);
-      /**
-       * 年龄必须落地，否则这条档案永远没有体型锚。
-       *
-       * 篡位顺序：模型写在角色 tag 里的 → 正文这个名字附近写的 → 空的。
-       * 猜不到就留空（让骨架词继续缺席），绝不硬塞一个可能不对的年龄段。
-       */
-      const age = fields.age?.trim() || ageNear(text, canonical);
       const op = createCharTagNewOp(
         {
           name,
