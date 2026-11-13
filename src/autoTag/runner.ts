@@ -35,6 +35,7 @@ import {
   type IdentitySources,
 } from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
+import { fallbackModels, looksLikeMissingModel } from '@/api/modelVariant';
 import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { repairQuotes, shieldMessages, type Shielded } from '@/autoTag/geminiShield';
 import { readBookMemory } from '@/autoTag/bookMemory';
@@ -144,7 +145,7 @@ import {
   serializeImageTag,
   stripImageTags,
 } from '@/st/imageTagRegex';
-import { getTagGenChannel, isCurrentChatExcluded, settings } from '@/state/settings';
+import { getTagGenChannel, isCurrentChatExcluded, settings, type ApiChannel } from '@/state/settings';
 
 const processed = new Set<string>();
 const running = new Map<string, AbortController>();
@@ -651,6 +652,18 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const messages = await assemble(false);
     costumeRequest.story = source;
     const channel = getTagGenChannel();
+    // 被拦之后按梯队换模型名再试。
+    //
+    // 为什么只在失败之后换:不是每个网关都上过这些变体/老一代模型,名字不存在会变成
+    // 404/400;而失败过一次的那次请求本来就已经被拦了,换名字不亏。
+    // 实测(用户那本小说的真实请求,每项 5~10 次):
+    //   agy-gemini-3.8-flash-high        → 2/5   (开篇即露骨的楼层)
+    //   抗截断-agy-gemini-3.8-flash-high  → 1/5
+    //   抗截断-agy-gemini-2.5-flash       → 9/10  ← 老一代过滤口径明显更松
+    // 所以梯队是「同模型换网关路径」→「退到同厂商老一代 flash」。
+    const modelLadder = channel ? fallbackModels(channel.model) : [];
+    let ladderStep = 0;
+    let activeChannel = channel;
     const identitySources: IdentitySources = {
       story: source,
       card: messages
@@ -680,7 +693,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 上一次是否被渠道侧拦过:是则后续重试改发「兼容版」提示词(露骨示例词换成中性占位),
     // 并只保留最小结构要求。过滤发生在模型看到请求之前,加授权话术没用,只能把请求改淡。
     let blockedOnce = false;
-    for (let attempt = 0; attempt <= retries && !plan; attempt++) {
+    // 「换模型再试」不占用户设的重试次数:retryCount 是「同一份请求再花一次钱」的上限,
+    // 而「被拦」之后原样重发同一个模型只是白花——换梯队里下一个模型是一次**不同**的尝试,
+    // 每换一级补一次机会。总请求数上限仍是 retries+1+梯队长度,不会失控。
+    let granted = retries + 1;
+    for (let attempt = 0; attempt < granted && !plan; attempt++) {
       if (controller.signal.aborted) {
         processed.delete(identity);
         return;
@@ -1076,8 +1093,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           : retries > 0
             ? `自动 tag(第 ${floor} 楼 · 第 ${attempt + 1} 次)`
             : `自动 tag(第 ${floor} 楼)`;
-        if (channel) {
-          await requestCompletion(channel, attemptMessages, {
+        if (activeChannel) {
+          await requestCompletion(activeChannel, attemptMessages, {
             signal: controller.signal,
             source,
             validate,
@@ -1106,6 +1123,33 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         if (/空内容/.test(lastError) || diagnoseBlock(lastError).blocked) {
           blockedOnce = true;
           retryNote = BLOCK_RETRY_NOTE;
+        }
+        // 梯队里报「模型不存在」→ 直接跳过这一级,继续下一级(不消耗重试次数之外的东西:
+        // 这一步只是改名字,请求内容不变)。
+        while (
+          channel &&
+          ladderStep < modelLadder.length &&
+          looksLikeMissingModel(lastError) &&
+          activeChannel?.model === modelLadder[ladderStep]
+        ) {
+          console.warn('[墨影] 该网关没有这个模型，跳过该级', { model: modelLadder[ladderStep] });
+          ladderStep += 1;
+          activeChannel = modelLadder[ladderStep]
+            ? { ...channel, model: modelLadder[ladderStep] }
+            : channel;
+        }
+        // 被拦之后换下一级模型再发。降载(改请求内容)与换模型(改走上游哪条路)是两件事,
+        // 实测开篇即露骨的楼层上换模型才是决定性的那一半。
+        if (channel && blockedOnce && !looksLikeMissingModel(lastError) && ladderStep < modelLadder.length) {
+          const from = activeChannel?.model ?? channel.model;
+          activeChannel = { ...channel, model: modelLadder[ladderStep] };
+          ladderStep += 1;
+          // 换模型是新的尝试,不占用户设的重试次数(见上面 granted 的注释)。
+          granted += 1;
+          console.info('[墨影] 上一条请求被渠道拦下，改用下一级模型重试', {
+            from,
+            to: activeChannel.model,
+          });
         }
         console.warn(`[墨影] 第 ${floor} 楼第 ${attempt + 1}/${retries + 1} 次生成 tag 失败`, error);
       }
