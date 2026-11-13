@@ -37,7 +37,18 @@ describe('diagnoseCast', () => {
   it('正文写两个男人、画面只有 1boy 时报警', () => {
     const gaps = diagnoseCast('两个男人一前一后把她夹住', '1girl, 1boy', [], [], true);
     expect(gaps[0]?.kind).toBe('wrong-count');
-    expect(gaps[0]?.detail).toContain('多男同场');
+    expect(gaps[0]?.detail).toContain('另一副身体至少要留下一根肉棒或一只手');
+  });
+
+  it('多人场面里只留一根肉棒不报警——男主默认只出接触部位', () => {
+    const gaps = diagnoseCast(
+      '三个男人围着她，其中一个人把肉棒递到她嘴边，另外两个在旁边看着。',
+      '1girl, 1boy, faceless male, fellatio',
+      [],
+      [],
+      true,
+    );
+    expect(gaps.some(gap => gap.kind === 'wrong-count')).toBe(false);
   });
 
   it('正文写两根肉棒、画面没有 boy 时报警', () => {

@@ -40,6 +40,16 @@ const EXTRA_MALE_RE =
   /(?:两个男人|两个男的|两名男性|两个男性|男人们|两男|三男|几个男人|另一个男人|另一个男的|第二个男人|前后夹|一前一后|两根肉棒|双插|三人行)/;
 
 /**
+ * 只有「两个男人同时在跟她发生关系」才必须画两个男身。
+ *
+ * 正文只写「三个男人围着她」「男人们看着」时，镜头可以只留女主 + 一根肉棒、一只手——
+ * 那是用户要的效果。旧版把这类「在场」写法也当硬错误，逼模型把三个完整男人塞进画框，
+ * 直接导致多人构图崩坏。
+ */
+const EXTRA_MALE_STRONG_RE =
+  /(?:前后夹|一前一后|两根肉棒|双插|两根一起|同时插|两人一起|三人行)/;
+
+/**
  * 弱信号:「另一只手」「两只手」可能是男主的手,也可能只是女主自己的两只手。
  * 只在画面里已经有一个男性时才算数——帮忙把 1boy 抬到 2boys,不会凭空往单人图里加人。
  */
@@ -80,6 +90,29 @@ export interface CastGap {
  *                    多人场景里男性本来就可以被裁成局部身位，用「总人数」卡会把
  *                    正确的裁剪判成错，逼模型把一堆男伴重新塞回画布。
  */
+/**
+ * 判断这一格是不是「三人以上的场面」。
+ *
+ * 判据取三者最大值:正文点名的在场女性数、正文里的男性信号、实际写出的角色块数。
+ * 少一个人的写法也要能识别——「三个男人围着她」里她是一个,男人是三个。
+ */
+function youngCrowd(
+  text: string,
+  counts: { girls: number; boys: number },
+  womenPresent: number,
+  blocks: number,
+): boolean {
+  const hay = text ?? '';
+  const femaleCount = Math.max(womenPresent, counts.girls);
+  const maleCount = Math.max(
+    counts.boys,
+    (hay.match(EXTRA_MALE_RE) ? 2 : 0),
+    (hay.match(/三个男人|三个男的|三名男性|几个男人|男人们/) ? 3 : 0),
+  );
+  const others = /(?:围着她|围了上来|轮番|轮流|chōkyō|gangbang|一群|一屋子的?男人|众人)/.test(hay) ? 3 : 0;
+  return femaleCount + maleCount >= 3 || blocks + femaleCount >= 3 || others > 0;
+}
+
 export function diagnoseCast(
   text: string,
   tag: string,
@@ -91,19 +124,24 @@ export function diagnoseCast(
   const gaps: CastGap[] = [];
   const counts = readCounts(tag);
   const femaleSet = new Set(femaleNames.map((name) => name.trim()).filter(Boolean));
-  // 只核对女性在场者：男性可以是局部身位、可以完全不入画。
   const womenPresent = femaleSet.size
     ? presentNames.filter((name) => femaleSet.has(name.trim()))
     : presentNames;
+  /**
+   * 三人以上的场面（一男多女、多男多女、多男一女）走「裁人」口径：
+   * 男伴默认只留正在接触的那副身体（一根肉棒、一只手、一段腰胯），
+   * 没参与这一格动作的女性也不强求入画。双人戏仍按剧情与构图自由裁量。
+   */
+  const crowd = youngCrowd(text, counts, womenPresent.length, characters.length);
 
-  // 正文明确多名男性,画面却只有 1boy 甚至没有 boy —— 肉棒只能长在一个人身上
-  const maleSignal = (text ?? '').match(EXTRA_MALE_RE);
-  if (maleSignal && counts.boys <= 1) {
+  // 正文明确「两个男人同时在她身上」,画面却只有 1boy —— 肉棒只能长在一个人身上
+  if (EXTRA_MALE_STRONG_RE.test(text ?? '') && counts.boys <= 1) {
+    const signal = (text ?? '').match(EXTRA_MALE_STRONG_RE)![0];
     gaps.push({
       kind: 'wrong-count',
-      detail: `正文这里是多男同场(${maleSignal[0]}),画面却只有 ${counts.boys} 个 boy`,
+      detail: `正文这里是两个男人同时在跟她发生关系(${signal}),画面却只有 ${counts.boys} 个 boy:另一副身体至少要留下一根肉棒或一只手`,
     });
-  } else if (!maleSignal && counts.boys === 1 && WEAK_EXTRA_MALE_RE.test(text ?? '')) {
+  } else if (!EXTRA_MALE_STRONG_RE.test(text ?? '') && counts.boys === 1 && WEAK_EXTRA_MALE_RE.test(text ?? '')) {
     const weak = (text ?? '').match(WEAK_EXTRA_MALE_RE)![0];
     gaps.push({
       kind: 'wrong-count',
@@ -111,8 +149,13 @@ export function diagnoseCast(
     });
   }
 
-  // 正文点名的女性在场者多于画面里的女性
-  if (womenPresent.length >= 2 && counts.girls > 0 && counts.girls < womenPresent.length) {
+  /**
+   * 女性人数核对分两种场面:
+   * - 双人/小场面:正文点名的女性都要在画面里——只画一个等于把另一个人凭空抹掉。
+   * - 三人以上:按这一格的动作裁人。没参与互动的女性（站在旁边看、刚进门、
+   *   已经昏过去）不必入画，硬塞进来只会让构图崩坏。
+   */
+  if (counts.girls > 0 && !crowd && womenPresent.length >= 2 && counts.girls < womenPresent.length) {
     gaps.push({
       kind: 'wrong-count',
       detail: `正文点名了 ${womenPresent.length} 个在场女角色(${womenPresent.join('、')}),画面女性人数只有 ${counts.girls}`,
@@ -360,8 +403,8 @@ export function castRetryNote(gaps: CastGap[]): string {
 上一版的画面事实对不上正文,主要是人数、道具落点、接触绑定与女性主体:
 ${lines.join('\n')}
 改法:
-- 人数:**只需要把在动作里出现的女性写全**（正在被接触、正在主动接触、正在被看的女性一个都不能少）,人数 tag 写成 1girl/2girls 这种,并给每位女性一个角色块;女性只剩一个人时,画面就会退化成自慰。
-- 男性相反:多人场景里只有正在施力或被使用的那一两个人有资格完整入画,其余男伴只保留接触部位(一只手、一段腰胯、一根肉棒)并写成 faceless male 的最小角色块,不必给脸也不必给全身。**不要为了凑人数把无关男伴画进画面。**
+- 人数:**双人戏**（一男一女）两个人都在动作里,就必须都在画面里——只画一个等于自慰,不是省人。
+- 人数:**三人以上的场面**换一套口径——镜头只留给这一格真正在动作里的人。男伴默认只留正在接触的那副身体（一根肉棒、一只手、一段腰胯、一截手臂),写成 faceless male 的最小角色块,不给脸也不给全身;**没参与这一格动作的女性也不用入画**（站在旁边看、刚进门、已经昏过去的人塞进来只会让构图崩）。挑一到两个关键女主完整入画,其余按参与度给局部。**不要为了凑人数把在场的人全画上。**
 - 道具:写了道具就必须按「三元闭环」写清谁拿着(holding <prop>)、落在哪个部位上(<prop> on/against/into/around <部位>)、以及受作部位的反应;只写一件孤立道具,模型会把它画在半空当摆设。${
     hasContact
       ? `

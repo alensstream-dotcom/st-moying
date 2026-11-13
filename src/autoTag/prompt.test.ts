@@ -1421,13 +1421,14 @@ describe('素材候选摇号与同职业区分', () => {
     expect(contract).toContain('不许自己穿回去');
   });
 
-  it('契约写明人数按身体数、省脸不省人', async () => {
+  it('契约写明双人不裁、三人以上才裁人', async () => {
     const messages = await buildAutoTagMessages(officeContext(), 1, loreOptions(), null);
     const contract = messages.find(m => m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))!.content;
-    // 女性不许省,男性可以裁成局部身位——这是「多人同框糊成一团」与「男伴抢镜头」的解。
-    expect(contract).toContain('女性在场者不许省，男性可以裁');
-    expect(contract).toContain('双人戏只画一个女的＝自慰');
-    expect(contract).toContain('多女场景可以只挑关键女主');
+    // 双人戏不裁（只画一个人＝自慰），三人以上才按动作裁人、男伴只留接触部位。
+    expect(contract).toContain('双人戏（一男一女）不裁');
+    expect(contract).toContain('只画一个人＝自慰，是错的');
+    expect(contract).toContain('三人以上的场面才进入「裁人」口径');
+    expect(contract).toContain('没参与这一格动作的女性也可以不入画');
     expect(contract).toContain('不按有没有露脸');
   });
 
