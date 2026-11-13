@@ -36,6 +36,7 @@ import {
 } from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
 import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
+import { repairQuotes, shieldMessages, type Shielded } from '@/autoTag/geminiShield';
 import { readBookMemory } from '@/autoTag/bookMemory';
 import { applyPositionedCharRefs, resolveCharAnchors, type PositionedCharOp } from '@/autoTag/charAnchors';
 import {
@@ -686,11 +687,18 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       }
       const baseMessages =
         blockedOnce || leanOnce ? await assemble(leanOnce) : messages;
-      const attemptMessages: ChatMsg[] = retryNote
+      const attempted: ChatMsg[] = retryNote
         ? [...(blockedOnce ? neutralizeMessages(baseMessages) : baseMessages), { role: 'system', content: retryNote }]
         : blockedOnce
           ? neutralizeMessages(baseMessages)
           : baseMessages;
+      // gemini 档:这条通道会在**提交阶段**拦「连着的露骨词」(blockReason: PROHIBITED_CONTENT),
+      // 模型连正文都没看到。所以整份请求先过一次屏蔽器。
+      // story 要留着——模型看到的引文是屏蔽后的字面,校验时得靠它还原成原文,
+      // 否则服装账本的 evidence 永远匹配不上,换装又会静默失效。
+      const shielded = promptOptions.jailbreakTier === 'gemini' ? shieldMessages(attempted) : null;
+      const attemptMessages: ChatMsg[] = shielded ? shielded.messages : attempted;
+      const story: Shielded | null = shielded?.story ?? null;
       try {
         // parsed 用对象壳装着:validate 闭包写入,await 之后读取——请求成功 + 验收通过才非空。
         // (直接 let 会被 TS 收窄成 null:闭包内的赋值控制流分析看不见。)
@@ -705,12 +713,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             throw new Error(`被渠道内容过滤拦下(${block.reason})`);
           }
           const verdict = diagnoseTruncation(raw, meta?.finishReason);
-          // 截断先尝试抢救:写完了几张图却断在下一张上,那几张是好的,补上收尾括号就能用。
-          // 救得回来就少发一次请求、少丢一张图;救不动再走重试。
-          let text = raw;
+          // gemini 档:模型只看得见屏蔽后的正文,它引用的 after/evidence 也是屏蔽后的字面。
+          // 先把这些引用映射回原文,后续的逐字定位、服装证据比对、scene.quote 才有意义。
+          let text = story ? repairQuotes(raw, story) : raw;
           let salvaged = 0;
           if (verdict.truncated) {
-            const repaired = salvageJsonObject(raw);
+            const repaired = salvageJsonObject(text);
             if (repaired) {
               try {
                 // 抢救出来的图必然少于原计划(尾巴被截掉了),这里不卡下限:

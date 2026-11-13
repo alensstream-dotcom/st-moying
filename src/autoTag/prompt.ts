@@ -688,7 +688,10 @@ ${characterRule}
   });
   // 思维链:压在任务协议之后,要求模型先在 <thinking> 里过检查点再输出 JSON。
   // 解析端(protocol.ts)会先剥掉 think 块再取 JSON,二者配套;按后端取对应的那一份。
-  const thinking = backendThinkingPrompt(options, nlOn, naiCharPromptsOn, options.maxImages, lean);
+  // gemini 档整段不发:实测同一请求带思考段成功率 43%(13/30),明确禁止思考段后 20/20 全过。
+  // 原因很直接——思考里它会用中文复述正文原句,而那段内容同样被网关检查。
+  const thinking =
+    options.jailbreakTier === 'gemini' ? '' : backendThinkingPrompt(options, nlOn, naiCharPromptsOn, options.maxImages, lean);
   if (thinking) messages.push({ role: 'system', content: thinking });
   const libraryBlock =
     library?.trim() ||
