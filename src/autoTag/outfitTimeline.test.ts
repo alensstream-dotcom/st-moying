@@ -221,6 +221,63 @@ describe('synthesiseSceneClothing 场景推断', () => {
     expect(scene.changes).toHaveLength(0);
     expect(scene.notes.join()).toContain('固定套装');
   });
+
+  it('扒开衣领露出胸部只算裸露,不算脱下', () => {
+    const wardrobe = wardrobeOf('林晚晴', [piece('a', 'white shirt'), piece('b', 'dark skirt')]);
+    const scene = synthesiseSceneClothing(
+      '林晚晴做爱，他扒开她的衣领，露出整个胸部。',
+      [entry('林晚晴')],
+      wardrobe,
+    );
+    expect(scene.changes).toHaveLength(1);
+    const shirt = scene.changes[0].pieces.find((p) => p.id === 'a');
+    // 旧版记成 removed,渲染成 no shirt → 画成光膀子,比正文脱得更多。
+    expect(shirt?.state.exposure).toBe('bare');
+    expect(shirt?.state.location).toBeUndefined();
+  });
+
+  it('扒开内裤露出私处只算裸露下体', () => {
+    const wardrobe = wardrobeOf('林晚晴', [piece('a', 'white shirt'), piece('c', 'white panties')]);
+    const scene = synthesiseSceneClothing(
+      '林晚晴做爱，他扒开她的内裤，露出阴部。',
+      [entry('林晚晴')],
+      wardrobe,
+    );
+    const panties = scene.changes[0]?.pieces.find((p) => p.id === 'c');
+    expect(panties?.state.exposure).toBe('bare');
+    expect(scene.changes[0].pieces.some((p) => p.id === 'a')).toBe(false);
+  });
+});
+
+describe('exposure 渲染', () => {
+  it('衣服还穿着但露出来时渲染 breasts out / pussy 而不是 no shirt', () => {
+    const record: ClothingRecord = {
+      name: '林晚晴',
+      outfitId: 'o1',
+      source: 'init',
+      pieces: [
+        { id: 'a', design: 'white shirt', state: { location: 'worn', exposure: 'bare' } },
+        { id: 'b', design: 'white panties', state: { location: 'worn', exposure: 'bare' } },
+      ],
+    };
+    const caption = clothingCaption(record);
+    expect(caption.tag).toContain('breasts out');
+    expect(caption.tag).toContain('pussy');
+    expect(caption.tag).not.toContain('no shirt');
+    expect(caption.tag).not.toContain('no panties');
+    expect(caption.tag).not.toContain('topless');
+    expect(caption.tag).not.toContain('bottomless');
+  });
+
+  it('只露一部分渲染 cleavage', () => {
+    const record: ClothingRecord = {
+      name: '林晚晴',
+      outfitId: 'o1',
+      source: 'init',
+      pieces: [{ id: 'a', design: 'white shirt', state: { location: 'worn', exposure: 'partial' } }],
+    };
+    expect(clothingCaption(record).tag).toContain('cleavage');
+  });
 });
 
 describe('adoptChangedClothing 采纳剧情换装', () => {
@@ -300,7 +357,7 @@ describe('clothingCaption', () => {
 });
 
 describe('款式漂移防护', () => {
-  it('外观描述不能整套换装', () => {
+  it('外观描述只换同类部件的款式,不整套重置', () => {
     const wardrobe = wardrobeOf('林晚晴', [piece('a', 'long jeans')]);
     const change: ClothingChange = {
       name: '林晚晴',
@@ -311,6 +368,19 @@ describe('款式漂移防护', () => {
       operation: 'change',
       evidence: '林晚晴穿着一条短牛仔裤，站在门口。',
       pieces: [piece('b', 'denim shorts')],
+    };
+    const accepted = acceptClothingChanges([change], change.evidence, wardrobe, [entry('林晚晴')]);
+    // 旧版一律拒掉,账本记错过一次就一路错到底;现在按同类部件改款式。
+    expect(accepted.changes).toHaveLength(1);
+    expect(accepted.changes[0].operation).toBe('patch');
+    expect(accepted.changes[0].pieces[0]).toMatchObject({ id: 'a', design: 'denim shorts' });
+  });
+
+  it('外观描述对不上任何同类部件时才拒', () => {
+    const wardrobe = wardrobeOf('林晚晴', [piece('a', 'white shirt')]);
+    const change: ClothingChange = {
+      ...patchOf('林晚晴', [piece('x', 'red skirt')], '林晚晴穿着一条红裙子。'),
+      operation: 'change',
     };
     const accepted = acceptClothingChanges([change], change.evidence, wardrobe, [entry('林晚晴')]);
     expect(accepted.changes).toHaveLength(0);

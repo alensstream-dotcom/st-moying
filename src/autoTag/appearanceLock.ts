@@ -1,5 +1,5 @@
 import { appearancePolicy, applyAppearancePolicies } from '@/state/appearancePolicy';
-import { CHAR_TAG_FIELDS, isManualFandom, type CharTagEntry } from '@/state/charTags';
+import { CHAR_TAG_FIELDS, charAgeBuild, isManualFandom, type CharTagEntry } from '@/state/charTags';
 import { resolveCanonicalCharName } from './charReuse';
 import { recoverProfileFields } from './profileRecovery';
 import type { ImageInsertion } from './protocol';
@@ -20,7 +20,7 @@ const unique = (parts: string[]) => [...new Map(parts.map((t) => [t.toLowerCase(
 const ORNAMENT_WORD =
   /\b(?:hair ribbon|hair band|hairband|hairpin|hair clip|hair ornament|hair stick|ribbon|glasses|round glasses|monocle|mask|earrings?|earring|piercing|necklace|pendant|choker|bracelet|bangle|anklet|beret|headband|veil|crown|tiara|circlet|headphones)\b/i;
 const TRAIT =
-  /\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|ahoge|sidelocks|sideburns|chignon|undercut|dreadlocks|cornrows|mohawk|ringlets|bob|pixie cut|updo|hair buns?|breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall|short woman|pointy ears|elf ears|tsurime|tareme|twintails|hairbun|hair bun|twin tails|fangs|lips|heterochromia|mole|scar|freckles|young adult|mature female|teenager|child)\b/i;
+  /\b(?:hair|eyes?|skin|face|eyebrows|eyelashes|bangs|ponytail|braid|ahoge|sidelocks|sideburns|chignon|undercut|dreadlocks|cornrows|mohawk|ringlets|bob|pixie cut|updo|hair buns?|breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall|flat chest|small frame|pointy ears|elf ears|tsurime|tareme|twintails|hairbun|hair bun|twin tails|fangs|lips|heterochromia|mole|scar|freckles|young adult|mature female|teenager|child)\b/i;
 const EXPRESSION =
   /\b(?:closed eyes|half.closed eyes|looking|gaze|eye contact|tears|crying|smiling|smile|blush|expression|breasts out|grabbing|holding|pulling|touching|stroking)\b/i;
 const FANDOM = /^[^:]*\s+\\?\([^()]+\\?\)\s*(?:::\s*)?$/;
@@ -59,7 +59,7 @@ function appearancePartsFrom(entry: CharTagEntry): string[] {
     ? ([...new Set(['fandom', ...Object.keys(p?.fields ?? {})])] as (keyof typeof entry.fields)[])
     : CHAR_TAG_FIELDS.filter((k) => k !== 'outfit');
   const pinned = p && p.mode !== 'story' ? p.fields : {};
-  return fields.flatMap((k) =>
+  const parts = fields.flatMap((k) =>
     split(entry.fields[k]).filter(
       (t) =>
         !Object.entries(pinned).some(
@@ -78,6 +78,29 @@ function appearancePartsFrom(entry: CharTagEntry): string[] {
         ),
     ),
   );
+  /**
+   * 年龄段要带上骨架词。
+   *
+   * `CHAR_AGE_BANDS` 每档都配了 build(child → short stature, small frame, flat chest)，
+   * 但 `charAgeBuild` 以前**零调用**：档案里写着 child，提示词里只有 `child` 一个词，
+   * 出图时高度、体量完全交给模型猜。于是同一个人一会儿小孩一会儿成人，
+   * 多人同框时一大一小、女主画得跟掌心那么大。骨架词只补还没写到的那些。
+   */
+  const build = split(charAgeBuild(entry.fields.age));
+  /**
+   * 只补「骨架/体量」这一半，不补年龄段本身。
+   *
+   * age 字段本来就会以自己的原词进 parts（`child`、`young adult`），再拼一遍
+   * build 里同名的那个词会重复成 `child, child, loli, ...`。这里只挑 build 里
+   * 描述身高/骨架/胸量的 token 补进去——那才是模型缺了就乱画一气的部分。
+   */
+  const BODY_TOKENS = /\b(?:short stature|small frame|flat chest|slim figure|medium breasts|voluptuous|wide hips|youthful|mature face|lithe|toned|curvy)\b/i;
+  const bodyBuild = build.filter((token) => BODY_TOKENS.test(token));
+  if (bodyBuild.length) {
+    const known = new Set(parts.map((t) => t.toLowerCase()));
+    for (const token of bodyBuild) if (!known.has(token.toLowerCase())) parts.push(token);
+  }
+  return parts;
 }
 
 function ownsTrait(entry: CharTagEntry, token: string): boolean {
@@ -93,8 +116,18 @@ function ownsTrait(entry: CharTagEntry, token: string): boolean {
     (f.eyes && /\b(?:eyes?|heterochromia)\b/i.test(token)) ||
     (f.skin && /\bskin\b/i.test(token)) ||
     (f.body &&
-      /\b(?:breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall)\b/i.test(token)) ||
+      /\b(?:breasts|bust|hips|stature|frame|petite|slim|slender|voluptuous|muscular|tall|flat chest|small frame)\b/i.test(
+        token,
+      )) ||
     (f.age && /\b(?:young adult|mature female|teenager|child)\b/i.test(token)) ||
+    /**
+     * 年龄段也管身高与体量：档案写着 child 时，模型顺手写的 tall 必须被换掉，
+     * 否则「档案一个人 + 模型另一个身高」两张图就能差出一个头。
+     */
+    (f.age &&
+      /\b(?:tall|short|petite|slender|delicate|tiny|stature|frame|flat chest|small frame|voluptuous|wide hips)\b/i.test(
+        token,
+      )) ||
     (f.extra &&
       (ORNAMENT_WORD.test(token) || /\b(?:face|eyebrows|eyelashes|ears|mole|scar|freckles)\b/i.test(token)))
   );
@@ -132,12 +165,22 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
       breast ? plain(breast) : 'breasts',
     );
     const figure = split(entry.fields.body).find((t) =>
-      /\b(?:figure|slim|slender|voluptuous|petite|muscular)\b/i.test(t),
+      /\b(?:figure|slim|slender|voluptuous|petite|muscular|stature|frame)\b/i.test(t),
     );
     result = result.replace(
       /\b(?:slim|slender|voluptuous|petite|muscular)\s+(?:figure|body)\b/gi,
       figure ? plain(figure) : 'figure',
     );
+    // 身高/体量也锁：不锁的话模型每张图自己挑「a tall woman / a petite girl」，
+    // 同一个人在两张图里能差出一整个头。
+    const build = split(charAgeBuild(entry.fields.age)).filter((t) =>
+      /\b(?:stature|frame|flat chest)\b/i.test(t),
+    );
+    if (build.length)
+      result = result.replace(
+        /\b(?:tall|short|petite|slender|delicate|tiny|small)\s+(?:woman|girl|figure|stature|frame)\b/gi,
+        plain(build.join(', ')),
+      );
   }
   if (locked) {
     result = result.replace(
@@ -160,6 +203,11 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
       .replace(/\b(?:thin|thick|arched|straight)\s+eyebrows\b/gi, 'eyebrows')
       .replace(
         /\b(?:slim|slender|voluptuous|petite|muscular|tall|short|curvy)\s+(?:figure|body|woman|girl)\b/gi,
+        'person',
+      )
+      // 年龄段连同骨架词一起归成泛称，避免模型自己另写一套身高体型。
+      .replace(
+        /\b(?:child|loli|teenager|young adult|mature female)\b(?:,\s*(?:short stature|small frame|flat chest|slim figure|medium breasts|voluptuous|wide hips|youthful|mature face))*/gi,
         'person',
       );
   }

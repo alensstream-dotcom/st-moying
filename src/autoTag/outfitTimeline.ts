@@ -73,7 +73,8 @@ operation=add：剧情明确加穿一件衣物，只新增部件，不能重置�
 operation=change：只有明确换装/穿回等事件才整套替换，不能因为时间/场景跳跃、特写或没提衣服就 change；明确换装时 pieces 必须给出完整的新衣物 design（每个部件一条），只报 patch 会让画面继续沿用旧账本。
 正文出现洗澡、沐浴、泡温泉、做爱等情节时，即使没有逐件写脱衣，也必须按情节如实报告相应状态：洗澡通常全部脱去，做爱至少内裤脱去、裙子掀起或下装褪下。漏报时程序会按场景补录，但仍以你的准确报告为准。
 pieces 每件衣物独立 ID，外套、衬衣、内衣、裙子、内裤、袜子必须拆开，不能整套合成一个部件。穿脱时只 patch 对应衣物；未提及的部件和字段省略，不输出默认 normal/worn/closed，不用 unknown 覆盖已知状态。脱去外套不等于上身全裸。半脱优先组合 location=worn、单侧袖口 off_arm、fastening=open、arrangement=lowered 等具体字段，只有衣物完全离身才 removed。pieces 的 id 持续使用账本中的 ID。design 用逗号分隔的独立服装标签，如 white shirt, collared shirt, long sleeves；优先逐字使用新版衣橱候选，不拼形容词长句，不含脸/发色/体型/画风/穿脱状态。
-state 可用 location=worn/removed/held/floor/chair/unknown；fastening=closed/open/loose/unknown；arrangement=normal/lifted/pulled_aside/lowered/around_waist/around_ankles/unknown；leftSleeve/rightSleeve=on_arm/off_arm/rolled_up/unknown；damage=intact/torn/unknown；wetness=dry/wet/unknown。
+state 可用 location=worn/removed/held/floor/chair/unknown；fastening=closed/open/loose/unknown；arrangement=normal/lifted/pulled_aside/lowered/around_waist/around_ankles/unknown；exposure=covered/partial/bare/unknown；leftSleeve/rightSleeve=on_arm/off_arm/rolled_up/unknown；damage=intact/torn/unknown；wetness=dry/wet/unknown。
+exposure 专指「衣服还穿在身上，但原本挡住的身体露出来了」，与脱掉是两件事：衣领被扒开露出整个乳房、内裤被拨开露出私处、衣襟敞着露出一片胸，都是 location 仍为 worn + exposure=bare；只露了一部分（乳沟、半边胸）用 partial。这类情节旧版记成 removed，画面会比正文脱得更多。
 只列变化字段，未列的字段必须继承。掀裙不是脱掉整套，解衬衫扣子不是重新选衣服；恢复也要有明确整理/穿好证据。
 例如上一楼 blouse 的 fastening=open，本楼仅聊天，不输出任何恢复事件，画面仍沿用敞开状态。
 人物库 changes 的永久外貌变更必须额外给 evidence（逐字原文且包含角色名），不得因补绘、光照或你自己的猜测修改档案。手动指定同人角色的档案不允许 AI 修改。
@@ -90,6 +91,15 @@ const STATES: Record<string, string[]> = {
   rightSleeve: ['on_arm', 'off_arm', 'rolled_up', 'unknown'],
   damage: ['intact', 'torn', 'unknown'],
   wetness: ['dry', 'wet', 'unknown'],
+  /**
+   * 衣物还在身上、但挡住了的部位已经露出来了。
+   *
+   * 以前只有 location/arrangement，「衣领被扒开、整个胸部露出来」既不是脱掉
+   * (location 仍是 worn)也不是 arrangement 里任何一格，于是账本没变化 →
+   * enforceClothing 把模型写对的 breasts out 剥掉 → 图里穿得好好的。
+   * 这是与「脱光」并列的第四种形态，必须单独一根轴。
+   */
+  exposure: ['covered', 'partial', 'bare', 'unknown'],
 };
 const ACTION =
   /换|穿|脱|褪|披|套|扣|解|系|敞|掀|撩|拨|拉|放|拿|卷|撕|破|扯|整理|恢复|wear|dress|chang|put|tak|remov|unfasten|fasten|open|clos|lift|pull|lower|roll|tear|torn|wet/i;
@@ -241,6 +251,10 @@ export function clothingBefore(
  * 1. 这一楼还在写她裸着/正在脱 → 保持原样；
  * 2. 这一楼出现了这件衣物本身 → 认为在讲它，保持原样；
  * 3. 都不满足就记一次「闲置」，连续两楼闲置即穿回；场景翻篇（第二天/出门）立刻穿回。
+ *
+ * 裸露（exposure=bare，衣服还在身上但挡住了的部位露着）同样会陈旧：一次前戏之后
+ * 女主不该带着「乳头露在外面」走过后面几十楼，所以和 removed 一样按同一套计数收回去，
+ * 只是收回时是把 exposure 复位成 covered，不动 location。
  */
 export function settleStaleUndress(state: ClothingState, text: string): void {
   if (!state.size) return;
@@ -250,7 +264,9 @@ export function settleStaleUndress(state: ClothingState, text: string): void {
     if (record.suitMode === 'always') continue;
     for (const piece of record.pieces) {
       const location = piece.state.location;
-      if (location !== 'removed' && location !== 'floor' && location !== 'chair' && location !== 'held') continue;
+      const stripped = ['removed', 'floor', 'chair', 'held'].includes(location ?? '');
+      const exposed = !stripped && piece.state.exposure === 'bare';
+      if (!stripped && !exposed) continue;
       const kind = garmentKind(piece.design);
       const mentioned = piece.design ? text.includes(piece.design.trim()) || pieceMentioned(kind, text) : false;
       // 本楼正在穿脱/袒露，就别自作主张把人穿回去——哪怕这件衣服没被点名。
@@ -264,9 +280,12 @@ export function settleStaleUndress(state: ClothingState, text: string): void {
       }
       const stale = Number(piece.state.stale ?? '0') + 1;
       if (sceneReset || stale >= 2) {
-        piece.state.location = 'worn';
-        piece.state.fastening = 'closed';
-        piece.state.arrangement = 'normal';
+        if (stripped) {
+          piece.state.location = 'worn';
+          piece.state.fastening = 'closed';
+          piece.state.arrangement = 'normal';
+        }
+        delete piece.state.exposure;
         piece.state.stale = '0';
       } else {
         piece.state.stale = String(stale);
@@ -536,9 +555,27 @@ export function acceptClothingChanges(
         /穿着|身穿|身着|是一条|是那件|wearing|dressed in/i.test(c.evidence) &&
         !/(?:换上|换成|换好|换装|更衣|穿上|穿回|脱下|脱掉|褪下)/.test(c.evidence)
       ) {
-        // 「她穿着一条短牛仔裤」是外观描述，不是换装事件；照收会让账本款式被悄悄改写。
-        rejected.push(c.name + ': 这段只是外观描述，不是换装动作，不能整套重置');
-        continue;
+        /**
+         * 「她穿着一条长牛仔裤」不是换装事件，但它**就是**这句剧情的事实。
+         *
+         * 旧版一律拒掉，理由是「照收会让账本款式被悄悄改写」——结果账本只要曾经错过一次
+         * (首次建档时模型把长裤画成短裤)，后面每句外观描写都被拒，只能一路错到底，
+         * 正文写明了也没用。这里改成「只换同类部件的款式、不动其它部件的穿脱状态」：
+         * 既不会把半脱的人重新穿好，也能让账本跟上原文。
+         */
+        const restated = c.pieces.flatMap((p) => {
+          const kind = garmentKind(p.design);
+          if (!kind) return [];
+          const same = old.pieces.filter((o) => garmentKind(o.design) === kind);
+          return same.length === 1 ? [{ id: same[0].id, design: p.design, state: { location: 'worn' } }] : [];
+        });
+        if (restated.length) {
+          c.operation = 'patch';
+          c.pieces = restated;
+        } else {
+          rejected.push(c.name + ': 这段只是外观描述，不是换装动作，不能整套重置');
+          continue;
+        }
       } else {
         rejected.push(c.name + ': 非明确换装不能整套重置，请用已有部件 patch 或新增衣物 add');
         continue;
@@ -610,6 +647,9 @@ export function acceptClothingChanges(
     if (c.operation === 'patch')
       for (const piece of c.pieces) {
         // Default values emitted by the model are not restoration events.
+        // 例外：这一件的款式被改写了（外观描述通道），说明它此刻确实穿在身上，
+        // 默认的 location=worn 就是新款式的事实，不能当成复述删掉。
+        const restyled = !!old?.pieces.find((o) => o.id === piece.id && o.design !== piece.design);
         const restore: Record<string, RegExp> = {
           fastening: /扣好|扣上|拉上|系好|系上|fasten|button.{0,12}up|zip.{0,12}up|clos/i,
           arrangement:
@@ -619,11 +659,13 @@ export function acceptClothingChanges(
           rightSleeve: /袖|穿好|穿回|重新穿|套上|sleeve|put.{0,12}on|redress/i,
           wetness: /擦干|晒干|烘干|干透|dry/i,
           damage: /缝|修|补好|修复|repair|mend/i,
+          exposure: /遮好|盖回|掩好|拉好|整理好|恢复原状|穿好|穿回|放回|cover|pull.{0,12}back|redress/i,
         };
         for (const [key, expression] of Object.entries(restore)) {
           if (
             ['closed', 'normal', 'worn', 'on_arm', 'dry', 'intact'].includes(piece.state[key]) &&
-            !expression.test(c.evidence)
+            !expression.test(c.evidence) &&
+            !(restyled && key === 'location')
           )
             delete piece.state[key];
         }
@@ -949,7 +991,9 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
   let upperRemoved = false,
     lowerRemoved = false,
     upperWorn = false,
-    lowerWorn = false;
+    lowerWorn = false,
+    upperBare = false,
+    lowerBare = false;
   for (const p of record.pieces) {
     const s = p.state,
       location = s.location;
@@ -985,6 +1029,10 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
     }
     upperWorn ||= upper;
     lowerWorn ||= lower;
+    if (s.exposure === 'bare') {
+      upperBare ||= upper;
+      lowerBare ||= lower;
+    }
     tags.push(p.design);
     if (s.legacy) tags.push(s.legacy);
     if (s.fastening === 'open')
@@ -1002,6 +1050,16 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
     if (s.leftSleeve === 'rolled_up' || s.rightSleeve === 'rolled_up') tags.push('sleeves rolled up');
     if (s.damage === 'torn') tags.push('torn clothes');
     if (s.wetness === 'wet') tags.push('wet clothes');
+    // 衣物还在身上、但挡住了的部位已经露出来：这部分必须单独渲染。
+    // 以前它既不是 removed(位置仍是 worn)也没有 arrangement 可挂，账本渲染成空 →
+    // enforceClothing 把模型写的 breasts out 剥掉再不放回，图里就还是穿得整整齐齐。
+    if (s.exposure === 'bare') {
+      if (lower) tags.push('pussy');
+      if (upper) tags.push('breasts out');
+    } else if (s.exposure === 'partial') {
+      if (upper) tags.push('cleavage');
+      if (lower && !upper) tags.push('pussy');
+    }
     const arrangements: Record<string, string> = {
       lifted: /skirt/i.test(p.design)
         ? 'skirt lift'
@@ -1023,6 +1081,7 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
     const detail = [
       s.fastening === 'open' ? 'unfastened' : s.fastening === 'closed' ? 'fastened' : '',
       arrangements[s.arrangement],
+      s.exposure === 'bare' ? 'pulled clear of the covered skin' : s.exposure === 'partial' ? 'pulled partly aside' : '',
       s.leftSleeve === 'off_arm' ? 'left sleeve off the arm' : '',
       s.rightSleeve === 'off_arm' ? 'right sleeve off the arm' : '',
       s.legacy,
@@ -1105,6 +1164,10 @@ export function inferClothingState(
   const loose = /松脱|松垮|半脱|摇摇欲坠/.test(evidence);
   const torn = /撕破|扯破|撕开|裂开|破开|撕烂/.test(evidence);
   const wet = /湿透|打湿|淋湿|浸湿|泡进|泡在|水中|水里|浴缸|温泉/.test(evidence);
+  // 衣物没脱、只把挡住的部分亮出来：这是 exposure 轴，不能记成 removed。
+  const bare = /(?:露出|裸露|暴露|亮出|敞开|扒开|扯开|掀开)[^，。！？；]{0,8}(?:乳房|胸部|胸口|乳头|乳尖|私处|阴部|下体|秘处|屁股)|(?:乳房|胸部|胸口|乳头|乳尖|私处|阴部|下体|秘处|屁股)[^，。！？；]{0,6}(?:露出|裸露|暴露|亮出|敞开|光着|外露)/.test(
+    evidence,
+  );
   if (off) state.location = 'removed';
   if (on) state.location = 'worn';
   if (lifted) state.arrangement = 'lifted';
@@ -1114,6 +1177,7 @@ export function inferClothingState(
   if (loose && !open && !off) state.fastening = 'loose';
   if (torn) state.damage = 'torn';
   if (wet) state.wetness = 'wet';
+  if (bare && !off && !on) state.exposure = 'bare';
   // 裙子/连衣裙被掀起来时，即便同句有“褪”也按掀起处理。
   if ((kind === 'skirt' || kind === 'dress') && (lifted || aside) && !on) delete state.location;
   return state;
@@ -1177,8 +1241,25 @@ const NAKED_STATE =
 /** 明确的脱衣动作：动词 + 衣物词必须在同一句里紧邻出现。 */
 const UNDRESS_ACTION =
   /(?:脱|褪|扒|扯|剥|解|拉|掀|撩)[^，。！？；]{0,12}(?:衣|裤|裙|袜|罩|背心|吊带|内衣|内裤|外套|上衣|衬衫)/;
-const BARE_UPPER = /(?:上身|胸口|乳房|胸部|奶子)[^，。！？；]{0,6}(?:赤裸|裸露|暴露|露出|光着)/;
-const BARE_LOWER = /(?:下身|私处|腿间|屁股)[^，。！？；]{0,6}(?:赤裸|裸露|暴露|露出|光着)/;
+/**
+ * 「拿下来」类动作：衣服离开身体。
+ *
+ * 与 UNDRESS_ACTION 的区别是**它到底脱没脱**——「扒开内裤」里内裤还在身上（只是拨到一边），
+ * 「褪下内裤」才是真脱下来。旧版把两者合并，扒开一律算脱，渲染成 no panties。
+ */
+const TAKEOFF_ACTION =
+  /(?:脱下|脱掉|脱去|脱了|褪下|褪到|褪去|剥下|剥掉|扒下|扒掉|拽下|拉下|解开|解下|脱下|扯掉|扯下)[^，。！？；]{0,12}(?:衣|裤|裙|袜|罩|背心|吊带|内衣|内裤|外套|上衣|衬衫)|(?:衣|裤|裙|袜|罩|背心|吊带|内衣|内裤|外套|上衣|衬衫)[^，。！？；]{0,8}(?:脱下|脱掉|褪下|剥下|滑落|掉落)/;
+/** 「掀开/扒开/拨开」类动作：衣服还在身上，只是被移开。 */
+const OPEN_ACTION =
+  /(?:扒开|扯开|掀开|撩开|敞开|拨开|拨到一边|拉低|扯低|解开了|敞着|敞开)[^，。！？；]{0,12}(?:衣|裤|裙|领|罩|背心|吊带|内衣|内裤|外套|上衣|衬衫|衣领|衣襟|前襟)/;
+/**
+ * 部位裸露。语序两种都要认：正文既写「露出整个胸部」（露在前），
+ * 也写「胸口裸露着」（露在后）——旧版只认后者，最常写的「露出」全漏。
+ */
+const BARE_UPPER =
+  /(?:露出|裸露|暴露|亮出|敞开|扒开|扯开|掀开)[^，。！？；]{0,8}(?:乳房|胸部|胸脯|胸口|双乳|乳沟|乳头|乳尖)|(?:上身|胸口|乳房|胸部|胸脯|双乳|乳沟|乳头|乳尖|奶子)[^，。！？；]{0,6}(?:赤裸|裸露|暴露|露出|光着|外露)/;
+const BARE_LOWER =
+  /(?:露出|裸露|暴露|亮出|敞开|扒开|扯开|掀开)[^，。！？；]{0,8}(?:私处|阴部|下体|秘处|股间|屁股|臀)|(?:下身|私处|阴部|下体|秘处|腿间|股间|屁股)[^，。！？；]{0,6}(?:赤裸|裸露|暴露|露出|光着|外露)/;
 /** 明确「没脱」的写法：这类情节一律不碰账本，宁可少脱也不错脱。 */
 const OVER_CLOTHES =
   /(?:隔着(?:衣服|衣料|布料|衣物|内衣|内裤|裤子|裙子|胸罩|睡衣)|未脱|没脱|没有脱|不脱|衣着完整|衣服还在|穿着衣服)/;
@@ -1255,10 +1336,11 @@ export function synthesiseSceneClothing(
           continue;
         }
         const naked = NAKED_STATE.test(evidence);
-        const undress = UNDRESS_ACTION.test(evidence);
+        const undress = TAKEOFF_ACTION.test(evidence);
+        const opened = OPEN_ACTION.test(evidence);
         const bareUpper = BARE_UPPER.test(evidence);
         const bareLower = BARE_LOWER.test(evidence);
-        if (!naked && !undress && !bareUpper && !bareLower) {
+        if (!naked && !undress && !opened && !bareUpper && !bareLower) {
           // 亲吻、隔着衣服的抚摸、单纯的爱抚描写：不推断任何脱衣。
           handled.add(key);
           continue;
@@ -1270,8 +1352,14 @@ export function synthesiseSceneClothing(
           const mentioned = pieceMentioned(kind, evidence);
           const upper = kind === 'shirt' || kind === 'bra' || kind === 'jacket' || kind === 'dress';
           const lower = kind === 'pants' || kind === 'skirt' || kind === 'panties' || kind === 'dress';
-          if (naked || (undress && mentioned) || (bareUpper && upper) || (bareLower && lower)) {
+          // 三层优先级：真脱掉 > 只把挡住的部分亮出来 > 掀起裙摆。
+          // 中间这层是这次的核心修正——「衣领被扒开、整个胸部露出来」里衣服还在身上，
+          // 记成 removed 会让渲染变成 no shirt + 上半身光着，比实际脱得更多。
+          // 「扒开/掀开/敞开」本身就是 OPEN_ACTION，即便句子同时写了「露出」也不能算脱下。
+          if (naked || (undress && mentioned && !opened)) {
             pieces.push({ id: piece.id, design: '', state: { location: 'removed' } });
+          } else if ((bareUpper && upper) || (bareLower && lower) || (opened && mentioned)) {
+            pieces.push({ id: piece.id, design: '', state: { exposure: 'bare' } });
           } else if (mentioned && /掀起|撩起|掀开|撩开/.test(evidence) && (kind === 'skirt' || kind === 'dress')) {
             pieces.push({ id: piece.id, design: '', state: { arrangement: 'lifted' } });
           }
@@ -1324,7 +1412,8 @@ export function synthesiseSceneClothing(
 }
 // 只认真正的换装动作。裸的「换了一」会命中「换了一下姿势」「换了一边」，
 // 一旦采纳就把账本款式换掉——长牛仔裤被写成短牛仔裤就是这么来的。
-const CHANGE_SCENE = /换上|换成|换好|换上一|换了一身|换身|新衣|更衣|换装/;
+const CHANGE_SCENE =
+  /换上|换成|换好|换上一|换了一身|换了|换身|新衣|更衣|换装|穿回|重新穿|披上|套上|系上/;
 const MAIN_GARMENTS = new Set(['shirt', 'skirt', 'pants', 'dress']);
 /**
  * 剧情明确换装、但模型只写了 patch（或压根没报）时，采纳图片里模型给的新衣物，
@@ -1355,8 +1444,19 @@ export function adoptChangedClothing(
     const ledgerKinds = new Set(record.pieces.map((piece) => garmentKind(piece.design)).filter(Boolean));
     const modelKinds = [...new Set(design.split(/[,，]/).map((part) => garmentKind(part.trim())).filter(Boolean))];
     const novel = modelKinds.filter((kind) => !ledgerKinds.has(kind) && MAIN_GARMENTS.has(kind));
-    if (!novel.length) continue;
     const window = sentenceWindow(text, index, 120);
+    // 原文点名的衣物与账本同一类但写法不同（长牛仔裤 → 短牛仔裤、白衬衫 → 黑吊带）
+    // 也是换装。旧版只认「账本里完全没有的衣物种类」，同类别换个款式永远接管不了，
+    // 于是「前后剧情没变衣服却在变」和「剧情写了换衣服却不换」两头都出。
+    const named = proseGarment(window.text);
+    const swapped =
+      !!named &&
+      record.pieces.some(
+        (piece) =>
+          garmentKind(piece.design) === garmentKind(named) &&
+          piece.design.trim().toLowerCase() !== named.toLowerCase(),
+      );
+    if (!novel.length && !swapped) continue;
     if (!CHANGE_SCENE.test(window.text)) continue;
     const entry = entries.find((e) => e.name === canonical);
     const called =
@@ -1365,8 +1465,20 @@ export function adoptChangedClothing(
       (entry ? candidateAliasesForEntry(entry).some((alias) => window.text.includes(alias)) : false);
     if (!called && !/她/.test(window.text)) continue;
     // 句子里必须真的出现衣物词：只写「换了一身」却没说是哪件，不足以接管账本。
-    if (!proseGarment(window.text)) continue;
+    if (!named) continue;
     const at = storyPosition(text, index);
+    // 原文点名的款式优先：模型把「长牛仔裤」写成 jeans 时，画面必须跟着原文变成长裤，
+    // 否则接管了账本仍然是错的。同一类别已被原文代表的部件不再重复收（牛仔裤 vs long jeans）。
+    const namedKind = named ? garmentKind(named) : '';
+    const storyParts = named ? [named] : [];
+    const rest = design
+      .split(/[,，]/)
+      .map((part) => part.trim())
+      .filter((part) => part && (!namedKind || garmentKind(part) !== namedKind));
+    const pieces = [...new Set([...storyParts, ...rest])]
+      .slice(0, 12)
+      .map((part, order) => ({ id: `adopt_${order + 1}`, design: part, state: { location: 'worn' } }));
+    if (!pieces.length) continue;
     changes.push({
       // 这几条是绕过 acceptClothingChanges 直接并进账本的，所以必须自己归一：
       // 写成「晚晴」会导致 applyOne 的 state.get 落空，新衣服挂不到账本上。
@@ -1377,14 +1489,11 @@ export function adoptChangedClothing(
       charOffset: at.offset,
       operation: 'change',
       evidence: window.text.trim(),
-      pieces: design
-        .split(/[,，]/)
-        .map((part) => part.trim())
-        .filter(Boolean)
-        .slice(0, 12)
-        .map((part, order) => ({ id: `adopt_${order + 1}`, design: part, state: { location: 'worn' } })),
+      pieces,
     });
-    notes.push(`${character.name}: 剧情明确换装，已按图片外观接管新衣物（${novel.join('、')}）`);
+    notes.push(
+      `${character.name}: 剧情明确换装，已按原文与图片外观接管新衣物（${(novel.length ? novel : modelKinds).join('、')}）`,
+    );
   }
   return { changes, notes };
 }

@@ -62,4 +62,35 @@ describe('enforceAppearance 用角色库锁死同一身外貌', () => {
     enforceAppearance(a, [], false, true, []);
     expect(a.characters[0].tag).toBe('1girl, black hair, blue eyes');
   });
+
+  it('年龄档带出骨架词,同一个人不会一会儿小孩一会儿成人', () => {
+    const girl = entry({
+      fields: { ...emptyCharFields(), sex: '1girl', age: 'child', hair: 'long black hair' },
+    });
+    const a = image('1girl, solo, sitting', '1girl, sitting');
+    const b = image('1girl, solo, standing', '1girl, standing, tall');
+    enforceAppearance(a, [girl], false, true, []);
+    enforceAppearance(b, [girl], false, true, []);
+    for (const out of [a.characters[0].tag, b.characters[0].tag]) {
+      // age 自己的原词 + 骨架词：只写 child 一个词压不住高度与体量。
+      expect(out).toContain('child');
+      expect(out).toContain('short stature');
+      expect(out).toContain('flat chest');
+    }
+    // 模型在第二张顺手写的 tall 被骨架词替换掉,不能一人一个身高。
+    expect(b.characters[0].tag).not.toMatch(/\btall\b/);
+    // 姿势(sitting/standing)照旧不同,骨架词必须一模一样。
+    expect(a.characters[0].tag.replace(/sitting|standing/g, '')).toBe(
+      b.characters[0].tag.replace(/sitting|standing/g, ''),
+    );
+  });
+
+  it('已经写到 body 里的骨架词不重复', () => {
+    const girl = entry({
+      fields: { ...emptyCharFields(), sex: '1girl', age: 'child', body: 'flat chest' },
+    });
+    const a = image('1girl', '1girl');
+    enforceAppearance(a, [girl], false, true, []);
+    expect(a.characters[0].tag.match(/flat chest/g)).toHaveLength(1);
+  });
 });

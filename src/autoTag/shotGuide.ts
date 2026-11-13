@@ -134,6 +134,19 @@ export function tagDistance(
 }
 
 /**
+ * 这一格里有没有「身体上的接触」。
+ *
+ * 只用来判断该不该为了神态词把画面收成特写：有接触的那一格，脸和接触点必须同框；
+ * 没接触的纯粹神态(一个人坐在窗边眼眶泛红)才配特写。
+ */
+const CONTACT_WORD =
+  /(?:hand on|hands on|hand in|arm around|arms around|hug|hugging|embrace|holding hands|clinging|kiss|kissing|french kiss|breast[^,]*press|grabbing|grabbed|groping|touching|caress|fondle|pinch|lick|suck|bite|sitting on lap|on lap|straddling|straddle|penetrat|inside|cowgirl|missionary|doggy style|pressed against|pressing|pulled against|brushing|rubbing|fingering|teasing)/i;
+export function imageHasContact(tag: string, characterTags: readonly string[] = []): boolean {
+  const hay = [tag ?? '', ...characterTags].join(', ');
+  return CONTACT_WORD.test(hay);
+}
+
+/**
  * 从**这一句正文**读出该收多近。
  *
  * - 若命中强焦点规则(解剖部位/亲密接触/中远景主体动作),优先在强焦点规则中取最近一档;
@@ -215,17 +228,36 @@ export function diagnoseDistance(
 
   // close 允许到 upper(rank 1);upper 与 mid 最高允许到 mid(cowboy shot,rank 2),一律拦截 full body(rank 3)。
   let allowedRank = Math.min(DISTANCE_RANK.mid, DISTANCE_RANK[advice.distance] + 1);
+  let suggest = advice.tags;
   if (advice.softOnly && prevText.trim()) {
     const prevAdvice = recommendShot(prevText);
     if (prevAdvice && !prevAdvice.softOnly && DISTANCE_RANK[prevAdvice.distance] === DISTANCE_RANK.mid) {
       allowedRank = DISTANCE_RANK.mid;
     }
   }
+  /**
+   * 只有神态词(眼神/脸红/泪)的句子，不该把成对接触压成大头照。
+   *
+   * 前戏里最常出的事：「她脸颊泛红」这句只有神态，规则判 close-up，本机再按建议
+   * 硬改成 close-up —— 手在胸上、腰抵着的那一半画面全被裁掉，最后交一张表情特写。
+   * 但凡这一格有接触动作或不止一个人，就退到 upper body：脸和接触点至少同框。
+   */
+  if (advice.softOnly && (imageHasContact(tag, characterTags) || characterTags.length > 1)) {
+    allowedRank = Math.max(allowedRank, DISTANCE_RANK.mid);
+    if (actual === 'close')
+      return {
+        points: advice.points,
+        suggest: 'upper body',
+        angle: advice.angle,
+        reason: '这一格有身体接触，只有神态词时不该收成特写，把接触点和脸一起框住',
+        actual,
+      };
+  }
 
   if (DISTANCE_RANK[actual] <= allowedRank) return null;
   return {
     points: advice.points,
-    suggest: advice.tags,
+    suggest,
     angle: advice.angle,
     reason: advice.reason,
     actual,

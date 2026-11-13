@@ -109,4 +109,16 @@ describe('shotGuide 景别判据', () => {
       diagnoseDistance('她的乳房从衣领里挤出来', 'indoors', ['girl, upper body']),
     ).toBeNull();
   });
+
+  it('只有神态的句子遇到接触动作时不压成特写,退到 upper body', () => {
+    // 前戏里最常出的事:这一句只写了「她脸颊泛红」,规则判 close-up,
+    // 本机再按建议硬改成特写——手在胸上那一半全被裁掉,交一张表情特写。
+    const line = '她脸颊泛红,眼神迷离';
+    const contact = '1girl, 1boy, hand on breast, close-up';
+    expect(diagnoseDistance(line, contact, [])?.suggest).toBe('upper body');
+    // 没接触的纯粹神态(一个人坐着发怔)照旧给特写。
+    expect(diagnoseDistance(line, '1girl, solo, close-up', [])).toBeNull();
+    // 接触动作写在角色块里也算。
+    expect(diagnoseDistance(line, '1girl, close-up', ['1boy, hand on waist'])).not.toBeNull();
+  });
 });
