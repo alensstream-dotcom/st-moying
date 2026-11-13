@@ -60,7 +60,7 @@ const PROSE: Array<[string, RegExp]> = [
   ['golden eyes', /金瞳|金眸|金色(?:的)?眼/],
   ['teal eyes', /青色(?:的)?眼|蓝绿色眼|青瞳/],
   ['hazel eyes', /榛色|浅褐(?:色)?眼/],
-  ['round eyes', /圆眼|圆圆(?:的)?眼|杏眼/],
+  ['round eyes', /圆眼|圆圆(?:的)?[^，。；]{0,4}眼|杏眼/],
   ['almond eyes', /杏眼|杏形眼/],
   ['tsurime', /吊眼|上挑(?:的)?眼|凤眼|丹凤眼/],
   ['tareme', /下垂眼|眼角下垂/],
@@ -235,11 +235,28 @@ interface Aspect {
   whole: boolean;
   pool: string[];
   match: RegExp;
+  /**
+   * 正文只要提到这一类特征，这条轴就整体判为写死。
+   *
+   * 单看「正文点名了当前值」是不够的：正文写「乌黑的长发」，`long straight hair`
+   * 的字面对照匹配不上（对照表收的是「一头长发」，不是「长发」），于是发型轴被判定
+   * 可掷，掷成 short bob cut——用户明明写了长发，重掷后变短发。这类「正文只给了
+   * 长度/大方向、档案里是具体款式」的情况必须靠类别级的 guard 兜住。
+   */
+  guard?: RegExp;
 }
 
 const ASPECTS: Aspect[] = [
   { field: 'hair', whole: false, pool: HAIR_COLOR, match: new RegExp(`\\b(?:${HAIR_COLOR.join('|')})\\b`, 'i') },
-  { field: 'hair', whole: false, pool: HAIR_STYLE, match: new RegExp(`\\b(?:${HAIR_STYLE.join('|')})\\b`, 'i') },
+  {
+    field: 'hair',
+    whole: false,
+    pool: HAIR_STYLE,
+    match: new RegExp(`\\b(?:${HAIR_STYLE.join('|')})\\b`, 'i'),
+    // 只要正文给了长度或款式方向（长发/短发/马尾/辫子/卷发/直发/齐肩…），
+    // 就不能把发型整个换掉；具体是哪一种仍由档案决定。
+    guard: /(?:长|短)(?:的)?(?:头)?发|马尾|辫子|编发|卷发|直发|波波头|齐肩|及肩|公主切|姬发式|盘发|丸子头|披肩|散发/,
+  },
   { field: 'eyes', whole: false, pool: EYE_COLOR, match: new RegExp(`\\b(?:${EYE_COLOR.join('|')})\\b`, 'i') },
   { field: 'eyes', whole: false, pool: EYE_SHAPE, match: new RegExp(`\\b(?:${EYE_SHAPE.map((v) => v.replace(/ /g, '\\s')).join('|')})\\b`, 'i') },
   { field: 'body', whole: true, pool: BODY, match: /[\s\S]*/ },
@@ -349,6 +366,96 @@ export function diversifyLook(
   }
 
   return { fields: next, notes };
+}
+
+export interface RerollChange {
+  field: LookField;
+  from: string;
+  to: string;
+}
+
+export interface RerollLook {
+  fields: CharFields;
+  /** 真正换了值的轴（配对展示用）。 */
+  changes: RerollChange[];
+  /** 剧情写死、这次没敢动的轴。 */
+  kept: LookField[];
+}
+
+/**
+ * 剧情写死了哪些外貌轴。
+ *
+ * 判据只有一个：正文里点名过这个轴当前的值（中文写法靠 PROSE 对照表认）。
+ * 用户要的「只重掷剧情没写的部分」就落在这里——写死的轴连碰都不碰。
+ */
+export function frozenAxes(fields: CharFields, story = ''): LookField[] {
+  const frozen: LookField[] = [];
+  for (const aspect of ASPECTS) {
+    const current = tokens(fields[aspect.field] ?? '');
+    const mine = aspect.whole ? current : current.filter((token) => aspect.match.test(token));
+    if (mine.some((token) => storyHas(story, token)) || (aspect.guard?.test(story ?? '') ?? false))
+      frozen.push(aspect.field);
+  }
+  return [...new Set(frozen)];
+}
+
+/**
+ * 重掷一个角色的外貌。
+ *
+ * 与 `diversifyLook` 的区别是「故意要换」：那边只在撞车/空着时才动，这边用户点了
+ * 就要换一个不同的值。两边共用的纪律是不跟剧情抢：正文点名过的轴原样保留，
+ * 并且新值避开库里别人已经在用的词，免得掷完又和另一个女主撞脸。
+ *
+ * `rand` 抽出来是为了测试能固定序列；生产走 Math.random。
+ */
+export function rerollLook(
+  fields: CharFields,
+  others: ReadonlyArray<Pick<CharTagEntry, 'fields'>>,
+  story = '',
+  name = '',
+  rand: () => number = Math.random,
+): RerollLook {
+  const used = usedTraits(others);
+  const next: CharFields = { ...emptyCharFields(), ...fields } as CharFields;
+  const band = bandFromAge(next.age ?? '') || bandFromName(name);
+  const changes: RerollChange[] = [];
+  const kept = new Set<LookField>();
+
+  for (const aspect of ASPECTS) {
+    const pool = aspect.field === 'body' ? bodyPool(band) : aspect.pool;
+    const current = tokens(next[aspect.field] ?? '');
+    const mine = aspect.whole ? current : current.filter((token) => aspect.match.test(token));
+    // 剧情点了名：这个轴是作者的设定，不是掷骰子的余地。
+    // 类别级 guard 用来兜「档案是具体款式、正文只写了方向」的情形（见 Aspect.guard）。
+    if (mine.some((token) => storyHas(story, token)) || (aspect.guard?.test(story ?? '') ?? false)) {
+      kept.add(aspect.field);
+      continue;
+    }
+    const taken = new Set([...mine.map(norm), ...used]);
+    // 优先挑别人没在用的；全被占满时退回「只要和现在不一样」。
+    const fresh = pool.filter((value) => !taken.has(norm(value)));
+    const options = fresh.length ? fresh : pool.filter((value) => !mine.map(norm).includes(norm(value)));
+    if (!options.length) {
+      kept.add(aspect.field);
+      continue;
+    }
+    const picked = options[Math.min(options.length - 1, Math.floor(rand() * options.length))];
+    /**
+     * 只换词表里属于这条轴的那些词，其余原样留着。
+     *
+     * 档案里的 `medium breasts`、`flat chest`、`muscular` 这些是词表外的写法
+     * （多半是模型或用户手写的），跟着一起清掉等于顺手改了她的身材细节；
+     * 重掷只该动「我们本来就在管」的那几个轴词。
+     */
+    const poolSet = new Set(pool.map(norm));
+    const rest = aspect.whole
+      ? current.filter((token) => !poolSet.has(norm(token)))
+      : current.filter((token) => !aspect.match.test(token));
+    next[aspect.field] = [...new Set([...rest, picked])].join(', ');
+    changes.push({ field: aspect.field, from: mine.join('/') || '（空）', to: picked });
+  }
+
+  return { fields: next, changes, kept: [...kept] };
 }
 
 /**

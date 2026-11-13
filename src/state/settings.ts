@@ -285,6 +285,17 @@ export interface NaiSettings extends BackendConn {
   seed: number;
   /** Variety Boost(skip_cfg_above_sigma,按尺寸与模型自动算 magic 值)。 */
   varietyBoost: boolean;
+  /**
+   * 剧情出图是否允许把角色的定妆图发给 NAI 做参考（默认关）。
+   *
+   * 关着的时候：只发文字档案，角色形象靠 `appearancePolicy` + `enforceAppearance`
+   * 硬锁，不额外花 Anlas。开着的时候：还要逐角色在「角色 → 定妆」里勾上参考图、
+   * 且模型是 V4.5、没有启用 Vibe，才会真的发。
+   *
+   * 总闸放在这里而不是只放角色页：用户点过「固定形象」的历史角色可能已经被
+   * 勾上了，逐个去关太麻烦；这里一关，全部停发。
+   */
+  characterReference: boolean;
   /** 参考强度归一化:多个 vibe 强度总和超过 1 时按比例压回 1。 */
   normalizeRefStrength: boolean;
   /**
@@ -1416,6 +1427,9 @@ function naiDefaults(): NaiSettings {
     noiseSchedule: 'karras',
     seed: 0,
     varietyBoost: true,
+    // 默认关：发定妆图要额外花 Anlas，而且用户点「固定形象」的本意是
+    // 「以后按文字档案画」，不是「每张图都带一张照片」。
+    characterReference: false,
     normalizeRefStrength: true,
     concurrency: 1,
     vibes: [],
@@ -1962,6 +1976,8 @@ function normalizeNai(raw: unknown, def: NaiSettings): NaiSettings {
       typeof o.noiseSchedule === 'string' && o.noiseSchedule ? o.noiseSchedule : def.noiseSchedule,
     seed: Math.round(clampNumber(o.seed, def.seed, 0, 4294967295)),
     varietyBoost: typeof o.varietyBoost === 'boolean' ? o.varietyBoost : def.varietyBoost,
+    characterReference:
+      typeof o.characterReference === 'boolean' ? o.characterReference : def.characterReference,
     normalizeRefStrength:
       typeof o.normalizeRefStrength === 'boolean' ? o.normalizeRefStrength : def.normalizeRefStrength,
     concurrency: Math.round(clampNumber(o.concurrency, def.concurrency, 1, 4)),

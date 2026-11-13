@@ -18,11 +18,18 @@ const props = defineProps<{
   src: string;
   cast: Array<{ name: string; tag: string; nl?: string }>;
   chat?: string;
+  /**
+   * adopt = 把这张图里的外貌存成固定形象（默认）；
+   * reroll = 只重掷剧情没写死的外貌分类，然后按新形象重画（不动这张照片）。
+   */
+  mode?: 'adopt' | 'reroll';
 }>();
 const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'pick', value: { name: string; tag: string }): void;
 }>();
+
+const rerolling = computed(() => props.mode === 'reroll');
 
 interface Row {
   name: string;
@@ -148,9 +155,13 @@ async function recognise() {
     <div class="bbi-cast-pick" role="dialog" aria-label="画面角色">
       <div class="bbi-cast-pick__head">
         <div>
-          <div class="bbi-cast-pick__title">画面角色</div>
+          <div class="bbi-cast-pick__title">{{ rerolling ? '重 Roll 人物形象' : '画面角色' }}</div>
           <div class="bbi-cast-pick__hint">
-            选一个角色，把她在这张图里的外貌存成档案形象（没档案的会先建档）。
+            {{
+              rerolling
+                ? '选一个角色，只重掷剧情里没写的外貌分类（发色／发型／瞳色／眼形／体型／发饰），写死的部分不动。'
+                : '选一个角色，把她在这张图里的外貌存成档案形象（没档案的会先建档）。'
+            }}
           </div>
         </div>
         <button class="bbi-cast-pick__close" type="button" @click="emit('close')">×</button>
@@ -186,7 +197,7 @@ async function recognise() {
               :disabled="!!busy"
               @click="emit('pick', { name: row.name, tag: row.tag })"
             >
-              {{ row.saved ? '更新形象' : '建档并固定' }}
+              {{ rerolling ? '重掷她' : row.saved ? '更新形象' : '建档并固定' }}
             </button>
           </li>
         </ul>

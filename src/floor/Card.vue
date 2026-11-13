@@ -8,12 +8,13 @@ import {
   findCharTag,
   type CharTagEntry,
 } from '@/state/charTags';
-import { imageAppearance, adoptLook, lookSettings, saveLook } from '@/state/characterStudio';
+import { imageAppearance, adoptLook, lookSettings } from '@/state/characterStudio';
 import { lockedFields, setAppearancePolicy } from '@/state/appearancePolicy';
 import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 import { putStudioImage } from '@/data/loreThumbs';
 import { recoverProfileFields } from '@/autoTag/profileRecovery';
 import { openCharacterPicker } from '@/floor/characterPicker';
+import { rerollCharacterLook } from '@/floor/rerollLook';
 import { openOutfitHarvest } from '@/floor/outfitHarvest';
 import { computed, onMounted, ref, watch } from 'vue';
 
@@ -55,7 +56,7 @@ import { activeComfyPreset, activeOrientationLock, imageDisplayMaxHeight, settin
 import { beginImage, failImage, finishImage, safeHistory } from '@/state/history';
 import { copyText } from '@/st/clipboard';
 import { getContext } from '@/st/context';
-import { parseImageTagContent, formatPromptText } from '@/st/imageTagRegex';
+import { parseImageTagContent, formatPromptText, stripImageTags } from '@/st/imageTagRegex';
 
 /**
  * 楼层生图卡片(DESIGN-FLOOR-UI.md §8)。
@@ -393,10 +394,49 @@ function openImage(): void {
         chat: openedChat,
         onPick: (pick) => void useAsPortrait(entry, openedChat, pick),
       }),
+    /*
+     * 「重 Roll 人物形象」与「重 Roll 当前图」是两件事：
+     * 后者换种子重画同一套提示词；前者先把角色的外貌档案重掷一遍（只动剧情
+     * 没写死的那几轴），再按新档案重画。所以先选人，掷完再 generate。
+     */
+    onLookReroll: () =>
+      openCharacterPicker({
+        src: entry.path,
+        cast: parseImageTagContent(entry.prompt).characters,
+        chat: openedChat,
+        mode: 'reroll',
+        onPick: (pick) => void rerollLookAndRedraw(entry, openedChat, pick.name),
+      }),
     onReroll: () => {
       if (openedChat === getContext()?.getCurrentChatId?.()) void generate(true);
     },
   });
+}
+
+/**
+ * 重掷某个人物的形象，然后按新档案重画这一格。
+ *
+ * 正文来源取该楼原文（去掉生图 tag）：`rerollLook` 要拿它判断哪些外貌轴是
+ * 剧情写死的、不许动。聊天已经切走就整体放弃——写进别的聊天的档案是脏数据。
+ */
+async function rerollLookAndRedraw(
+  photo: BbiImageEntry | null,
+  expectedChat: string | undefined,
+  rawName: string,
+): Promise<void> {
+  if (!photo) return;
+  if (expectedChat !== getContext()?.getCurrentChatId?.()) return;
+  const message = getContext()?.chat?.[props.messageId];
+  const story = stripImageTags(message?.mes ?? '');
+  try {
+    const summary = rerollCharacterLook(rawName, story);
+    toastr.success(summary.text, '已重掷人物形象');
+  } catch (e) {
+    toastr.error(e instanceof Error ? e.message : String(e), '重掷失败');
+    return;
+  }
+  // 换一套档案之后必须换种子，否则模型拿着同一个种子给出同一张脸。
+  if (expectedChat === getContext()?.getCurrentChatId?.()) void generate(true);
 }
 
 /**
@@ -548,12 +588,19 @@ async function useAsPortrait(
     });
     recomputeCharTags();
     adoptLook(appearance, key);
-    // 单人图能安全用参考图时顺手打开——参考图比纯文字锁得更死。
-    // 只在用户没手动关过、且档案指纹与定妆一致的顺风条件下开。
+    /**
+     * 参考图**不**在这里自动打开。
+     *
+     * 用户点「固定形象」要的是「以后按这套文字档案画」，不是「每次多花 5 Anlas
+     * 发一张照片」；而且他明确说过「固定」是为了让后续剧情补写外貌时不再改她，
+     * 不是为了更精准。要不要发参考图由他自己在角色页/设置里开，这里只在已经
+     * 开着的时候提一句它是怎么生效的。
+     */
     const look = lookSettings(name);
-    if (!look.reference) saveLook(name, { ...look, reference: true });
     toastr.success(
-      '已固定该人物形象：后续每张图都会按档案校正外貌，参考图已开启（仅单人与 V4.5 生效）',
+      look.reference
+        ? '已固定该人物形象：后续每张图都会按档案校正外貌；参考图发送已开启（仅 V4.5、未启用 Vibe 时生效）'
+        : '已固定该人物形象：后续每张图都会按这套文字档案校正外貌。想要连脸一起锚定，可在「角色 → 定妆」里打开图片参考（可选付费）',
       '墨影',
     );
   } catch (e) {

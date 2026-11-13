@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diversifyLook, diversifyNewOps } from './lookDiversity';
+import { diversifyLook, diversifyNewOps, rerollLook } from './lookDiversity';
 import { emptyCharFields } from '@/state/charTags';
 
 const look = (over: Partial<Record<string, string>> = {}) => ({
@@ -118,5 +118,74 @@ describe('diversifyNewOps', () => {
     ];
     diversifyNewOps(items, [], '两人都是一头乌黑的长发。', []);
     expect(items[1].fields.hair).toContain('black hair');
+  });
+});
+
+
+// 重掷人物形象：只动剧情没写死的轴，且避开库里别人在用的值。
+describe('rerollLook', () => {
+  /** 固定序列，保证断言稳定：每次都取候选里的第一个。 */
+  const first = () => 0;
+
+  it('剧情没写的轴会被换掉，正文写死的轴原样保留', () => {
+    const fields = look({ hair: 'black hair', eyes: 'blue eyes', body: 'slender' });
+    const result = rerollLook(fields, [], '她有一头乌黑的长发。', '苏晚', first);
+    // 发色在正文里点过名（乌黑 → black hair），必须留着
+    expect(result.fields.hair).toContain('black hair');
+    expect(result.kept).toContain('hair');
+    // 瞳色没写过，掷出新值
+    expect(result.fields.eyes).not.toBe('blue eyes');
+    expect(result.changes.map((change) => change.field)).toContain('eyes');
+  });
+
+  it('新值不会等于旧值', () => {
+    const fields = look({ hair: 'black hair', eyes: 'blue eyes', body: 'slender', extra: 'hairpin' });
+    const result = rerollLook(fields, [], '', '苏晚', first);
+    for (const change of result.changes) expect(change.to).not.toBe(change.from);
+  });
+
+  it('避开库里别人已经在用的词', () => {
+    const others = [
+      { fields: look({ hair: 'silver hair', eyes: 'red eyes', body: 'voluptuous', extra: 'beret' }) },
+    ];
+    const fields = look({ hair: 'black hair', eyes: 'blue eyes', body: 'slender', extra: 'hairpin' });
+    const result = rerollLook(fields, others, '', '苏晚', first);
+    expect(result.fields.hair).not.toContain('silver hair');
+    expect(result.fields.eyes).not.toContain('red eyes');
+    expect(result.fields.body).not.toBe('voluptuous');
+    expect(result.fields.extra).not.toBe('beret');
+  });
+
+  it('体型按年龄档掷：阿姨不会掷出 petite', () => {
+    const fields = look({ age: 'mature female', body: 'slender' });
+    const result = rerollLook(fields, [], '', '风阿姨', first);
+    expect(result.fields.body).not.toContain('petite');
+    expect(result.fields.body).not.toContain('small build');
+    expect(result.fields.body).not.toContain('short stature');
+  });
+
+  it('体型只换词表内的轴词，medium breasts 这类手写词保留', () => {
+    const fields = look({ body: 'slender, medium breasts' });
+    const result = rerollLook(fields, [], '', '苏晚', first);
+    expect(result.fields.body).toContain('medium breasts');
+    expect(result.fields.body).not.toContain('slender');
+  });
+
+  it('正文写死的四个轴一个都不动，只补档案里空着的轴', () => {
+    const fields = look({
+      hair: 'black hair',
+      eyes: 'blue eyes',
+      body: 'slender',
+      extra: 'hairpin',
+    });
+    const story = '乌黑的长发、蓝色的眼睛，苗条的身材，戴着一枚发夹。';
+    const result = rerollLook(fields, [], story, '苏晚', first);
+    expect(result.kept).toEqual(expect.arrayContaining(['hair', 'eyes', 'body', 'extra']));
+    // 写死的轴保持原值；改动只可能发生在原本空着的轴上（发型、眼形）。
+    expect(result.fields.hair).toContain('black hair');
+    expect(result.fields.eyes).toContain('blue eyes');
+    expect(result.fields.body).toContain('slender');
+    expect(result.fields.extra).toContain('hairpin');
+    for (const change of result.changes) expect(change.from).toBe('（空）');
   });
 });

@@ -23,6 +23,8 @@ export interface LightboxOptions {
   onDelete?: () => void;
   onAdopt?: () => void;
   onReroll?: () => void;
+  /** 重掷人物形象（只换剧情没写死的外貌分类），出图由调用方自己触发。 */
+  onLookReroll?: () => void;
   onLockHair?: () => void;
   /** 提供了才显示「收藏这身」;回调里自己开弹窗,灯箱会先关掉。 */
   onHarvest?: () => void;
@@ -55,6 +57,7 @@ export function openLightbox(options: LightboxOptions): void {
       deletable: !!options.onDelete,
       adoptable: !!options.onAdopt,
       rerollable: !!options.onReroll,
+      lookRerollable: !!options.onLookReroll,
       hairLockable: !!options.onLockHair,
       harvestable: !!options.onHarvest,
       onLockHair: () => {
@@ -72,6 +75,10 @@ export function openLightbox(options: LightboxOptions): void {
       onReroll: () => {
         close();
         options.onReroll?.();
+      },
+      onLookReroll: () => {
+        close();
+        options.onLookReroll?.();
       },
       onClose: close,
       onDelete: () => {

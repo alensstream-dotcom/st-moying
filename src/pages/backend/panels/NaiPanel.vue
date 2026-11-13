@@ -1603,6 +1603,17 @@ async function removeVibe(vibe: NaiVibe) {
           <input v-model="settings.nai.varietyBoost" type="checkbox" class="bbi-checkbox" />
         </label>
 
+        <!-- 定妆图参考的总闸。关着=只发文字档案；开着还要逐角色勾选、且是 V4.5 无 Vibe 才真发。 -->
+        <label class="bbi-switch-row">
+          <span class="bbi-field-label">剧情出图携带角色定妆图(约 +5 Anlas/人/张)</span>
+          <input v-model="settings.nai.characterReference" type="checkbox" class="bbi-checkbox" />
+        </label>
+        <p class="bbi-field-hint">
+          关着的时候只发文字档案：人物外貌由角色档案硬锁，不多花额度，形象可能与定妆图有差别。
+          打开后，还需要在「角色 → 定妆」里对具体角色勾上「单角色剧情图自动携带定妆图」，
+          且模型为 V4.5、未启用 Vibe，才会把那张图发给 NAI。
+        </p>
+
         <div class="bbi-num-row">
           <span class="bbi-field-label">同时出图数</span>
           <input

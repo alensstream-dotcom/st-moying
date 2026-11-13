@@ -519,7 +519,7 @@ export async function generateImage(
         (sum, m) => sum + Number(m[1]),
         0,
       );
-      if (!input.suppressCharacterReference && characters.length >= 1) {
+      if (!input.suppressCharacterReference && naiConn.characterReference && characters.length >= 1) {
         for (const c of characters) {
           // 定妆图按档案主名取：名字写成别称时字面查不到档案，参考图会静默不发。
           const name = charTagLib.entries.length

@@ -52,6 +52,7 @@ function nai(overrides: Partial<NaiSettings> = {}): NaiSettings {
     noiseSchedule: 'karras',
     seed: 0,
     varietyBoost: true,
+    characterReference: false,
     normalizeRefStrength: true,
     concurrency: 1,
     vibes: [],

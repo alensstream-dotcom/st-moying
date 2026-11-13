@@ -1024,7 +1024,17 @@ watch(
                 <h3>让后续生成参考这张图 · 可选付费</h3>
                 <p>
                   保存立绘不是训练模型。默认只复用文字档案，人物可能与样图不同；启用图片参考才会把原图发送给
-                  NAI，也不能保证完全一致。
+                  NAI，也不能保证完全一致。点「固定形象」不会自动打开它，需要你在这里显式勾选。
+                </p>
+                <p v-if="!settings.nai.characterReference" class="bbi-field-hint">
+                  注意：NAI 面板里的总闸「剧情出图携带角色定妆图」当前是关闭的，勾了这里也不会发图。
+                  <button
+                    class="bbi-btn bbi-btn-sm"
+                    type="button"
+                    @click="settings.nai.characterReference = true"
+                  >
+                    打开总闸
+                  </button>
                 </p>
                 <label
                   ><input
@@ -1035,7 +1045,7 @@ watch(
                   />单角色剧情图自动携带定妆图</label
                 >
                 <p>
-                  约 +5 Anlas / 张。仅 V4.5、单角色、未启用 Vibe
+                  约 +5 Anlas / 张。仅 V4.5、未启用 Vibe
                   且档案与定妆一致时发送；其他情况回退文字并在详情说明。中转接口是否应用需自行验证。
                 </p>
                 <p>原图保存在本机浏览器，换设备需重新导入；头像不等于已发送参考。</p>

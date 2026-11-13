@@ -39,12 +39,22 @@ const props = defineProps<{
   deletable?: boolean;
   adoptable?: boolean;
   rerollable?: boolean;
+  /** 重掷人物形象:只换剧情没写死的外貌轴(发色/发型/瞳色/眼形/体型/发饰)。 */
+  lookRerollable?: boolean;
   hairLockable?: boolean;
   /** 有值才显示「收藏这身」——把图里这套衣服收进衣橱,与固定人物形象互不相干。 */
   harvestable?: boolean;
 }>();
 
-const emit = defineEmits<{ close: []; delete: []; adopt: []; reroll: []; lockHair: []; harvest: [] }>();
+const emit = defineEmits<{
+  close: [];
+  delete: [];
+  adopt: [];
+  reroll: [];
+  lookReroll: [];
+  lockHair: [];
+  harvest: [];
+}>();
 
 /** 适应屏幕 ↔ 原始尺寸。 */
 const zoomed = ref(false);
@@ -171,6 +181,14 @@ const promptText = computed(() => (props.prompt ?? '').trim());
           title="把这身衣服的款式收进新衣橱，以后可以召回复用"
         >
           收藏这身
+        </button>
+        <button
+          v-if="lookRerollable"
+          class="bbi-lb-btn bbi-lb-btn--text"
+          @click="emit('lookReroll')"
+          title="只重掷剧情没写死的外貌分类（发色／发型／瞳色／眼形／体型／发饰），然后按新形象重画这张图"
+        >
+          重 Roll 人物形象
         </button>
         <button
           v-if="rerollable"

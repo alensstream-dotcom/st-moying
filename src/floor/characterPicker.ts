@@ -10,6 +10,8 @@ export function openCharacterPicker(options: {
   src: string;
   cast: Array<{ name: string; tag: string; nl?: string }>;
   chat?: string;
+  /** adopt = 存成固定形象；reroll = 只重掷剧情没写死的外貌分类。 */
+  mode?: 'adopt' | 'reroll';
   onPick: (value: { name: string; tag: string }) => void;
 }): void {
   const root = document.getElementById('bbi-app-host')?.shadowRoot;
@@ -28,6 +30,7 @@ export function openCharacterPicker(options: {
       src: options.src,
       cast: options.cast,
       chat: options.chat,
+      mode: options.mode ?? 'adopt',
       onClose: close,
       onPick: (value: { name: string; tag: string }) => {
         close();
