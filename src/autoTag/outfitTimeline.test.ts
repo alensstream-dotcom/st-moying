@@ -408,15 +408,19 @@ describe('款式漂移防护', () => {
     expect(accepted.changes[0].pieces[0]).toMatchObject({ id: 'a', design: 'denim shorts' });
   });
 
-  it('外观描述对不上任何同类部件时才拒', () => {
+  it('外观描述里出现账本没有的衣物类别时按正文整身换', () => {
+    // 旧版这里一律拒（「这段只是外观描述」），于是「她拉开帘子走出来，身上只剩一件白色泳衣」
+    // 这种没有换装动词的写法永远进不了账本 —— 用户报的「换泳装换不出来」就是这个。
+    // 正文已经点名她现在穿什么，账本必须跟，哪怕没有任何「换上/换装」字样。
     const wardrobe = wardrobeOf('林晚晴', [piece('a', 'white shirt')]);
     const change: ClothingChange = {
       ...patchOf('林晚晴', [piece('x', 'red skirt')], '林晚晴穿着一条红裙子。'),
       operation: 'change',
     };
     const accepted = acceptClothingChanges([change], change.evidence, wardrobe, [entry('林晚晴')]);
-    expect(accepted.changes).toHaveLength(0);
-    expect(accepted.rejected.join()).toContain('外观描述');
+    expect(accepted.changes).toHaveLength(1);
+    expect(accepted.changes[0].operation).toBe('change');
+    expect(accepted.changes[0].pieces[0].design).toBe('red skirt');
   });
 
   it('proseGarment 认得出长牛仔裤与短牛仔裤', () => {

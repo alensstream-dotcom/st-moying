@@ -523,9 +523,20 @@ export function acceptClothingChanges(
       rejected.push(c.name + ': 用户固定套装不接受整套换装（要跟随剧情请在衣柜面板改为“锁定款式”）；穿脱状态仍会记录');
       continue;
     }
+    // 这一条 change 是否带来了旧账本里没有的衣物类别（换泳衣、换睡衣都算）。
+    // 「她拉开塑料帘走出来，身上只剩一件白色泳衣」一个换装动词都没有，
+    // 但它确实是整身换。旧版三道 change 闸门全部只认「换上/换装/更衣」，
+    // 于是换泳装整条被拒 → 账本停在白天的衬衫长裙 → 用户看到的就是「泳装换不出来」。
+    const fresh =
+      !!old &&
+      c.pieces.some((p) => !old.pieces.some((o) => garmentKind(o.design) === garmentKind(p.design)));
+    const dressing = /穿上|套上|披上|扣好|扣上|拉上|裹上|系上|拿出|取出/.test(c.evidence);
+    const wearingNow = /只剩|只穿|只留|仅剩|只有|穿着|身穿|身着|裹着|披着/.test(c.evidence);
+    const freshDress = fresh && (dressing || wearingNow);
     if (
       old?.suitMode === 'style' &&
       c.operation === 'change' &&
+      !freshDress &&
       !/换装|换衣|更衣|换成|换上.{0,16}(?:一套|另一套|新衣|新裙)|change.{0,20}(?:outfit|clothes)|new outfit/i.test(
         c.evidence,
       )
@@ -565,11 +576,7 @@ export function acceptClothingChanges(
       // 旧版只看 换上|更衣|换装，于是这种写法被判「非明确换装」整条丢弃，
       // 账本停在睡衣上，第二天图里她还是睡衣。只要出现穿戴动词且点名了旧账本没有的
       // 衣物类别，就允许整套重记。
-      const fresh = c.pieces.some(
-        (p) => !old.pieces.some((o) => garmentKind(o.design) === garmentKind(p.design)),
-      );
-      const dressing = /穿上|套上|披上|扣好|扣上|拉上|裹上|系上|拿出|取出/.test(c.evidence);
-      if (fresh && dressing) {
+      if (freshDress) {
         // 新衣物确实是新穿的：保留 change，旧部件由 applyOne 一并退出账本。
       } else if (mapped.length && mapped.every(Boolean)) {
         c.operation = 'patch';
@@ -660,11 +667,14 @@ export function acceptClothingChanges(
     else if (
       c.operation === 'change' &&
       /穿着|身穿|身着|是一条|是那件|wearing|dressed in/i.test(c.evidence) &&
-      !/(?:换上|换成|换好|换装|更衣|穿上|穿回|脱下|脱掉|褪下)/.test(c.evidence)
+      !/(?:换上|换成|换好|换装|更衣|穿上|穿回|脱下|脱掉|褪下)/.test(c.evidence) &&
+      !freshDress
     )
       // 「她穿着一条短牛仔裤」是外观描述，不是换装事件；照收会让账本款式被悄悄改写。
+      // 例外：这句带来了账本里没有的衣物类别（「身上只剩一件白色泳衣」），
+      // 那就不是复述旧款，而是整身换——不认这句，泳装、浴衣这类一次性穿搭永远进不了账本。
       reason = '这段只是外观描述，不是换装动作，不能整套重置';
-    else if (c.operation === 'change' && old && !REPLACE.test(c.evidence))
+    else if (c.operation === 'change' && old && !REPLACE.test(c.evidence) && !freshDress)
       reason = '没有明确换装/重新穿戴证据，不能整套重置';
     else if (
       c.operation === 'patch' &&
@@ -896,6 +906,9 @@ const PROSE_GARMENT: Array<[RegExp, string]> = [
   // 结果「换上睡衣」这句认不出衣物 → adoptChangedClothing 直接 return,
   // 账本停在白天那套 —— 用户看到的「剧情说换了睡衣,图里还是原来那套」。
   [/睡裙|睡袍|浴袍|睡衣裤|睡裤|睡衣|家居服|居家服|晨衣/, 'pajamas'],
+  // 泳装必须排在「裙」「短裤」前面：`泳装`/`泳衣` 本身不含裙裤字，但
+  // 「沙滩裙」「泳裤」会被后两条抢走，而且在正文里 `泳装` 常与「裙」同句出现。
+  [/连体泳衣|竞泳泳装|泳衣|泳装|泳裤|比基尼|死库水|沙滩裙/, 'swimsuit'],
   [/短牛仔裤|牛仔短裤/, 'denim shorts'],
   [/长牛仔裤|直筒牛仔裤/, 'long jeans'],
   [/牛仔裤/, 'jeans'],
@@ -1083,7 +1096,7 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
         )
       )
         tags.push('no ' + garment);
-      if (location === 'removed') sentences.push(`Not wearing ${p.design}; it has been taken off.`);
+      if (location === 'removed') sentences.push(`Not wearing ${englishDesign(p.design)}; it has been taken off.`);
       if (location !== 'removed')
         sentences.push(
           `The ${p.design} is ${location === 'held' ? 'held, not worn' : `on the ${location}, not worn`}.`,
@@ -1096,7 +1109,7 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
       upperBare ||= upper;
       lowerBare ||= lower;
     }
-    tags.push(p.design);
+    tags.push(englishDesign(p.design));
     if (s.legacy) tags.push(s.legacy);
     if (s.fastening === 'open')
       tags.push(
@@ -1151,7 +1164,7 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
     ]
       .filter(Boolean)
       .join(', ');
-    if (p.design) sentences.push(`Wearing ${p.design}${detail ? `, ${detail}` : ''}.`);
+    if (p.design) sentences.push(`Wearing ${englishDesign(p.design)}${detail ? `, ${detail}` : ''}.`);
   }
   if (upperRemoved && !upperWorn && lowerRemoved && !lowerWorn) tags.push('nude');
   else {
@@ -1166,6 +1179,9 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
  * 顺序有意义：上半身/下半身都能覆盖住整个人的连体衣物排在最前，否则
  * `cheongsam`、`qipao` 这类词会被后面的条子漏掉，账本渲染成空串，服装层整段失效。
  */
+const CORE_SWIM_EN =
+  /\b(?:swimsuits?|swimwear|beachwear|bikinis?|monokini|tankini|school swimsuit|one-piece swimsuit|competition swimsuit|wetsuit)\b/i;
+const CORE_SWIM_ZH = /泳衣|泳装|泳裤|比基尼|死库水|连体泳衣|竞泳|沙滩装/;
 const GARMENT_KINDS: Array<[RegExp, string]> = [
   // 睡衣排在最前:它同时盖住上半身和下半身,而且「睡裙」「睡裤」会被后面的
   // 「裙」「裤」条子抢走 —— 抢走之后就变成「换了一条裙子」而不是换睡衣,
@@ -1175,14 +1191,28 @@ const GARMENT_KINDS: Array<[RegExp, string]> = [
     'pajamas',
   ],
   [/睡衣|睡裙|睡袍|浴袍|睡裤|家居服|居家服|晨衣/, 'pajamas'],
+  // 泳装必须排在 dress / bra 前面：英文面板习惯写 `one-piece swimsuit`（会被 dress 的
+  // one-piece 抢走）、`bikini top`（会被 bra 抢走），中文写「泳装/泳衣/比基尼/死库水」。
+  // 缺这一类的后果不是「少一个标签」——garmentKind 返回空串，部件 ID 就落到 `piece`/
+  // `legacy`，patch 对不上 ID 会被 acceptClothingChanges 判「未知衣物部件」整条丢弃，
+  // 账本停在上一套，enforceClothing 再拿旧账本覆盖模型 tag → 剧情换了泳装，图里还是原来那套。
+  [CORE_SWIM_EN, 'swim'],
+  [CORE_SWIM_ZH, 'swim'],
+  // 制服类整身衣物：`maid outfit`/`nurse uniform` 这类词 dress 条子认不到，
+  // 落到整身衣物里才能整套换、也才能算进 covers() 的上下半身。
+  [/\b(?:maid outfit|maid uniform|nurse outfit|nurse uniform|cheerleader outfit|apron dress|sailor suit)\b/i, 'dress'],
+  [/女仆装|护士服|啦啦队服|围裙装|学生装/, 'dress'],
+  [/\bbralette\b/i, 'bra'],
+  [/\bapron\b|围裙/, 'shirt'],
+  [/瑜伽服|瑜伽裤|雪纺衫|吊带衫/, 'shirt'],
   [
-    /\b(?:dress|sundress|frock|robe|kimono|yukata|qipao|cheongsam|hanfu|ruqun|ao dai|gown|jumpsuit|bodysuit|uniform|serafuku|sailor uniform|one-piece)\b/i,
+    /\b(?:dress|sundress|frock|robe|kimono|yukata|qipao|cheongsam|hanfu|ruqun|ao dai|gown|jumpsuit|bodysuit|leotard|unitard|uniform|serafuku|sailor uniform|one-piece)\b/i,
     'dress',
   ],
   [
     // 中文款式也要认:正文写「白连衣」「连衣裙」「旗袍」时账本里就是中文 design,
     // 认不出来 → 脱了也渲染不出 `no dress`,画面照旧穿得整整齐齐。
-    /连衣裙|连身裙|连衣|长裙|短裙|裙装|旗袍|汉服|和服|浴衣|礼服|婚纱|长袍|道袍|僧袍|制服|水手服/,
+    /连衣裙|连身裙|连衣|裙装|旗袍|汉服|和服|礼服|婚纱|长袍|道袍|僧袍|制服|水手服|紧身衣|连体衣|体操服/,
     'dress',
   ],
   [/\b(?:panties|underwear|underpants|briefs|thong|panty)\b/i, 'panties'],
@@ -1197,21 +1227,52 @@ const GARMENT_KINDS: Array<[RegExp, string]> = [
     /衬衫|衬衣|上衣|恤|T恤|背心|吊带|毛衣|卫衣|针织衫|开衫|罩衫|小褂|短褂|褂子|兜肚|肚兜|束胸/,
     'shirt',
   ],
-  [/\bskirt\b/i, 'skirt'],
-  [/(?<!连衣)(?<!连身)(?<!长)(?<!短)裙(?!装)/, 'skirt'],
-  [/\b(?:pants|trousers|jeans|shorts|leggings|culottes)\b/i, 'pants'],
-  [/牛仔裤|长裤|短裤|裤子|裤装|西裤|休闲裤|打底裤|皮裤|热裤/, 'pants'],
-  [/\b(?:jacket|blazer|coat|cloak|cape|cardigan|suit)\b/i, 'jacket'],
-  [/外套|夹克|大衣|西装|风衣|披风|斗篷|小袄|棉袄|坎肩/, 'jacket'],
-  [/\b(?:socks|stockings|thighhighs|pantyhose|tights)\b/i, 'socks'],
+  [/\b(?:mini|micro|pleated|pencil|a-line|wrap|tiered|long|short)?\s?skirts?\b/i, 'skirt'],
+  [/(?<!连衣)(?<!连身)裙(?!装)/, 'skirt'],
+  [/\b(?:pants|trousers|jeans|shorts|leggings|culottes|overalls|dungarees|joggers)\b/i, 'pants'],
+  [/牛仔裤|长裤|短裤|裤子|裤装|西裤|休闲裤|打底裤|皮裤|热裤|工装裤|背带裤|瑜伽裤/, 'pants'],
+  [/\b(?:jacket|blazer|coat|raincoat|trench ?coat|cloak|cape|cardigan|suit|tuxedo|waistcoat|vest)\b/i, 'jacket'],
+  [/外套|夹克|大衣|西装|风衣|披风|斗篷|披肩|小袄|棉袄|坎肩|雨衣/, 'jacket'],
+  [/\b(?:socks|stockings|thighhighs|pantyhose|tights|leg ?warmers)\b/i, 'socks'],
   [/丝袜|长袜|短袜|连裤袜|网袜|袜/, 'socks'],
-  [/\b(?:shoes|boots|heels|slippers|sneakers)\b/i, 'shoes'],
+  [/\b(?:shoes|boots|heels|slippers|sneakers|sandals|loafers)\b/i, 'shoes'],
   [/高跟鞋|皮鞋|靴|鞋/, 'shoes'],
 ];
 export function garmentKind(design: string): string {
   const value = String(design ?? '');
   for (const [expression, kind] of GARMENT_KINDS) if (expression.test(value)) return kind;
   return '';
+}
+const DESIGN_EN: Record<string, string> = {
+  pajamas: 'pajamas',
+  dress: 'dress',
+  swim: 'swimsuit',
+  shirt: 'shirt',
+  skirt: 'skirt',
+  pants: 'pants',
+  jacket: 'jacket',
+  bra: 'bra',
+  panties: 'panties',
+  socks: 'socks',
+  shoes: 'shoes',
+};
+/**
+ * 中文款式翻成英文 tag：账本里的 design 常是正文原词（「白泳衣」），直接塞进 prompt
+ * 等于没写（NAI 只认 danbooru 词）。
+ *
+ * 注意不能直接用 garmentKind：中文「长裙」「短裙」是半身裙，而 GARMENT_KINDS 里
+ * `长裙|短裙` 归在 dress 之下（为的是让「连衣裙」不被 skirt 抢走），照搬会把
+ * 「黑色长裙」写成 `black dress`，画面直接从半身裙变成连身裙。
+ */
+export function englishDesign(design: string): string {
+  const value = String(design ?? '').trim();
+  if (!value || !/[\u4e00-\u9fff]/.test(value)) return value;
+  const half = /(?:长|短|百褶|半身|包臀|伞)裙|裙摆/.test(value) && !/连衣裙|连身裙|连体/.test(value);
+  const kind = half ? 'skirt' : garmentKind(value);
+  const base = DESIGN_EN[kind];
+  if (!base) return value;
+  const colour = PROSE_COLOR.find(([expr]) => expr.test(value))?.[1] ?? '';
+  return [colour, base].filter(Boolean).join(' ');
 }
 /** 这些类别脱掉之后要翻成对应的 `no xxx`；其余衣物只能靠 `Not wearing …` 句子表达。 */
 const REMOVED_TAG: Record<string, string> = {
@@ -1221,13 +1282,16 @@ const REMOVED_TAG: Record<string, string> = {
   pants: 'pants',
   skirt: 'skirt',
   dress: 'dress',
+  // swim 没有 `no swimsuit` 这种常用词，脱掉只能靠 nl 句子说；但类别本身必须存在，
+  // 否则 covers() 不会把它算进上/下半身，脱光之后永远判不出 nude。
+  swim: '',
 };
 /** 类别 → 上半身 / 下半身；连体衣物两边都算。 */
 function covers(kind: string): { upper: boolean; lower: boolean; both: boolean } {
   // pajamas 是一整套(上衣＋睡裤/睡裙)，它必须同时算上、下两个半身：
   // 只算 a半身的话，脱睡衣时另一半身仍被记为「穿着」，clothingCaption 就永远
   // 走不到 nude/topless 那一支，画面停在「还穿着白天那套」。
-  const both = kind === 'dress' || kind === 'pajamas';
+  const both = kind === 'dress' || kind === 'pajamas' || kind === 'swim';
   return {
     both,
     upper: both || kind === 'shirt' || kind === 'bra' || kind === 'jacket',
@@ -1522,6 +1586,7 @@ const PIECE_PROSE: Record<string, RegExp> = {
   // 睡衣必须在里面：PIECE_PROSE 少了这一类时，`pieceMentioned` 对睡衣永远返回 false，
   // 于是「睡衣被推到胸口上方」这句谁都不点名 → pieces 空 → 整段床戏的服装一条不记。
   pajamas: /睡衣|睡裙|睡袍|浴袍|睡裤|家居服|居家服|晨衣|pajamas|nightgown|bathrobe/i,
+  swim: /泳衣|泳装|泳裤|比基尼|死库水|swimsuit|swimwear|bikini|monokini|tankini/i,
   pants: /牛仔|(?<!内)裤/,
   shirt: /衬衫|上衣|t恤|T恤|背心|吊带|毛衣|卫衣|连衣|抹胸|吊带|上衣/,
   jacket: /外套|夹克|大衣|西装|风衣/,
@@ -1580,7 +1645,11 @@ export function synthesiseSceneClothing(
   const notes: string[] = [];
   const text = source.replace(/\r\n?/g, '\n');
   if (!text || !before.size) return { changes, notes };
-  const scenes: Array<{ expression: RegExp; mode: 'bath' | 'nude' | 'sex' | 'solo' | 'undress'; label: string }> = [
+  const scenes: Array<{
+    expression: RegExp;
+    mode: 'bath' | 'nude' | 'sex' | 'solo' | 'undress' | 'expose';
+    label: string;
+  }> = [
     { expression: BATH_SCENE, mode: 'bath', label: '洗澡 / 入水' },
     { expression: NUDE_SCENE, mode: 'nude', label: '全裸' },
     { expression: SEX_SCENE, mode: 'sex', label: '亲密情节' },
@@ -1591,6 +1660,13 @@ export function synthesiseSceneClothing(
     // 睡裤连同内裤一起被褪到膝盖」）。旧版只有 SEX_SCENE 才看脱衣动作，
     // 于是这种只写动作不写「做爱」的段落整段漏掉，账本停在穿好那套。
     { expression: DISPLACE_ACTION, mode: 'undress', label: '衣物被移开 / 脱衣动作' },
+    // 再下一层：没有亲热/脱衣词，只有「胸口露出大半」「肩带从一侧滑落到手臂上」。
+    // 泳池边、换衣中途、被扯歪的泳衣都属这一类——旧版这几句既不进 sex 也不进 undress
+    // （DISPLACE_ACTION 要求「衣物+位置移动」，肩带滑落不算），于是账本停在「泳装穿得整整齐齐」，
+    // enforceClothing 再把模型写的 slipped down 剥掉。
+    { expression: BARE_UPPER, mode: 'expose', label: '上身露出' },
+    { expression: BARE_LOWER, mode: 'expose', label: '下身露出' },
+    { expression: SLIP_ACTION, mode: 'expose', label: '衣物滑落' },
   ];
   const handled = new Set<string>();
   for (const scene of scenes) {
@@ -1616,12 +1692,23 @@ export function synthesiseSceneClothing(
         (handled.has(`${name}|bath`) ||
           handled.has(`${name}|nude`) ||
           handled.has(`${name}|sex`) ||
-          handled.has(`${name}|solo`))
+          handled.has(`${name}|solo`) ||
+          handled.has(`${name}|expose`))
       ) {
         handled.add(key);
         continue;
       }
       const storyIndex = storyPosition(text, index);
+      // 同一句被多层同时命中两次（「做爱，他扒开她的衣领，露出整个胸部」既进 sex 又进 expose），
+      // 会产出两条一模一样的 patch，事件数翻倍、渲染也重复。
+      // 只按「同一个人的同一句」去重：不同句子的 sex 与 expose 是独立事件，不能互相压制。
+      const sameMoment = changes.some(
+        (c) => c.name === name && Math.abs(c.sourceLine - storyIndex.line) <= 1,
+      );
+      if (sameMoment) {
+        handled.add(key);
+        continue;
+      }
       const alreadyReported = accepted.some((c) => {
         if (c.name !== name || c.operation === 'init') return false;
         const at = storyPosition(text, Math.min(text.length, absoluteOffset(text, c.sourceLine, c.charOffset)));
@@ -1634,7 +1721,7 @@ export function synthesiseSceneClothing(
       const window = sentenceWindow(text, index, 80);
       const evidence = window.text.trim();
       const pieces: ClothingPiece[] = [];
-      if (scene.mode === 'sex' || scene.mode === 'solo') {
+      if (scene.mode === 'sex' || scene.mode === 'solo' || scene.mode === 'expose') {
         // 严格按剧情：没写脱衣/裸露就不动账本；写了「隔着衣服」更是明确不脱。
         if (OVER_CLOTHES.test(evidence)) {
           notes.push(`${name}: 亲密情节但原文写着隔着衣物/没有脱，服装账本保持原样`);
@@ -1668,8 +1755,11 @@ export function synthesiseSceneClothing(
           if (location && location !== 'worn' && location !== 'unknown') continue;
           const kind = garmentKind(piece.design);
           const mentioned = pieceMentioned(kind, evidence);
-          const upper = kind === 'shirt' || kind === 'bra' || kind === 'jacket' || kind === 'dress';
-          const lower = kind === 'pants' || kind === 'skirt' || kind === 'panties' || kind === 'dress';
+          // 用 covers() 而不是手写枚举：手写枚举每加一个品类（泳装、睡衣）就会漏一次，
+          // 漏掉的表现是「泳衣肩带滑落、胸口露出大半」不记 exposure → 图里泳衣穿得整整齐齐。
+          const cover = covers(kind);
+          const upper = cover.upper;
+          const lower = cover.lower;
           // 优先级：整具身子已经露出来 > 真脱掉 > 只把挡住的部分亮出来 > 手/道具已经进去了 > 肩带垮落 > 掀起裙摆。
           // 中间那层是核心修正——「衣领被扒开、整个胸部露出来」里衣服还在身上，
           // 记成 removed 会让渲染变成 no shirt + 上半身光着，比实际脱得更多。
@@ -1793,7 +1883,7 @@ export function synthesiseSceneClothing(
 // 只认真正的换装动作。裸的「换了一」会命中「换了一下姿势」「换了一边」，
 // 一旦采纳就把账本款式换掉——长牛仔裤被写成短牛仔裤就是这么来的。
 const CHANGE_SCENE =
-  /换上|换成|换好|换上一|换了一身|换了|换身|新衣|更衣|换装|穿回|重新穿|披上|套上|系上/;
+  /换上|换成|换好|换上一|换了一身|换了|换身|新衣|更衣(?!室|间|房|处)|换装|穿回|重新穿|披上|套上|系上/;
 /**
  * 正文在**陈述她此刻的穿着**（不是动作，是状态）。
  *
@@ -1804,7 +1894,7 @@ const CHANGE_SCENE =
 const WEARING_STATE = /穿着|身穿|身着|穿了|套着|披着|一身|换了|换成了|已经是/;
 // 能接管账本的主衣物类别。pajamas 必须在里面:换睡衣是最典型的「整套换」，
 // 它不在这个集合里时,「换上睡衣」这句永远走不到接管分支,账本停在白天那套。
-const MAIN_GARMENTS = new Set(['shirt', 'skirt', 'pants', 'dress', 'pajamas']);
+const MAIN_GARMENTS = new Set(['shirt', 'skirt', 'pants', 'dress', 'pajamas', 'swim']);
 /**
  * 剧情明确换装、但模型只写了 patch（或压根没报）时，采纳图片里模型给的新衣物，
  * 避免「剧情换了衣服，画面还是旧账本那套」。
@@ -2015,9 +2105,15 @@ export function adoptStoryClothing(
   const notes: string[] = [];
   const text = String(source ?? '').replace(/\r\n?/g, '\n');
   if (!text || !before.size) return { changes, notes };
-  const SWAP = /换上|换成|换好|换上一|换了一身|换了一|换了|换身|更衣|换装|改穿|改成/;
+  // 「更衣」必须排除「更衣室 / 更衣间」——那是地点。
+  // 旧正则命中地点词，「林晚晴站在更衣室的镜子前，白色衬衫的扣子被一颗颗解开」
+  // 会被当成一句换装，凭空给账本塞一件白衬衫。
+  const SWAP = /换上|换成|换好|换上一|换了一身|换了一|换了|换身|更衣(?!室|间|房|处)|换装|改穿|改成/;
   const PUT_ON = /穿上|穿回|披上|套上|系上|裹上|扣上/;
-  const STATED = /穿着|身穿|身着|穿了|一身/;
+  // 「只剩一件白色泳衣」「只穿着比基尼」也是陈述句：网文写换装很少规规矩矩写「换上」，
+  // 更常见的是「她拉开帘子走出来，身上只剩一件白色泳衣」——旧词表里没有「只剩」，
+  // 这类句子整条被当成普通描写跳过，泳装永远进不了账本。
+  const STATED = /穿着|身穿|身着|穿了|一身|只穿|只(?:剩|留)|仅(?:剩|穿|着)|身上只剩|裹着|披着/;
   // 脱与穿在同一句里频繁共现（"把衬衫褪下来，换上新的连衣裙"）：旧版见到「脱下」就整句跳过，
   // 于是那一句的换装整条丢失。这里只在「整句只有脱、没有任何穿戴词」时才跳过。
   const OFF_ONLY = /没穿|未穿|不穿|没有穿/;
@@ -2069,7 +2165,7 @@ export function adoptStoryClothing(
       handled.add(key);
       const worn = record.pieces.filter((p) => (p.state.location ?? 'worn') === 'worn');
       const sameKind = worn.find((p) => garmentKind(p.design) === kind);
-      const whole = kind === 'dress' || kind === 'pajamas';
+      const whole = kind === 'dress' || kind === 'pajamas' || kind === 'swim';
       // 连体衣物(连衣裙/睡衣)换上去等于整套换掉；半身衣物只换那一件——
       // 后者用 change 会把上衣、内裤一起从账本里删掉，画面反而比正文更露。
       if (whole && (putOn || swap || stated)) {
@@ -2098,7 +2194,7 @@ export function adoptStoryClothing(
     // 用 change（整套重记）而不是 patch：patch 只能改已存在的部件 ID，
     // 新加的衬衫/长裙 ID 在旧账本里不存在，整条会被判「局部变化指向未知衣物部件」丢弃。
     const wornWhole = record.pieces.find(
-      (p) => (p.state.location ?? 'worn') === 'worn' && ['dress', 'pajamas'].includes(garmentKind(p.design)),
+      (p) => (p.state.location ?? 'worn') === 'worn' && ['dress', 'pajamas', 'swim'].includes(garmentKind(p.design)),
     );
     if (wornWhole && (putOn || swap || stated)) operation = 'change';
     else if (wornWhole) {

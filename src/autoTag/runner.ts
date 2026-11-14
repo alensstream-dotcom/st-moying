@@ -1383,25 +1383,32 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     );
     const scope = `${chatId}|${floor}|${swipeId ?? 0}|${expectedStory}`;
     if (!slot) {
-      // 剧情场景补账本：洗澡/全裸/亲密情节即使没逐件写脱衣，也按常识落状态，
-      // 否则旧账本会把画面按「全套穿着」强行覆盖回去。
-      const scene = synthesiseSceneClothing(source, activeEntries, wardrobe, accepted.changes);
-      accepted.changes.push(...scene.changes);
-      accepted.rejected.push(...scene.notes);
-      // 场景翻篇（换天/出门）时把上一段脱掉的衣物自动穿回：账本里的 removed 是永久的，
-      // 不复位就会出现「第二天日常剧情女主还光着上半身出场」。只在本楼没有脱衣动作时触发。
-      const redress = redressForNewScene(source, activeEntries, wardrobe);
-      if (redress.changes.length) {
-        accepted.changes.push(...redress.changes);
-        accepted.rejected.push(...redress.notes);
-      }
-      // 正文自己点名了换装（「换上了睡衣」「换上红裙」「穿着黑吊带」）时，
+      // 正文自己点名了换装（「换上了睡衣」「只剩一件白色泳衣」「穿着黑吊带」）时，
       // 不依赖模型是否把新衣服写进 tag —— 旧链路只从图片 tag 取新衣物，
       // 模型没画那件就整段落空，账本停在白天那套。
+      //
+      // 顺序很重要：必须排在场景推断**之前**。场景推断按「当前账本有什么部件」去改状态，
+      // 账本还停在白衬衫长裙时，它会把「泳衣肩带滑落、胸口露出大半」记到已经不存在的
+      // shirt_story/bra_story 上（patch 找不到部件 → 静默失效），
+      // 结果画面里泳衣穿得整整齐齐，正文写的走光和没有一样。
       const storyWear = adoptStoryClothing(source, activeEntries, wardrobe);
       if (storyWear.changes.length) {
         accepted.changes.push(...storyWear.changes);
         accepted.rejected.push(...storyWear.notes);
+      }
+      // 上面这些事件按位置生效之后，才是「这张图那一刻身上到底是什么」。
+      const stateBeforeScene = clothingAt(wardrobe, accepted.changes, scope);
+      // 剧情场景补账本：洗澡/全裸/亲密情节即使没逐件写脱衣，也按常识落状态，
+      // 否则旧账本会把画面按「全套穿着」强行覆盖回去。
+      const scene = synthesiseSceneClothing(source, activeEntries, stateBeforeScene, accepted.changes);
+      accepted.changes.push(...scene.changes);
+      accepted.rejected.push(...scene.notes);
+      // 场景翻篇（换天/出门）时把上一段脱掉的衣物自动穿回：账本里的 removed 是永久的，
+      // 不复位就会出现「第二天日常剧情女主还光着上半身出场」。只在本楼没有脱衣动作时触发。
+      const redress = redressForNewScene(source, activeEntries, clothingAt(wardrobe, accepted.changes, scope));
+      if (redress.changes.length) {
+        accepted.changes.push(...redress.changes);
+        accepted.rejected.push(...redress.notes);
       }
       // 剧情明确换装但模型只写了 patch/漏报时，采纳图片里的新衣物，避免画面停在旧套装。
       for (const image of plan.images) {
