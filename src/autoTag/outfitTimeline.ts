@@ -102,7 +102,7 @@ const STATES: Record<string, string[]> = {
   exposure: ['covered', 'partial', 'bare', 'unknown'],
 };
 const ACTION =
-  /换|穿|脱|褪|披|套|扣|解|系|敞|掀|撩|拨|拉|放|拿|卷|撕|破|扯|整理|恢复|wear|dress|chang|put|tak|remov|unfasten|fasten|open|clos|lift|pull|lower|roll|tear|torn|wet/i;
+  /换|穿|脱|褪|披|套|扣|解|系|敞|掀|撩|拨|拉|放|拿|卷|撕|破|扯|整理|恢复|洗|澡|泡|淋|浴|浸|搓|冲|擦|wear|dress|chang|put|tak|remov|unfasten|fasten|open|clos|lift|pull|lower|roll|tear|torn|wet/i;
 const REPLACE =
   /换上|换下|换成|换衣|更衣|换了.{0,12}(衣|裙|裤|服|袍)|重新穿|穿回|穿上|套上|披上|change.{0,16}(clothes|outfit|into)|put.{0,8}on|redress/i;
 const VISUAL_MARKUP = /<\/?(?:bbi_image|tag|nl|negative|characters|size)\b/i;
@@ -215,6 +215,18 @@ export function clothingBefore(
     if (saved) {
       if (!saved.delta) state.clear();
       for (const entry of saved.entries) state.set(entry.name, entry);
+    } else if (raw?.v === 2) {
+      /**
+       * hash 链断掉时不能把这一层的账本整段丢掉。
+       *
+       * `readClothingFloor` 会校验 upstreamHash（前面所有楼的累积哈希）。只要前面任何一层
+       * 被重新分析、或在它前面插入/删掉一楼，链就断了，这一层返回 null。旧代码在 `raw.v === 2`
+       * 时既不进 saved 分支、也不进 legacy 分支，于是这一层的 entries 被**静默忽略**，
+       * 整个账本变空——下一楼因此推断不出洗澡/脱衣（实测第 49→50 楼、44→45 楼都是这个）。
+       * 这里退回「只信本层自己写下的 entries」，宁可少一层继承，也不丢已有记录。
+       */
+      for (const entry of (raw as Partial<ClothingFloor>).entries ?? [])
+        if (entry?.name) state.set(entry.name, entry as unknown as ClothingRecord);
     } else if (raw?.v !== 2) {
       const old = readOutfitState(message);
       if (old?.swipe === (message.swipe_id ?? 0)) {
@@ -548,7 +560,18 @@ export function acceptClothingChanges(
         );
         return existing ? { ...p, id: existing.id, design: '' } : null;
       });
-      if (mapped.length && mapped.every(Boolean)) {
+      // 「拉开抽屉拿出一件白衬衫和一条黑长裙，穿上内衣，把衬衫扣好」——
+      // 这句一个「换上/换装」都没有，但确实是把新衣服穿上了身（隔夜换衣几乎都这么写）。
+      // 旧版只看 换上|更衣|换装，于是这种写法被判「非明确换装」整条丢弃，
+      // 账本停在睡衣上，第二天图里她还是睡衣。只要出现穿戴动词且点名了旧账本没有的
+      // 衣物类别，就允许整套重记。
+      const fresh = c.pieces.some(
+        (p) => !old.pieces.some((o) => garmentKind(o.design) === garmentKind(p.design)),
+      );
+      const dressing = /穿上|套上|披上|扣好|扣上|拉上|裹上|系上|拿出|取出/.test(c.evidence);
+      if (fresh && dressing) {
+        // 新衣物确实是新穿的：保留 change，旧部件由 applyOne 一并退出账本。
+      } else if (mapped.length && mapped.every(Boolean)) {
         c.operation = 'patch';
         c.pieces = mapped as ClothingPiece[];
       } else if (
@@ -581,18 +604,33 @@ export function acceptClothingChanges(
         continue;
       }
     }
-    const line = source.replace(/\r\n?/g, '\n').split('\n');
+    const flat = source.replace(/\r\n?/g, '\n');
+    const line = flat.split('\n');
     const preceding = [
       ...line.slice(0, c.sourceLine),
       (line[c.sourceLine] ?? '').slice(0, c.charOffset || undefined),
     ].join('\n');
+    /**
+     * 证据句前后各一小段都要看。
+     *
+     * 主语常常写在动作句之后（「"我先去洗个澡。"林晚晴站起来」），`subjectEvidence` 就是这句，
+     * 而 `preceding` 只到 charOffset 为止、且 charOffset 常常落在主语名字中间
+     * （证据句与主语句紧邻时尤其如此），`preceding.includes(subjectQuote)` 于是恒为 false，
+     * 明明已经认出主语还是被判「缺少可定位到该人物的原文动作证据」。取前后各 240 字即可。
+     */
+    const absolute =
+      line.slice(0, c.sourceLine).reduce((total, text) => total + text.length + 1, 0) + (c.charOffset || 0);
+    const near = flat.slice(Math.max(0, absolute - 240), Math.min(flat.length, absolute + 240));
     const aliases = [...new Set([c.name, c.reportedName || '', ...characterAliases(c.name)])].filter(Boolean);
     const subjectQuote = c.subjectEvidence || '';
+    // 引号/顿号这类行首符号不参与定位：证据句常以「"…」开头，而 charOffset 恰好停在全角引号之后，
+    // 直接 includes 会差一个字符，明明认得主语还是被判无主。
+    const subjectText = subjectQuote.replace(/^[\s「『“"'（(，,、]+/, '');
     const explicitSubject =
       aliases.some((name) => c.evidence.includes(name)) ||
-      (!!subjectQuote &&
-        preceding.includes(subjectQuote) &&
-        aliases.some((name) => subjectQuote.includes(name)));
+      (!!subjectText &&
+        (preceding.includes(subjectText) || near.includes(subjectText)) &&
+        aliases.some((name) => subjectText.includes(name)));
     // Pronoun-only actions may continue the uniquely nearest named subject.
     const actionStart = preceding.lastIndexOf(c.evidence);
     const context = preceding.slice(Math.max(0, actionStart - 500), actionStart);
@@ -700,11 +738,14 @@ function applyOne(state: ClothingState, c: ClothingChange, scope: string): void 
   if (c.operation === 'patch') {
     for (const p of c.pieces) {
       const piece = old?.pieces.find((g) => g.id === p.id);
-      if (piece)
-        Object.assign(
-          piece.state,
-          Object.fromEntries(Object.entries(p.state).filter(([, value]) => value !== 'unknown')),
-        );
+      if (!piece) continue;
+      // patch 带 design 时才换款式（同一个槽位换了一件同类的衣服）；
+      // 空的 design 仍表示「只改状态、款式沿用」，老行为不变。
+      if (p.design && p.design.trim()) piece.design = p.design.trim();
+      Object.assign(
+        piece.state,
+        Object.fromEntries(Object.entries(p.state).filter(([, value]) => value !== 'unknown')),
+      );
     }
   } else if (c.operation === 'add' && old) {
     old.pieces.push(
@@ -851,6 +892,10 @@ export function clothingTrace(message: STMessage | undefined, rawTag: string): s
 }
 /** 中文剧情里的常见衣物词 → 英文服装 tag。只用于「首次建档」，永不覆盖已有账本。 */
 const PROSE_GARMENT: Array<[RegExp, string]> = [
+  // 睡衣类必须排在「裙」「裤」前面:睡裙会被 skirt 抢走、睡裤会被 pants 抢走,
+  // 结果「换上睡衣」这句认不出衣物 → adoptChangedClothing 直接 return,
+  // 账本停在白天那套 —— 用户看到的「剧情说换了睡衣,图里还是原来那套」。
+  [/睡裙|睡袍|浴袍|睡衣裤|睡裤|睡衣|家居服|居家服|晨衣/, 'pajamas'],
   [/短牛仔裤|牛仔短裤/, 'denim shorts'],
   [/长牛仔裤|直筒牛仔裤/, 'long jeans'],
   [/牛仔裤/, 'jeans'],
@@ -884,17 +929,35 @@ const PROSE_COLOR: Array<[RegExp, string]> = [
   [/灰/, 'grey'],
   [/米|卡其/, 'beige'],
 ];
+/**
+ * 从一句中文里认出**所有**衣物（含紧邻的颜色）；认不出返回 []。
+ *
+ * 旧版只返回第一件，于是「拿出一件干净的白色衬衫和一条黑色长裙」只记下裙子，
+ * 账本里她始终没有衬衫 —— 换装看起来只换了一半。这里按词表优先级逐条认领，
+ * 已被前面（更具体）词条占用的区间不再重复命中，所以「睡裙」不会被「裙」抢走、
+ * 「连衣裙」不会被记成两件。
+ */
+export function proseGarments(sentence: string): string[] {
+  if (!sentence) return [];
+  const claimed: Array<[number, number]> = [];
+  const found: Array<[number, string]> = [];
+  for (const [expression, design] of PROSE_GARMENT) {
+    for (const match of sentence.matchAll(new RegExp(expression.source, 'g'))) {
+      const index = match.index ?? 0;
+      const end = index + match[0].length;
+      if (claimed.some(([a, b]) => index < b && end > a)) continue;
+      claimed.push([index, end]);
+      const before = sentence.slice(Math.max(0, index - 4), index);
+      const color = PROSE_COLOR.find(([expr]) => expr.test(before))?.[1] ?? '';
+      found.push([index, [color, design].filter(Boolean).join(' ')]);
+    }
+  }
+  return found.sort((a, b) => a[0] - b[0]).map(([, design]) => design);
+}
+
 /** 从一句中文里认出衣物（含紧邻的颜色）；认不出返回 ''。 */
 export function proseGarment(sentence: string): string {
-  if (!sentence) return '';
-  for (const [expression, design] of PROSE_GARMENT) {
-    const match = expression.exec(sentence);
-    if (!match) continue;
-    const before = sentence.slice(Math.max(0, match.index - 4), match.index);
-    const color = PROSE_COLOR.find(([expr]) => expr.test(before))?.[1] ?? '';
-    return [color, design].filter(Boolean).join(' ');
-  }
-  return '';
+  return proseGarments(sentence)[0] ?? '';
 }
 /** 只认点名到本人的穿搭句，避免把别人的衣服算到她头上，也跳过脱衣/否定语境。 */
 function storyGarmentNear(source: string, names: string[], line: number, offset: number): string {
@@ -973,7 +1036,7 @@ export function savedImageClothing(
   return state;
 }
 const CLOTHING_WORD =
-  /\b(?:dress|shirt|skirt|pants|trousers|shorts|jeans|jacket|blazer|coat|suit|bra|panties|underwear|lingerie|stockings|thighhighs|pantyhose|tights|socks|shoes|boots|heels|uniform|serafuku|hanfu|kimono|robe|collar|sleeves?|clothes|clothing|outfit|sash|belt|cloak|cape|gloves|swimsuit|bikini|apron|corset|hoodie|sweater|cardigan|blouse|tunic|ruqun|hakama|yukata|obi|geta|miko|qipao|cheongsam|necktie|bow tie|sneakers|loafers|baseball cap|dudou|chest wrap|underpants|undergarment)\b/i;
+  /\b(?:dress|shirt|skirt|pants|trousers|shorts|jeans|jacket|blazer|coat|suit|bra|panties|underwear|lingerie|stockings|thighhighs|pantyhose|tights|socks|shoes|boots|heels|uniform|serafuku|hanfu|kimono|robe|collar|sleeves?|clothes|clothing|outfit|sash|belt|cloak|cape|gloves|swimsuit|bikini|apron|corset|hoodie|sweater|cardigan|blouse|tunic|ruqun|hakama|yukata|obi|geta|miko|qipao|cheongsam|necktie|bow tie|sneakers|loafers|baseball cap|dudou|chest wrap|underpants|undergarment|pajamas|pyjamas|nightgown|nightdress|nightwear|negligee|bathrobe|sleepwear)\b/i;
 /** 戴在头上、脸上、脖子或腕上的饰物：归 appearance 的 extra，服装层不许把它当衣服剥掉。 */
 const BODY_ORNAMENT =
   /\b(?:hair ribbon|hair band|hairband|hairpin|hair clip|hair ornament|ribbon|\b(?:neck|choker|circlet|tiara|ankle|wrist) ?(?:lace|band|ribbon|chain|let|cuffs?)\b|glasses|mask|earrings?|earring|piercing|necklace|pendant|choker|bracelet|bangle|anklet|ring|beret|headband|veil|crown)/i;
@@ -1104,6 +1167,14 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
  * `cheongsam`、`qipao` 这类词会被后面的条子漏掉，账本渲染成空串，服装层整段失效。
  */
 const GARMENT_KINDS: Array<[RegExp, string]> = [
+  // 睡衣排在最前:它同时盖住上半身和下半身,而且「睡裙」「睡裤」会被后面的
+  // 「裙」「裤」条子抢走 —— 抢走之后就变成「换了一条裙子」而不是换睡衣,
+  // 上装留在账本里,图里于是还是原来那套。
+  [
+    /\b(?:pajamas|pyjamas|nightgown|nightdress|nightwear|negligee|bathrobe|sleepwear|housewear)\b/i,
+    'pajamas',
+  ],
+  [/睡衣|睡裙|睡袍|浴袍|睡裤|家居服|居家服|晨衣/, 'pajamas'],
   [
     /\b(?:dress|sundress|frock|robe|kimono|yukata|qipao|cheongsam|hanfu|ruqun|ao dai|gown|jumpsuit|bodysuit|uniform|serafuku|sailor uniform|one-piece)\b/i,
     'dress',
@@ -1153,7 +1224,10 @@ const REMOVED_TAG: Record<string, string> = {
 };
 /** 类别 → 上半身 / 下半身；连体衣物两边都算。 */
 function covers(kind: string): { upper: boolean; lower: boolean; both: boolean } {
-  const both = kind === 'dress';
+  // pajamas 是一整套(上衣＋睡裤/睡裙)，它必须同时算上、下两个半身：
+  // 只算 a半身的话，脱睡衣时另一半身仍被记为「穿着」，clothingCaption 就永远
+  // 走不到 nude/topless 那一支，画面停在「还穿着白天那套」。
+  const both = kind === 'dress' || kind === 'pajamas';
   return {
     both,
     upper: both || kind === 'shirt' || kind === 'bra' || kind === 'jacket',
@@ -1188,6 +1262,11 @@ export function inferClothingState(
   if (off) state.location = 'removed';
   if (on) state.location = 'worn';
   if (lifted) state.arrangement = 'lifted';
+  // 「睡衣被推到胸口上方」：衣服还在身上，但胸前已经全露出来了。
+  // 只记 arrangement 的话渲染只会多一句 clothes around ankles，画面照样穿着上衣，
+  // 正文里最直观的那半裸就丢了。
+  if (/(?:推到|推至|推上|掀到|掀至|掀上|撩到|撩上|拉到)[^，。！？；]{0,8}(?:胸口|胸前|胸上|胸口上方|脖颈|脖子|锁骨)/.test(evidence))
+    state.exposure = 'bare';
   if (aside) state.arrangement = 'pulled_aside';
   if (around) state.arrangement = /踝|脚|地/.test(evidence) ? 'around_ankles' : 'lowered';
   if (open) state.fastening = 'open';
@@ -1243,11 +1322,115 @@ function nearestNamedEntry(text: string, index: number, entries: CharTagEntry[])
         best = entry.name;
       }
       const after = text.indexOf(name, index);
-      if (before < 0 && after >= 0 && after - index <= 24 && bestAt < 0) best = entry.name;
+      // 关键词后面紧跟人名（「先洗个澡。」林晚晴站起来）也算这个人。
+      // 旧版这里只写 best 不写 bestAt，函数末尾又按 bestAt >= 0 判定，
+      // 于是这个分支永远被丢掉 —— 名字写在动作词之后的句子整段推断不出来。
+      if (before < 0 && after >= 0 && after - index <= 24 && bestAt < 0) {
+        bestAt = before;
+        best = entry.name;
+        return best;
+      }
     }
   return bestAt >= 0 ? best : '';
 }
-const BATH_SCENE = /洗澡|沐浴|泡澡|泡温泉|淋浴|冲凉|入浴|浴缸|浴池|温泉|泡进|浸(?:在|入).{0,6}(?:水|浴)/;
+
+/** 旧名保留：句子里「最先出现的名字」通常就是主语。 */
+function firstNamedEntry(text: string, entries: CharTagEntry[]): string {
+  let best = '';
+  let bestAt = Infinity;
+  for (const entry of entries)
+    for (const name of [entry.name, ...characterAliases(entry.name), ...candidateAliasesForEntry(entry)]) {
+      if (!name) continue;
+      const at = text.indexOf(name);
+      if (at >= 0 && at < bestAt) {
+        bestAt = at;
+        best = entry.name;
+      }
+    }
+  return best;
+}
+
+/**
+ * 这一句动作的主语是谁。
+ *
+ * 旧版一律用「句尾之前最近提到的名字」，于是「她…盖住苏晚的肩膀…她拉开抽屉拿出白衬衫」
+ * 会把换装记到苏晚头上 —— 苏晚只是被盖了被子。顺序应该是：
+ *   1. 本句里最先出现的名字（主语通常在前）；
+ *   2. 没有名字就看前几句的句首主语（「林晚晴先醒，她…」）；
+ *   3. 最后才退回「往前最近提到的名字」。
+ */
+function subjectOf(text: string, start: number, end: number, entries: CharTagEntry[]): string {
+  const inside = firstNamedEntry(text.slice(start, Math.max(start, end)), entries);
+  if (inside) return inside;
+  const before = text.slice(Math.max(0, start - 400), start);
+  const sentences = before
+    .split(/(?<=[。！？!?\n])/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .reverse()
+    .slice(0, 3);
+  for (const sentence of sentences) {
+    const head = sentence.replace(/^[\s「『“"'（(，,、]+/, '').slice(0, 24);
+    const named = firstNamedEntry(head, entries);
+    if (named) return named;
+  }
+  return nearestNamedEntry(text, start, entries);
+}
+
+/**
+ * 主语出处的那一句原文。
+ *
+ * 为什么要带回去：`acceptClothingChanges` 校验「变化必须能定位到该人物」时，
+ * 只写代词的句子（「她拉开抽屉…穿上衬衫」）本来靠「往前 500 字里最近提到的名字」判定，
+ * 而最近提到的往往是别人（「盖住苏晚的肩膀」），整条换装就被判成无主丢弃。
+ * 把真正的主语句一起交上去，校验就能按同一口径认人。
+ */
+function subjectQuoteOf(
+  text: string,
+  start: number,
+  end: number,
+  entries: CharTagEntry[],
+  name: string,
+): string {
+  const inside = text.slice(start, Math.max(start, end));
+  if (inside.includes(name)) {
+    const window0 = sentenceWindow(text, start, Math.max(80, inside.length));
+    return window0.text.trim();
+  }
+  const before = text.slice(Math.max(0, start - 400), start);
+  const sentences = before
+    .split(/(?<=[。！？!?\n])/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .reverse()
+    .slice(0, 3);
+  for (const sentence of sentences) {
+    const head = sentence.replace(/^[\s「『“"'（(，,、]+/, '').slice(0, 24);
+    if (firstNamedEntry(head, entries) === name) return sentence;
+  }
+  /**
+   * 人名也可能写在这句之后（「"我先去洗个澡。"林晚晴站起来…」）。
+   * `subjectOf` 的第三级（`nearestNamedEntry` 的 after 分支）认的就是这种写法，
+   * 这里必须用同一口径往前找，否则主语判定成林晚晴、证据却给不出她的名字，
+   * 整条洗澡推断仍被判「缺少可定位到该人物的原文动作证据」丢掉。
+   */
+  const after = text.slice(end, Math.min(text.length, end + 200));
+  const next = after
+    .split(/(?<=[。！？!?\n])/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 2);
+  for (const sentence of next) {
+    const head = sentence.replace(/^[\s「『“"'（(，,、]+/, '').slice(0, 24);
+    if (firstNamedEntry(head, entries) === name) return sentence;
+  }
+  return '';
+}
+// 词表要覆盖网文的实际写法：正文几乎不写「洗澡」，而是「洗个澡」「冲个澡」「进了浴室」
+// 「站在花洒下」。旧表只有「洗澡/沐浴/泡澡…」，于是整章浴室戏一条事件都推断不出来，
+// 账本停在白天那套 —— 用户报的「明明洗澡了图里还穿着」就是这个。
+const BATH_SCENE =
+  /洗澡|洗(?:了|个|完|过)?澡|冲(?:了|个|完)?澡|沐浴|泡澡|泡温泉|淋浴|冲凉|入浴|浴缸|浴池|温泉|泡进|浸(?:在|入).{0,6}(?:水|浴)|浴室|花洒|喷头|水声|水龙头|盥洗|皂泡|沐浴露|洗发水/;
 const NUDE_SCENE = /赤身裸体|一丝不挂|全裸|赤裸.{0,4}(?:身|躯)|脱得精光|未着寸缕|衣服全脱|浑身赤裸/;
 /** 只有真正发生关系/裸露身体的词才算亲密情节；亲吻、隔着衣服的抚摸不算。 */
 const SEX_SCENE =
@@ -1322,11 +1505,23 @@ const HAND_OR_TOY_LOWER =
   /(?:震动棒|跳蛋|按摩棒|假阳具|手指|两指|玉手|指腹|指尖|指节)[^。！？；]{0,24}(?:小穴|花穴|蜜穴|穴内|阴道|私处|腿心|股间|下身|体内)|(?:探入|伸进|探进|摸进)[^。！？；]{0,8}(?:裙|腿|股)/;
 /** 肩带垮落/裙腰下滑这类「衣服自己滑下去」。 */
 const SLIP_ACTION = /(?:肩带|吊带|衣襟|衣领|领口|裙腰|裤腰)[^。！？；]{0,6}(?:垮落|滑落|下落|松脱|滑下)|(?:垮落|滑落)[^。！？；]{0,6}(?:肩带|吊带|裙|衣)/;
+/**
+ * 衣物被人推/掀/褪到别的位置——没有「脱」字，但画面已经变了。
+ *
+ * 真实正文写「粉色的睡衣被推到胸口上方，睡裤连同内裤一起被褪到膝盖」，一个「脱下/褪下」
+ * 都没有，旧版 TAKEOFF_ACTION 整句不命中，于是这一整章床戏的服装账本一条不记。
+ * 这里只认「衣物 + 位置移动」这一种语序，且仍然需要件名被点名才生效。
+ */
+export const DISPLACE_ACTION =
+  /(?:睡衣|睡裙|上衣|衫|衣襟|裙摆|裙子|睡裤|长裤|短裤|内裤|胸罩|内衣|吊带)[^，。！？；]{0,12}(?:推到|推至|推上|掀到|掀上|掀起来|撩起|撩到|拉低|拉下|褪到|褪至|滑到|扯到|拨到一下|褪去)|(?:从头顶|从头上|整件)[^，。！？；]{0,6}(?:脱掉|脱下|褪下)/;
 const PIECE_PROSE: Record<string, RegExp> = {
   panties: /内裤|底裤|丁字裤/,
   bra: /胸罩|文胸|内衣|奶罩/,
   skirt: /裙/,
   dress: /裙|旗袍|礼服|汉服|和服|浴衣|连衣/,
+  // 睡衣必须在里面：PIECE_PROSE 少了这一类时，`pieceMentioned` 对睡衣永远返回 false，
+  // 于是「睡衣被推到胸口上方」这句谁都不点名 → pieces 空 → 整段床戏的服装一条不记。
+  pajamas: /睡衣|睡裙|睡袍|浴袍|睡裤|家居服|居家服|晨衣|pajamas|nightgown|bathrobe/i,
   pants: /牛仔|(?<!内)裤/,
   shirt: /衬衫|上衣|t恤|T恤|背心|吊带|毛衣|卫衣|连衣|抹胸|吊带|上衣/,
   jacket: /外套|夹克|大衣|西装|风衣/,
@@ -1385,19 +1580,27 @@ export function synthesiseSceneClothing(
   const notes: string[] = [];
   const text = source.replace(/\r\n?/g, '\n');
   if (!text || !before.size) return { changes, notes };
-  const scenes: Array<{ expression: RegExp; mode: 'bath' | 'nude' | 'sex' | 'solo'; label: string }> = [
+  const scenes: Array<{ expression: RegExp; mode: 'bath' | 'nude' | 'sex' | 'solo' | 'undress'; label: string }> = [
     { expression: BATH_SCENE, mode: 'bath', label: '洗澡 / 入水' },
     { expression: NUDE_SCENE, mode: 'nude', label: '全裸' },
     { expression: SEX_SCENE, mode: 'sex', label: '亲密情节' },
     // 排在 sex 之后:有男主在场的场面由 sex 分支处理(它认更多动作词)。
     // 这里只兜「没有男主、但正文明确在自慰/用道具」的场面——旧版这一类整段漏掉。
     { expression: SOLO_SCENE, mode: 'solo', label: '独自的情色场面' },
+    // 最后一层:正文没写任何场景词,但明确在脱衣服（「睡衣被推到胸口上方，
+    // 睡裤连同内裤一起被褪到膝盖」）。旧版只有 SEX_SCENE 才看脱衣动作，
+    // 于是这种只写动作不写「做爱」的段落整段漏掉，账本停在穿好那套。
+    { expression: DISPLACE_ACTION, mode: 'undress', label: '衣物被移开 / 脱衣动作' },
   ];
   const handled = new Set<string>();
   for (const scene of scenes) {
     for (const match of text.matchAll(new RegExp(scene.expression.source, 'g'))) {
       const index = match.index ?? 0;
-      const name = nearestNamedEntry(text, index, entries);
+      // 主语优先取「本句最先出现的名字」，其次看前几句的句首主语。
+      // 旧版直接用句尾之前最近提到的名字，于是「她…盖住苏晚的肩膀…她拉开抽屉」
+      // 会把换装记到苏晚头上 —— 苏晚只是被盖了被子。
+      const window0 = sentenceWindow(text, index, 80);
+      const name = subjectOf(text, window0.start, window0.end, entries);
       const record = name ? before.get(name) : undefined;
       if (!record) continue;
       if (record.suitMode === 'always') {
@@ -1406,6 +1609,18 @@ export function synthesiseSceneClothing(
       }
       const key = `${name}|${scene.mode}`;
       if (handled.has(key)) continue;
+      // 脱衣动作是最后一层兜底：同一楼里已经按洗澡/全裸/亲密/独自场面记过这个人，
+      // 就不再重复记一遍，否则同一批部件会被推两次、事件数也跟着翻倍。
+      if (
+        scene.mode === 'undress' &&
+        (handled.has(`${name}|bath`) ||
+          handled.has(`${name}|nude`) ||
+          handled.has(`${name}|sex`) ||
+          handled.has(`${name}|solo`))
+      ) {
+        handled.add(key);
+        continue;
+      }
       const storyIndex = storyPosition(text, index);
       const alreadyReported = accepted.some((c) => {
         if (c.name !== name || c.operation === 'init') return false;
@@ -1423,7 +1638,6 @@ export function synthesiseSceneClothing(
         // 严格按剧情：没写脱衣/裸露就不动账本；写了「隔着衣服」更是明确不脱。
         if (OVER_CLOTHES.test(evidence)) {
           notes.push(`${name}: 亲密情节但原文写着隔着衣物/没有脱，服装账本保持原样`);
-          handled.add(key);
           continue;
         }
         const naked = NAKED_STATE.test(evidence);
@@ -1445,7 +1659,8 @@ export function synthesiseSceneClothing(
           !slipped
         ) {
           // 亲吻、隔着衣服的抚摸、单纯的爱抚描写：不推断任何脱衣。
-          handled.add(key);
+          // 同样不能在这里记 handled：这一句没信号只说明这一句不脱，
+          // 不等于这一楼后面那句「睡裤被褪到膝盖」也该跳过。
           continue;
         }
         for (const piece of record.pieces) {
@@ -1492,33 +1707,72 @@ export function synthesiseSceneClothing(
       } else {
         if (scene.mode === 'bath' && /穿着(?:泳衣|泳装|比基尼|浴衣|睡衣)/.test(evidence)) {
           notes.push(`${name}: 洗澡情节里原文写着穿着衣物，未按全脱处理`);
-          handled.add(key);
           continue;
         }
         // 「温泉」「浴缸」单独出现不等于正在洗（温泉街散步、浴室门口说话）。
         // 这一句里没有任何洗/泡/脱的动作时就不动账本。
-        if (scene.mode === 'bath' && !/(?:脱|洗|泡|淋|浸|搓|冲洗|澡|赤裸|裸)/.test(evidence)) {
-          handled.add(key);
+        //
+        // 注意这里**不能** `handled.add(key)`：楼层标题「第二章·浴室」本身就命中「浴室」，
+        // 一旦把它记成「这个人已经按洗澡处理过」，紧接着那句真正的
+        // 「"我先去洗个澡。"林晚晴站起来…」就会被 `handled.has(key)` 直接跳过，
+        // 整章浴室戏一条事件都落不了账（实测第 61 楼就是这样）。
+        if (
+          scene.mode === 'bath' &&
+          !/(?:脱|洗|泡|淋|冲|浸|搓|澡|赤裸|裸|花洒|喷头|水声|水龙头|浴缸|入浴|温泉)/.test(evidence)
+        )
           continue;
+        // 最后一层兜底:没有场景词，只写了「睡衣被推到胸口上方、睡裤褪到膝盖」。
+        // 只动**这一句点名的**部件，且没写脱/褪的部件不动 —— 宁可少脱也不错脱。
+        if (scene.mode === 'undress') {
+          if (OVER_CLOTHES.test(evidence)) {
+            handled.add(key);
+            continue;
+          }
+          for (const piece of record.pieces) {
+            const location = piece.state.location;
+            if (location && location !== 'worn' && location !== 'unknown') continue;
+            const kind = garmentKind(piece.design);
+            if (!pieceMentioned(kind, evidence)) continue;
+            const state = inferClothingState(evidence, piece, kind);
+            if (!Object.keys(state).length) continue;
+            pieces.push({ id: piece.id, design: '', state });
+          }
+          if (!pieces.length) {
+            handled.add(key);
+            continue;
+          }
         }
-        for (const piece of record.pieces) {
-          const location = piece.state.location;
-          if (location && location !== 'worn' && location !== 'unknown') continue;
-          pieces.push({
-            id: piece.id,
-            design: '',
-            state: {
-              location: scene.mode === 'bath' ? 'floor' : 'removed',
-              ...(scene.mode === 'bath' ? { wetness: 'wet' } : {}),
-            },
-          });
-        }
+        if (scene.mode !== 'undress')
+          for (const piece of record.pieces) {
+            const location = piece.state.location;
+            if (location && location !== 'worn' && location !== 'unknown') continue;
+            pieces.push({
+              id: piece.id,
+              design: '',
+              state: {
+                location: scene.mode === 'bath' ? 'floor' : 'removed',
+                ...(scene.mode === 'bath' ? { wetness: 'wet' } : {}),
+              },
+            });
+          }
       }
-      if (!pieces.length) {
-        handled.add(key);
-        continue;
-      }
-      const at = storyPosition(text, index);
+      if (!pieces.length) continue;
+      // 位置取「证据句说完的地方」，不是句子开头。
+      // acceptClothingChanges 用 charOffset 截出 preceding 再校验 `preceding.includes(evidence)`，
+      // 传句首时 preceding 恰好停在证据句之前 → 自产的变更被判成「缺少可定位的原文证据」整条丢弃。
+      //
+      // 这里必须换算成证据句**自身的**结尾：`index` 是命中的那几个字的位置（「睡衣被推到」），
+      // 不是句子开头，直接 index + evidence.length 会往前多算十来个字。正文里一旦有空行
+      // （旧 tag 被剔除后留下的连续空行就有十几行），这点偏移就跨过一整段空行，
+      // 事件落点整段往后挪 —— 第 67 楼两条脱衣事件的 sourceLine 从 14 变成 28，
+      // 变成排在两张插图之后，两张图于是都取到「睡衣穿好」。
+      const evidenceStart = window.start + (window.text.length - window.text.trimStart().length);
+      const at = storyPosition(text, evidenceStart + evidence.length);
+      // 与 adoptStoryClothing 同理：场景句本身常常只有「我先去洗个澡。」这类台词，
+      // 人名在前一句。不带主语句原文的话，acceptClothingChanges 会判「缺少可定位到该人物的
+      // 证据」把整条推断丢掉 —— 洗澡整段不记就是这么来的。
+      const holder = subjectQuoteOf(text, window.start, window.end, entries, name);
+      const subjectEvidence = holder && !evidence.includes(name) && holder !== evidence ? holder : undefined;
       changes.push({
         name,
         reportedName: name,
@@ -1527,6 +1781,7 @@ export function synthesiseSceneClothing(
         charOffset: at.offset,
         operation: 'patch',
         evidence,
+        ...(subjectEvidence ? { subjectEvidence } : {}),
         pieces,
       });
       handled.add(key);
@@ -1547,7 +1802,9 @@ const CHANGE_SCENE =
  * 图片里还是原本的衣服」就是这条。陈述句也算数，但必须点名到本人（下面 still 查 called）。
  */
 const WEARING_STATE = /穿着|身穿|身着|穿了|套着|披着|一身|换了|换成了|已经是/;
-const MAIN_GARMENTS = new Set(['shirt', 'skirt', 'pants', 'dress']);
+// 能接管账本的主衣物类别。pajamas 必须在里面:换睡衣是最典型的「整套换」，
+// 它不在这个集合里时,「换上睡衣」这句永远走不到接管分支,账本停在白天那套。
+const MAIN_GARMENTS = new Set(['shirt', 'skirt', 'pants', 'dress', 'pajamas']);
 /**
  * 剧情明确换装、但模型只写了 patch（或压根没报）时，采纳图片里模型给的新衣物，
  * 避免「剧情换了衣服，画面还是旧账本那套」。
@@ -1603,7 +1860,18 @@ export function adoptChangedClothing(
     // 原文点名的款式优先：模型把「长牛仔裤」写成 jeans 时，画面必须跟着原文变成长裤，
     // 否则接管了账本仍然是错的。同一类别已被原文代表的部件不再重复收（牛仔裤 vs long jeans）。
     const namedKind = named ? garmentKind(named) : '';
-    const storyParts = named ? [named] : [];
+    // 原文只写「睡衣」「裙子」没写颜色/材质时，模型给的 `pink pajamas` 才是唯一带颜色的描述。
+    // 旧代码把同类别通通滤掉，结果账本里只剩裸的 `pajamas`，画面丢色。
+    const COLOUR_WORD =
+      /(?:白|黑|红|蓝|绿|黄|粉|紫|灰|米|卡其|棕|橙|金|银|彩|深色|浅色|white|black|red|blue|green|yellow|pink|purple|grey|gray|beige|brown|orange|gold|silver)/i;
+    const richer =
+      named && !COLOUR_WORD.test(named)
+        ? design
+            .split(/[,，]/)
+            .map((part) => part.trim())
+            .find((part) => part && garmentKind(part) === namedKind && COLOUR_WORD.test(part) && part.length > named.length)
+        : '';
+    const storyParts = named ? [richer || named] : [];
     const rest = design
       .split(/[,，]/)
       .map((part) => part.trim())
@@ -1724,6 +1992,143 @@ export function enforceClothing(
 }
 
 
+
+/**
+ * 正文自己点名了换装：不依赖模型报 `outfitChanges`，也不依赖模型把新衣服画进 tag。
+ *
+ * 为什么需要这一层：模型（尤其小模型）经常只写一句 `patch`、甚至完全不报服装变化，
+ * 而正文已经明说「她换上了睡衣」。此时旧链路里 `adoptChangedClothing` 只从
+ * **图片的 character tag** 里取新衣物——模型没画那件就整段落空，账本停在白天那套，
+ * 图里于是还是原来那件。用户报的「剧情说换了睡衣，图里还是原来那套」就是这个。
+ *
+ * 只认三类明确写法，不做任何猜测：
+ *   - 整身换：换上 / 换成 / 换了一身 / 更衣 / 换装 / 改穿  + 点名衣物
+ *   - 加穿：穿上 / 披上 / 套上 / 系上 / 裹上 + 点名衣物（不覆盖其它部件）
+ *   - 陈述：穿着 / 身穿 + 点名衣物，且与该类别在穿的那件款式不同（纠正账本）
+ */
+export function adoptStoryClothing(
+  source: string,
+  entries: CharTagEntry[],
+  before: ClothingState,
+): { changes: ClothingChange[]; notes: string[] } {
+  const changes: ClothingChange[] = [];
+  const notes: string[] = [];
+  const text = String(source ?? '').replace(/\r\n?/g, '\n');
+  if (!text || !before.size) return { changes, notes };
+  const SWAP = /换上|换成|换好|换上一|换了一身|换了一|换了|换身|更衣|换装|改穿|改成/;
+  const PUT_ON = /穿上|穿回|披上|套上|系上|裹上|扣上/;
+  const STATED = /穿着|身穿|身着|穿了|一身/;
+  // 脱与穿在同一句里频繁共现（"把衬衫褪下来，换上新的连衣裙"）：旧版见到「脱下」就整句跳过，
+  // 于是那一句的换装整条丢失。这里只在「整句只有脱、没有任何穿戴词」时才跳过。
+  const OFF_ONLY = /没穿|未穿|不穿|没有穿/;
+  const handled = new Set<string>();
+  let cursor = 0;
+  for (const sentence of text.split(/(?<=[。！？!?\n])/)) {
+    const index = cursor;
+    cursor += sentence.length;
+    if (!sentence.trim()) continue;
+    const swap = SWAP.test(sentence);
+    const putOn = !swap && PUT_ON.test(sentence);
+    const stated = !swap && !putOn && STATED.test(sentence);
+    if (!swap && !putOn && !stated) continue;
+    if (OFF_ONLY.test(sentence)) continue;
+    // 一句里可能同时点名多件（"拿出一件干净的白色衬衫和一条黑色长裙"）。
+    // 旧版只取第一件，于是换装永远只换一半：连衣裙加了衬衫没加、长裙换了衬衫没换。
+    const designs = proseGarments(sentence);
+    if (!designs.length) continue;
+    // 主语优先取「本句最先出现的名字」，其次看前几句句首——不能一律取句尾前最近的名字。
+    const name = subjectOf(text, index, index + sentence.length, entries) || (/她|自己/.test(sentence) && before.size === 1 ? [...before.keys()][0] : '');
+    if (!name) continue;
+    const record = before.get(name);
+    if (!record) continue;
+    // 只认点名到本人（或紧邻的「她」），避免把别人的衣着算到她头上。
+    const entry = entries.find((e) => e.name === name);
+    const called =
+      sentence.includes(name) ||
+      (entry ? candidateAliasesForEntry(entry).some((alias) => sentence.includes(alias)) : false);
+    if (!called && !/她|自己/.test(sentence)) continue;
+    if (record.suitMode === 'always') {
+      notes.push(`${name}: 固定套装已锁定款式，正文换装未生效`);
+      continue;
+    }
+    // 位置取证据句说完的地方：acceptClothingChanges 用 charOffset 截 preceding 再校验
+    // `preceding.includes(evidence)`，传句首会让 preceding 停在证据句之前，本函数自己产的
+    // 换装事件反而被判「缺少可定位的原文证据」全部丢弃。
+    // sentence 已经是完整句子（含末尾标点），index + sentence.length 就是它的结尾，
+    // 与上面场景推断不同，这里不需要再折算命中位置。
+    const at = storyPosition(text, index + sentence.length);
+    // 同一句里的多件衣物合成一条事件（同位置、同证据），执行时按顺序套用，
+    // 这样「衬衫+长裙」不会因为第二条 patch 找不到衬衫而落空。
+    const pieces: ClothingPiece[] = [];
+    let operation: ClothingChange['operation'] = 'add';
+    const designList: string[] = [];
+    for (const design of designs) {
+      const kind = garmentKind(design);
+      const key = `${name}|${kind}`;
+      if (handled.has(key)) continue;
+      handled.add(key);
+      const worn = record.pieces.filter((p) => (p.state.location ?? 'worn') === 'worn');
+      const sameKind = worn.find((p) => garmentKind(p.design) === kind);
+      const whole = kind === 'dress' || kind === 'pajamas';
+      // 连体衣物(连衣裙/睡衣)换上去等于整套换掉；半身衣物只换那一件——
+      // 后者用 change 会把上衣、内裤一起从账本里删掉，画面反而比正文更露。
+      if (whole && (putOn || swap || stated)) {
+        operation = 'change';
+        pieces.push({ id: kind, design, state: { location: 'worn' } });
+        designList.push(design);
+        continue;
+      }
+      if (sameKind) {
+        if (sameKind.design.trim().toLowerCase() === design.toLowerCase()) continue;
+        if (operation === 'add') operation = 'patch';
+        pieces.push({ id: sameKind.id, design, state: { location: 'worn' } });
+        designList.push(design);
+        continue;
+      }
+      // 陈述句（"她穿着白衬衫"）只在同类款式不同时纠正账本，不新增部件。
+      if (stated && !sameKind) continue;
+      pieces.push({ id: `${kind || 'piece'}_story`, design, state: { location: 'worn' } });
+      designList.push(design);
+    }
+    if (!pieces.length) continue;
+    // 身上那件连体衣物（连衣裙/睡衣）必须在换上半身衣物时一起退出账本。
+    // 正文几乎不会写「她先脱掉睡衣再穿上衬衫」——那是不言自明的，但对账本是必需的：
+    // 不记这一步，第二天的账本会变成「睡衣 + 白衬衫 + 黑长裙」三层叠穿，
+    // 渲染出来的画面就是睡衣从衬衫里冒出来。
+    // 用 change（整套重记）而不是 patch：patch 只能改已存在的部件 ID，
+    // 新加的衬衫/长裙 ID 在旧账本里不存在，整条会被判「局部变化指向未知衣物部件」丢弃。
+    const wornWhole = record.pieces.find(
+      (p) => (p.state.location ?? 'worn') === 'worn' && ['dress', 'pajamas'].includes(garmentKind(p.design)),
+    );
+    if (wornWhole && (putOn || swap || stated)) operation = 'change';
+    else if (wornWhole) {
+      pieces.push({ id: wornWhole.id, design: '', state: { location: 'removed' } });
+      if (operation !== 'change') operation = 'patch';
+    }
+    // 只写代词的句子必须把真正的主语句一起交上去，否则 acceptClothingChanges 会按
+    // 「往前 500 字内最近提到的名字」判人，把这条换装记到别人头上或者直接丢弃。
+    const holder = subjectQuoteOf(text, index, index + sentence.length, entries, name);
+    const subjectEvidence = holder && !sentence.includes(name) && holder !== sentence.trim() ? holder : undefined;
+    // 一句里既有连体也有半身时以整套为准（睡衣+内裤这类写法按整套处理）。
+    changes.push({
+      name,
+      reportedName: name,
+      position: '',
+      sourceLine: at.line,
+      charOffset: at.offset,
+      operation,
+      evidence: sentence.trim(),
+      ...(subjectEvidence ? { subjectEvidence } : {}),
+      pieces,
+    });
+    notes.push(`按正文换装（${operation}）：${name} ${designList.join('、')}`);
+  }
+  return { changes, notes };
+}
+
+function sourceLineOf(text: string, index: number): number {
+  return storyPosition(text, index).line;
+}
 
 /** 场景翻篇的标志：换天、换地点、出门这类「人已经重新收拾过」的写法。 */
 const SCENE_RESET =

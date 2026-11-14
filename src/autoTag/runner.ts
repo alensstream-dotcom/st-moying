@@ -69,6 +69,7 @@ import {
   CLOTHING_PROTOCOL,
   acceptClothingChanges,
   adoptChangedClothing,
+  adoptStoryClothing,
   synthesiseSceneClothing,
   unreportedClothingActions,
   clothingAt,
@@ -459,9 +460,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     if (!opts.manual) console.debug(`[墨影] 第 ${floor} 楼已经含有 bbi_image tag，跳过自动分析`);
     return;
   }
-  // replace / slot:分析都基于剔除旧 tag 后的正文。写回时 replace 让旧 tag 随之消失,
-  // slot 按 seq 原位替换——别的 tag 在写回基底里原样保留。
-  const source = opts.replace || slot ? stripImageTags(rawSource) : rawSource;
+  // 分析一律基于剔除旧 tag 后的正文。写回时 replace 让旧 tag 随之消失,
+  // slot 按 seq 原位替换——别的 tag 在写回基底里原样保留(写回用的是 currentText,不是这里)。
+  //
+  // 以前只有 replace/slot 才剔 tag,普通自动分析沿用带 tag 的原文,于是两套坐标系并存:
+  // preparedTarget 的段落落点按「含 tag 的行」算,而模型引用的句子来自去掉 tag 的文本;
+  // 更糟的是旧 tag 里的 `<characters>[{"name":…}]</characters>` 会被当成正文段落,
+  // 场景推断于是把「两个人倒在床上…」判给了 tag 里最后出现的那个名字。
+  // 实测第 68 楼(夜里)两条脱衣事件的 sourceLine 全变成 4、两张图都取到「穿好睡衣」。
+  const source = stripImageTags(rawSource);
   if (!source.trim()) {
     abort(floor, 'empty-source', opts.manual, '本楼正文是空的（或只剩生图 tag），没有可分析的内容');
     return;
@@ -1388,6 +1395,14 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         accepted.changes.push(...redress.changes);
         accepted.rejected.push(...redress.notes);
       }
+      // 正文自己点名了换装（「换上了睡衣」「换上红裙」「穿着黑吊带」）时，
+      // 不依赖模型是否把新衣服写进 tag —— 旧链路只从图片 tag 取新衣物，
+      // 模型没画那件就整段落空，账本停在白天那套。
+      const storyWear = adoptStoryClothing(source, activeEntries, wardrobe);
+      if (storyWear.changes.length) {
+        accepted.changes.push(...storyWear.changes);
+        accepted.rejected.push(...storyWear.notes);
+      }
       // 剧情明确换装但模型只写了 patch/漏报时，采纳图片里的新衣物，避免画面停在旧套装。
       for (const image of plan.images) {
         const stateAtImage = clothingAt(
@@ -1657,6 +1672,14 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const finalWardrobe = clothingAt(wardrobe, accepted.changes, scope);
     for (const [name, entry] of completion) if (!finalWardrobe.has(name)) finalWardrobe.set(name, entry);
     repairCostumeState(finalWardrobe, costume.final, costumeRepairs);
+    // 本楼画面里出场（或被换装事件点名）的角色：这些人的账本必须完整落盘，
+    // 不能因为「与基线相同」被 delta 滤掉，否则下一楼拿到空账本整段停摆。
+    const touchedByFrame = new Set<string>([
+      ...accepted.changes.map((c) => c.name),
+      ...plan.images.flatMap((i) =>
+        i.characters.map((c) => (activeEntries.length ? resolveCanonicalCharName(c.name, activeEntries) : c.name)),
+      ),
+    ]);
     const previousWardrobe = message.extra?.[BBI_OUTFIT_EXTRA_KEY] as Partial<ClothingFloor> | undefined;
     const nextWardrobe: ClothingFloor = {
       v: 2,
@@ -1679,7 +1702,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           ),
         ),
       ),
-      entries: [...finalWardrobe.values()].filter((e) => JSON.stringify(e) !== wardrobeBaseline.get(e.name)),
+      // delta 只写「与基线不同」的条目时，会出现一条断链：某楼的账本是从旧楼层
+      // 图片 tag 反推出来的（legacy，状态全是 unknown），本楼新建出来的条目与它
+      // 逐字节相同 → 被判「没变化」不写进 extra → 下一楼读到的是 delta 楼 + 空 entries，
+      // 于是整个账本变成空的，洗澡/脱衣全部推断不出来（实测第 44 楼就是这样，
+      // 第 45 楼直接 return）。所以把本楼画面里出现的角色一并强制写下来。
+      entries: [...finalWardrobe.values()].filter(
+        (e) =>
+          touchedByFrame.has(e.name) || JSON.stringify(e) !== wardrobeBaseline.get(e.name),
+      ),
       changes: accepted.changes,
       rejected: visualNotes,
       frames,
