@@ -902,33 +902,72 @@ export function clothingTrace(message: STMessage | undefined, rawTag: string): s
 }
 /** 中文剧情里的常见衣物词 → 英文服装 tag。只用于「首次建档」，永不覆盖已有账本。 */
 const PROSE_GARMENT: Array<[RegExp, string]> = [
-  // 睡衣类必须排在「裙」「裤」前面:睡裙会被 skirt 抢走、睡裤会被 pants 抢走,
+  // ── 情趣内衣 / 束具 ──
+  // 必须排在最前：「情趣睡衣」「蕾丝睡裙」里含「睡衣/睡裙」，排在后面会被 pajamas 抢走，
+  // 账本记成普通睡衣，画面里那套情趣装就没了；「情趣内衣」则会被 bra 抢走。
+  [/情趣睡衣|情趣内衣|情趣套装|情趣装|蕾丝内衣|镂空内衣|网纱内衣|半透明内衣|开裆连体衣|连体情趣|情趣吊带|蕾丝睡裙|网纱睡裙/, 'lingerie'],
+  // ── 睡眠 / 家居 ──
+  // 必须排在「裙」「裤」前面:睡裙会被 skirt 抢走、睡裤会被 pants 抢走,
   // 结果「换上睡衣」这句认不出衣物 → adoptChangedClothing 直接 return,
   // 账本停在白天那套 —— 用户看到的「剧情说换了睡衣,图里还是原来那套」。
-  [/睡裙|睡袍|浴袍|睡衣裤|睡裤|睡衣|家居服|居家服|晨衣/, 'pajamas'],
-  // 泳装必须排在「裙」「短裤」前面：`泳装`/`泳衣` 本身不含裙裤字，但
-  // 「沙滩裙」「泳裤」会被后两条抢走，而且在正文里 `泳装` 常与「裙」同句出现。
-  [/连体泳衣|竞泳泳装|泳衣|泳装|泳裤|比基尼|死库水|沙滩裙/, 'swimsuit'],
+  [/睡裙|睡袍|浴袍|睡衣裤|睡裤|睡衣|家居服|居家服|晨衣|吊带睡裙|真丝睡裙/, 'pajamas'],
+  // ── 泳装 ──
+  // 必须排在「裙」「裤」前面：「沙滩裙」「泳裤」会被后两条抢走。
+  [/连体泳衣|竞泳泳装|泳衣|泳装|泳裤|比基尼|死库水|沙滩裙|竞泳|三角泳裤|平角泳裤/, 'swimsuit'],
+  // 袜带/束具戴在身上但不遮挡任何部位；渲染成 tag 时照英文原样输出。
+  [/吊袜带|袜带|束具|皮质束具|皮质绑带|束带|胸背带|乳贴|胸贴/, 'garter belt'],
+  // 连体裤是整身衣物,必须排在「裤」之前:当成半身长裤后上半身仍记为穿着,
+  // 「脱掉连体裤」永远判不出 nude。
+  [/连体裤|连身裤|吊带裤/, 'jumpsuit'],
+  // ── 牛仔系(先具体后笼统) ──
   [/短牛仔裤|牛仔短裤/, 'denim shorts'],
-  [/长牛仔裤|直筒牛仔裤/, 'long jeans'],
+  [/长牛仔裤|直筒牛仔裤|紧身牛仔裤|破洞牛仔裤/, 'long jeans'],
   [/牛仔裤/, 'jeans'],
-  [/百褶裙|短裙/, 'miniskirt'],
-  [/连衣裙/, 'dress'],
-  [/长裙|半身裙|裙子|裙/, 'skirt'],
-  [/长裤|西裤|休闲裤|运动裤/, 'pants'],
-  [/短裤/, 'shorts'],
-  [/白衬衫|衬衫/, 'shirt'],
+  // ── 内裤系必须排在「裤」之前 ──
+  [/开裆裤|开裆内裤|丁字裤|三角裤|安全裤|无痕内裤|珍珠内裤|内裤|底裤|亵裤/, 'panties'],
+  // ── 整身裙装 / 各时代长衣 ──
+  [/婚纱|礼服裙|晚礼服|礼裙|舞会裙|敬酒服/, 'wedding dress'],
+  [/旗袍|旗装|长衫/, 'cheongsam'],
+  [/汉服|襦裙|曲裾|齐胸|直裾|袄裙|褙子|明制|宋制|唐制|深衣/, 'hanfu'],
+  [/和服|浴衣|振袖|留袖|羽织/, 'kimono'],
+  [/韩服|纱丽|奥黛/, 'hanbok'],
+  [/道袍|法袍|僧袍|袈裟|长袍|法衣|巫女服|魔女袍|罩袍|大氅|白袍/, 'robe'],
+  [/乳胶衣|胶衣|连体紧身衣|全身紧身衣|紧身衣|连体衣|连身衣|体操服|zentai/, 'bodysuit'],
+  // 制服类整身衣物：单列并给出各自的具体英文词，否则「女仆装」「白大褂」会被散装上衣/裙抢走，
+  // 而且全压成 `uniform` 之后画面里那件衣服就没了辨识度。
+  [/女仆装/, 'maid outfit'],
+  [/护士服/, 'nurse uniform'],
+  [/啦啦队服/, 'cheerleader outfit'],
+  [/水手服|jk制服|JK制服|学生装|校服/, 'serafuku'],
+  [/空姐制服|教师装|服务生制服/, 'uniform'],
+  [/军装|警服/, 'military uniform'],
+  [/白大褂|手术服/, 'labcoat'],
+  [/修女服/, 'nun habit'],
+  [/兔女郎/, 'bunny girl'],
+  [/围裙装|围裙/, 'apron'],
+  [/连衣裙|洋装|连身裙|裙装|吊带裙/, 'dress'],
+  // ── 袜类必须排在「吊带」之前，否则「吊带袜」会被拆成吊带 ──
+  [/吊带袜|渔网袜|网袜|连裤袜|丝袜|长袜|短袜|袜圈|袜/, 'pantyhose'],
+  // ── 半身裙(先具体后笼统) ──
+  [/百褶裙|超短裙|迷你裙|包臀裙|铅笔裙|鱼尾裙|a字裙|A字裙|伞裙|蛋糕裙|蓬蓬裙|纱裙/, 'pleated skirt'],
+  [/衬裙|裙撑/, 'skirt'],
+  [/牛仔裙|皮裙|工装裙|开衩裙|露背裙|半身裙|长裙|短裙|裙子|裙/, 'skirt'],
+  // ── 裤装(先具体后笼统) ──
+  [/阔腿裤|西装裤|西裤|休闲裤|运动裤|灯笼裤|喇叭裤|哈伦裤|打底裤|瑜伽裤|皮裤|工装裤|背带裤|七分裤|九分裤|骑行裤|马裤/, 'pants'],
+  [/长裤|裤子|裤装|裤/, 'pants'],
+  [/短裤|热裤/, 'shorts'],
+  // ── 上装 ──
+  [/白衬衫|衬衫|衬衣|雪纺衫/, 'shirt'],
   [/t恤|T恤|短袖/, 't-shirt'],
-  [/吊带|背心/, 'camisole'],
-  [/卫衣/, 'hoodie'],
-  [/毛衣|针织衫/, 'sweater'],
-  [/风衣|大衣|外套|夹克/, 'jacket'],
-  [/文胸|胸罩|内衣/, 'bra'],
-  [/内裤|底裤/, 'panties'],
-  [/连裤袜|丝袜/, 'pantyhose'],
-  [/高跟鞋/, 'high heels'],
-  [/运动鞋|帆布鞋/, 'sneakers'],
-  [/长靴|靴子/, 'boots'],
+  [/吊带衫|吊带|背心/, 'camisole'],
+  [/卫衣|连帽衫/, 'hoodie'],
+  [/毛衣|针织衫|开衫|罩衫|线衣/, 'sweater'],
+  [/抹胸|肚兜|兜肚|束胸|运动内衣/, 'bra'],
+  [/文胸|胸罩|内衣|奶罩/, 'bra'],
+  // ── 外套 ──
+  [/羽绒服|冲锋衣|风衣|大衣|外套|夹克|皮衣|机车夹克|牛仔外套|棉袄|小袄|坎肩|披风|斗篷|披肩|雨衣|西装/, 'jacket'],
+  // ── 鞋 ──
+  [/高跟鞋|细高跟|长靴|短靴|靴子|皮鞋|运动鞋|帆布鞋|拖鞋|木屐|凉鞋|玛丽珍/, 'shoes'],
 ];
 const PROSE_COLOR: Array<[RegExp, string]> = [
   [/白/, 'white'],
@@ -940,7 +979,12 @@ const PROSE_COLOR: Array<[RegExp, string]> = [
   [/粉/, 'pink'],
   [/紫/, 'purple'],
   [/灰/, 'grey'],
-  [/米|卡其/, 'beige'],
+  [/米|卡其|杏/, 'beige'],
+  [/棕|褐|咖啡|栗/, 'brown'],
+  [/橙|橘/, 'orange'],
+  [/青|天蓝|藏青/, 'navy'],
+  [/金/, 'gold'],
+  [/银/, 'silver'],
 ];
 /**
  * 从一句中文里认出**所有**衣物（含紧邻的颜色）；认不出返回 []。
@@ -1048,8 +1092,7 @@ export function savedImageClothing(
   }
   return state;
 }
-const CLOTHING_WORD =
-  /\b(?:dress|shirt|skirt|pants|trousers|shorts|jeans|jacket|blazer|coat|suit|bra|panties|underwear|lingerie|stockings|thighhighs|pantyhose|tights|socks|shoes|boots|heels|uniform|serafuku|hanfu|kimono|robe|collar|sleeves?|clothes|clothing|outfit|sash|belt|cloak|cape|gloves|swimsuit|bikini|apron|corset|hoodie|sweater|cardigan|blouse|tunic|ruqun|hakama|yukata|obi|geta|miko|qipao|cheongsam|necktie|bow tie|sneakers|loafers|baseball cap|dudou|chest wrap|underpants|undergarment|pajamas|pyjamas|nightgown|nightdress|nightwear|negligee|bathrobe|sleepwear)\b/i;
+const CLOTHING_WORD = /\b(?:dress|sundress|gown|wedding dress|evening gown|shirt|t-shirt|skirt|miniskirt|pleated skirt|pants|trousers|slacks|shorts|jeans|jacket|blazer|coat|raincoat|trench ?coat|windbreaker|overcoat|suit|tailcoat|armou?r|breastplate|chainmail|jersey|bra|bralette|sports bra|bustier|corset|panties|underwear|lingerie|babydoll|teddy|chemise|negligee|bodystocking|stockings|thighhighs|kneehighs|pantyhose|tights|fishnets|garter belt|garter straps?|harness|pasties|socks|shoes|boots|heels|sneakers|loafers|sandals|slippers|uniform|serafuku|sailor uniform|hanfu|hanbok|sari|kimono|yukata|robe|bathrobe|petticoat|crinoline|bustle|collar|sleeves?|clothes|clothing|outfit|sash|belt|cloak|cape|capelet|shawl|gloves|mittens|swimsuit|swimwear|bikini|monokini|tankini|apron|hoodie|sweater|pullover|cardigan|blouse|tunic|leotard|unitard|bodysuit|jumpsuit|playsuit|romper|overalls|dungarees|ruqun|hakama|yukata|obi|geta|miko|qipao|cheongsam|necktie|bow tie|bloomers|buruma|sarong|poncho|dudou|chest wrap|underpants|undergarment|pajamas|pyjamas|nightgown|nightdress|nightwear|sleepwear|housewear|thong|g-string|crotchless panties|crotchless bodysuit|boyshorts|boxers|trunks|tube top|camisole|tank top|crop top|halterneck|labcoat|maid outfit|maid uniform|nurse uniform|cheerleader outfit|bunny girl|nun habit|military uniform|catsuit|zentai|hosiery|mary janes|denim shorts|long jeans|wide-leg pants|cargo pants|pencil skirt|denim jacket|leather jacket|down jacket|bustier|teddy|lace lingerie)\b/i;
 /** 戴在头上、脸上、脖子或腕上的饰物：归 appearance 的 extra，服装层不许把它当衣服剥掉。 */
 const BODY_ORNAMENT =
   /\b(?:hair ribbon|hair band|hairband|hairpin|hair clip|hair ornament|ribbon|\b(?:neck|choker|circlet|tiara|ankle|wrist) ?(?:lace|band|ribbon|chain|let|cuffs?)\b|glasses|mask|earrings?|earring|piercing|necklace|pendant|choker|bracelet|bangle|anklet|ring|beret|headband|veil|crown)/i;
@@ -1166,7 +1209,12 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
       .join(', ');
     if (p.design) sentences.push(`Wearing ${englishDesign(p.design)}${detail ? `, ${detail}` : ''}.`);
   }
-  if (upperRemoved && !upperWorn && lowerRemoved && !lowerWorn) tags.push('nude');
+  // 上下两个半身都没有被任何衣物盖住就是 nude。
+  // 只看 removed 标记不够：只戴着袜带、束具、项圈这类不遮挡身体的东西时，
+  // 账本里没有任何一件 removed，旧判据会输出「garter belt, harness」而没有 nude，
+  // 画面于是给她画上了一身看不见的衣服。
+  if (record.pieces.length && !upperWorn && !lowerWorn) tags.push('nude');
+  else if (upperRemoved && !upperWorn && lowerRemoved && !lowerWorn) tags.push('nude');
   else {
     if (upperRemoved && !upperWorn) tags.push('topless');
     if (lowerRemoved && !lowerWorn) tags.push('bottomless');
@@ -1183,11 +1231,21 @@ const CORE_SWIM_EN =
   /\b(?:swimsuits?|swimwear|beachwear|bikinis?|monokini|tankini|school swimsuit|one-piece swimsuit|competition swimsuit|wetsuit)\b/i;
 const CORE_SWIM_ZH = /泳衣|泳装|泳裤|比基尼|死库水|连体泳衣|竞泳|沙滩装/;
 const GARMENT_KINDS: Array<[RegExp, string]> = [
-  // 睡衣排在最前:它同时盖住上半身和下半身,而且「睡裙」「睡裤」会被后面的
+  // 情趣内衣必须排在睡衣之前：「情趣睡衣」「蕾丝睡裙」里含「睡衣/睡裙」，
+  // 排在后面就会被 pajamas 抢走 —— 账本记成普通睡衣，画面里那套情趣装就没了。
+  // 缺这一类的后果不是「少一个标签」：garmentKind 返回空串，部件 ID 落到 piece，
+  // patch 被判「未知衣物部件」，换情趣装整条被丢弃。
+  [/\b(?:lingerie|babydoll|teddy|chemise|negligee|bodystocking)\b/i, 'lingerie'],
+  [/情趣|开裆|蕾丝内衣|镂空内衣|网纱内衣|半透明内衣|连体情趣|蕾丝睡裙|网纱睡裙/, 'lingerie'],
+  // 袜带 / 束具：戴在身上但**不遮挡**任何部位，covers() 两个半身都必须算没穿，
+  // 否则「只戴着袜带和束具」会被判成穿着完整，nude / topless 全出不来。
+  [/\b(?:garter belt|garter straps?|harness|pasties|nipple covers?)\b/i, 'accessory'],
+  [/吊袜带|袜带|束具|束带|胸背带|乳贴|胸贴|皮质绑带|obi|gloves|belt/, 'accessory'],
+  // 睡衣排在「裙」「裤」之前:它同时盖住上半身和下半身,而且「睡裙」「睡裤」会被后面的
   // 「裙」「裤」条子抢走 —— 抢走之后就变成「换了一条裙子」而不是换睡衣,
   // 上装留在账本里,图里于是还是原来那套。
   [
-    /\b(?:pajamas|pyjamas|nightgown|nightdress|nightwear|negligee|bathrobe|sleepwear|housewear)\b/i,
+    /\b(?:pajamas|pyjamas|nightgown|nightdress|nightwear|bathrobe|sleepwear|housewear)\b/i,
     'pajamas',
   ],
   [/睡衣|睡裙|睡袍|浴袍|睡裤|家居服|居家服|晨衣/, 'pajamas'],
@@ -1198,10 +1256,25 @@ const GARMENT_KINDS: Array<[RegExp, string]> = [
   // 账本停在上一套，enforceClothing 再拿旧账本覆盖模型 tag → 剧情换了泳装，图里还是原来那套。
   [CORE_SWIM_EN, 'swim'],
   [CORE_SWIM_ZH, 'swim'],
+  // 连体裤 / 连身裤是整身衣物，必须排在「裤」条子之前。
+  [/\bjumpsuit\b/i, 'dress'],
+  [/连体裤|连身裤|吊带裤/, 'dress'],
+  // 铠甲算上装：脱掉之后上衣层随之清空，否则「铠甲脱了」图里还穿着。
+  [/\b(?:armou?r|breastplate|chainmail|platemail)\b/i, 'shirt'],
+  [/铠甲|皮甲|锁子甲|板甲|护甲|胸甲/, 'shirt'],
+  // 各时代民族服饰与衬裙
+  [/\b(?:hanbok|sari|ao dai)\b/i, 'dress'],
+  [/韩服|纱丽|奥黛/, 'dress'],
+  [/\b(?:petticoat|crinoline|bustle)\b/i, 'skirt'],
+  [/衬裙|裙撑/, 'skirt'],
+
   // 制服类整身衣物：`maid outfit`/`nurse uniform` 这类词 dress 条子认不到，
   // 落到整身衣物里才能整套换、也才能算进 covers() 的上下半身。
-  [/\b(?:maid outfit|maid uniform|nurse outfit|nurse uniform|cheerleader outfit|apron dress|sailor suit)\b/i, 'dress'],
-  [/女仆装|护士服|啦啦队服|围裙装|学生装/, 'dress'],
+  [
+    /\b(?:maid outfit|maid uniform|nurse outfit|nurse uniform|cheerleader outfit|apron dress|sailor suit|serafuku|labcoat|bunny girl|nun habit|military uniform)\b/i,
+    'dress',
+  ],
+  [/女仆装|护士服|啦啦队服|围裙装|学生装|水手服|军装|警服|白大褂|手术服|修女服|兔女郎|空姐制服|教师装|服务生制服/, 'dress'],
   [/\bbralette\b/i, 'bra'],
   [/\bapron\b|围裙/, 'shirt'],
   [/瑜伽服|瑜伽裤|雪纺衫|吊带衫/, 'shirt'],
@@ -1212,11 +1285,11 @@ const GARMENT_KINDS: Array<[RegExp, string]> = [
   [
     // 中文款式也要认:正文写「白连衣」「连衣裙」「旗袍」时账本里就是中文 design,
     // 认不出来 → 脱了也渲染不出 `no dress`,画面照旧穿得整整齐齐。
-    /连衣裙|连身裙|连衣|裙装|旗袍|汉服|和服|礼服|婚纱|长袍|道袍|僧袍|制服|水手服|紧身衣|连体衣|体操服/,
+    /连衣裙|连身裙|吊带裙|连衣|裙装|制服|水手服|军装|警服|空姐|教师装|修女服|手术服|服务生制服|兔女郎|深衣|长衫|白袍|罩袍|大氅|巫女服|魔女袍|校服|敬礼服|敬酒服|洋装|乳胶衣|胶衣|连身衣|catsuit|zentai|hakama|旗袍|旗装|汉服|襦裙|曲裾|直裾|袄裙|褙子|齐胸|和服|浴衣|振袖|留袖|羽织|韩服|纱丽|奥黛|礼服|婚纱|长袍|道袍|僧袍|袈裟|法衣|白大褂|紧身衣|连体衣|体操服/,
     'dress',
   ],
   [/\b(?:panties|underwear|underpants|briefs|thong|panty)\b/i, 'panties'],
-  [/内裤|底裤|亵裤|丁字裤|三角裤|安全裤/, 'panties'],
+  [/内裤|底裤|亵裤|丁字裤|三角裤|安全裤|boyshorts|boxers/, 'panties'],
   [/\b(?:bra|lingerie|bikini top|bandeau)\b/i, 'bra'],
   [/胸罩|文胸|奶罩|抹胸|内衣/, 'bra'],
   [
@@ -1224,19 +1297,19 @@ const GARMENT_KINDS: Array<[RegExp, string]> = [
     'shirt',
   ],
   [
-    /衬衫|衬衣|上衣|恤|T恤|背心|吊带|毛衣|卫衣|针织衫|开衫|罩衫|小褂|短褂|褂子|兜肚|肚兜|束胸/,
+    /衬衫|衬衣|上衣|恤|T恤|背心|吊带|毛衣|卫衣|针织衫|开衫|罩衫|小褂|短褂|褂子|兜肚|肚兜|束胸|短袖|束腰|corset|连帽衫|线衣|束腰|poncho|jersey|tube top/,
     'shirt',
   ],
   [/\b(?:mini|micro|pleated|pencil|a-line|wrap|tiered|long|short)?\s?skirts?\b/i, 'skirt'],
   [/(?<!连衣)(?<!连身)裙(?!装)/, 'skirt'],
   [/\b(?:pants|trousers|jeans|shorts|leggings|culottes|overalls|dungarees|joggers)\b/i, 'pants'],
-  [/牛仔裤|长裤|短裤|裤子|裤装|西裤|休闲裤|打底裤|皮裤|热裤|工装裤|背带裤|瑜伽裤/, 'pants'],
+  [/牛仔裤|长裤|短裤|裤子|裤装|西裤|休闲裤|运动裤|打底裤|皮裤|热裤|工装裤|背带裤|瑜伽裤|阔腿裤|灯笼裤|喇叭裤|哈伦裤|七分裤|九分裤|骑行裤|马裤|bloomers|buruma|trunks|slacks|sarong/, 'pants'],
   [/\b(?:jacket|blazer|coat|raincoat|trench ?coat|cloak|cape|cardigan|suit|tuxedo|waistcoat|vest)\b/i, 'jacket'],
-  [/外套|夹克|大衣|西装|风衣|披风|斗篷|披肩|小袄|棉袄|坎肩|雨衣/, 'jacket'],
+  [/外套|夹克|大衣|西装|风衣|皮衣|羽绒服|冲锋衣|牛仔外套|马甲|披风|斗篷|披肩|小袄|棉袄|坎肩|雨衣|shawl|scarf|windbreaker/, 'jacket'],
   [/\b(?:socks|stockings|thighhighs|pantyhose|tights|leg ?warmers)\b/i, 'socks'],
-  [/丝袜|长袜|短袜|连裤袜|网袜|袜/, 'socks'],
+  [/丝袜|长袜|短袜|连裤袜|网袜|fishnets|袜/, 'socks'],
   [/\b(?:shoes|boots|heels|slippers|sneakers|sandals|loafers)\b/i, 'shoes'],
-  [/高跟鞋|皮鞋|靴|鞋/, 'shoes'],
+  [/高跟鞋|皮鞋|靴|鞋|细高跟|木屐|玛丽珍|geta|mary janes/, 'shoes'],
 ];
 export function garmentKind(design: string): string {
   const value = String(design ?? '');
@@ -1244,6 +1317,8 @@ export function garmentKind(design: string): string {
   return '';
 }
 const DESIGN_EN: Record<string, string> = {
+  accessory: 'garter belt',
+  lingerie: 'lingerie',
   pajamas: 'pajamas',
   dress: 'dress',
   swim: 'swimsuit',
@@ -1257,6 +1332,93 @@ const DESIGN_EN: Record<string, string> = {
   shoes: 'shoes',
 };
 /**
+ * 中文款式 → 具体英文 tag。优先级高于「品类兜底」。
+ *
+ * 为什么要单列一张表：品类（garmentKind）只够用来算部件 ID 与上下半身，
+ * 它把「汉服」「和服」「婚纱」全压成 `dress`，画面里那件衣服就没了特色 ——
+ * 剧情写「她换上一身红色汉服」，出图变成普通红裙。这里给每个时代/题材
+ * 各留一个精确词，认不出时再退回品类兜底。
+ */
+const DESIGN_WORD: Array<[RegExp, string]> = [
+  // 古代东亚
+  [/汉服|襦裙|曲裾|齐胸|直裾|袄裙|褙子|明制|宋制|唐制/, 'hanfu'],
+  [/旗袍|旗装|长衫/, 'cheongsam'],
+  [/和服|振袖|留袖|羽织/, 'kimono'],
+  [/浴衣/, 'yukata'],
+  [/韩服/, 'hanbok'],
+  [/纱丽/, 'sari'],
+  [/奥黛/, 'ao dai'],
+  [/道袍|法袍|僧袍|袈裟|法衣|巫女服|魔女袍|罩袍|大氅|白袍|长袍/, 'robe'],
+  // 西式礼服
+  [/婚纱|礼服裙|晚礼服|礼裙|舞会裙|敬酒服/, 'wedding dress'],
+  [/衬裙|裙撑/, 'petticoat'],
+  // 制服
+  [/女仆装/, 'maid outfit'],
+  [/护士服/, 'nurse uniform'],
+  [/啦啦队服/, 'cheerleader outfit'],
+  [/水手服|jk制服|JK制服|学生装|校服/, 'serafuku'],
+  [/空姐制服|教师装|服务生制服/, 'uniform'],
+  [/军装|警服/, 'military uniform'],
+  [/白大褂|手术服/, 'labcoat'],
+  [/修女服/, 'nun habit'],
+  [/兔女郎/, 'bunny girl'],
+  [/围裙装|围裙/, 'apron'],
+  // 贴身 / 情趣
+  [/情趣|蕾丝内衣|镂空内衣|网纱内衣|半透明内衣|连体情趣|情趣吊带/, 'lingerie'],
+  [/蕾丝睡裙|网纱睡裙/, 'lace lingerie'],
+  [/吊袜带|袜带|garter/, 'garter belt'],
+  [/束具|皮质绑带|束带|胸背带/, 'harness'],
+  [/乳贴|胸贴/, 'pasties'],
+  [/开裆裤|开裆内裤/, 'crotchless panties'],
+  [/丁字裤/, 'thong'],
+  [/开裆连体衣/, 'crotchless bodysuit'],
+  // 现代日常（半身）
+  [/百褶裙/, 'pleated skirt'],
+  [/超短裙|迷你裙/, 'miniskirt'],
+  [/包臀裙|铅笔裙/, 'pencil skirt'],
+  [/牛仔裙/, 'denim skirt'],
+  [/阔腿裤/, 'wide-leg pants'],
+  [/西装裤|西裤/, 'slacks'],
+  [/工装裤/, 'cargo pants'],
+  [/背带裤/, 'overalls'],
+  [/打底裤|瑜伽裤/, 'leggings'],
+  [/牛仔短裤|短牛仔裤/, 'denim shorts'],
+  [/长牛仔裤|直筒牛仔裤|紧身牛仔裤|破洞牛仔裤/, 'jeans'],
+  [/短裤|热裤/, 'shorts'],
+  [/吊带袜|渔网袜|网袜/, 'fishnets'],
+  [/连裤袜|丝袜/, 'pantyhose'],
+  [/长靴/, 'boots'],
+  [/高跟鞋|细高跟/, 'high heels'],
+  [/帆布鞋|运动鞋/, 'sneakers'],
+  [/拖鞋/, 'slippers'],
+  [/木屐/, 'geta'],
+  [/玛丽珍/, 'mary janes'],
+  // 整身
+  [/连体裤|连身裤|吊带裤/, 'jumpsuit'],
+  [/乳胶衣|胶衣|全身紧身衣|连体紧身衣/, 'bodysuit'],
+  [/紧身衣|连体衣|连身衣|体操服|zentai/, 'leotard'],
+  [/吊带裙/, 'slip dress'],
+  [/洋装|连衣裙|连身裙|裙装/, 'dress'],
+  [/针织衫|毛衣|线衣/, 'sweater'],
+  [/开衫|罩衫/, 'cardigan'],
+  [/卫衣|连帽衫/, 'hoodie'],
+  [/t恤|T恤|短袖/, 't-shirt'],
+  [/吊带衫|吊带|背心/, 'camisole'],
+  [/抹胸/, 'tube top'],
+  [/束腰/, 'corset'],
+  [/肚兜|兜肚|束胸/, 'dudou'],
+  [/羽绒服/, 'down jacket'],
+  [/冲锋衣/, 'windbreaker'],
+  [/皮衣|机车夹克/, 'leather jacket'],
+  [/牛仔外套/, 'denim jacket'],
+  [/西装/, 'suit'],
+  [/马甲|坎肩/, 'vest'],
+  [/旅袍|披风|斗篷/, 'cloak'],
+  [/披肩/, 'shawl'],
+  [/雨衣/, 'raincoat'],
+  [/铠甲|皮甲|锁子甲|板甲|护甲|胸甲/, 'armor'],
+];
+/**
  * 中文款式翻成英文 tag：账本里的 design 常是正文原词（「白泳衣」），直接塞进 prompt
  * 等于没写（NAI 只认 danbooru 词）。
  *
@@ -1267,11 +1429,13 @@ const DESIGN_EN: Record<string, string> = {
 export function englishDesign(design: string): string {
   const value = String(design ?? '').trim();
   if (!value || !/[\u4e00-\u9fff]/.test(value)) return value;
-  const half = /(?:长|短|百褶|半身|包臀|伞)裙|裙摆/.test(value) && !/连衣裙|连身裙|连体/.test(value);
-  const kind = half ? 'skirt' : garmentKind(value);
-  const base = DESIGN_EN[kind];
-  if (!base) return value;
   const colour = PROSE_COLOR.find(([expr]) => expr.test(value))?.[1] ?? '';
+  const specific = DESIGN_WORD.find(([expr]) => expr.test(value))?.[1];
+  // 「长裙」「短裙」是半身裙，只是长度不是款式：先排掉，别被 DESIGN_WORD 里的整身词抢走。
+  const half = /(?<!连衣)(?<!连身)(?:长|短|百褶|半身|包臀|伞)裙|裙摆/.test(value) && !/连衣裙|连身裙|连体/.test(value);
+  const kind = half ? 'skirt' : garmentKind(value);
+  const base = specific ?? DESIGN_EN[kind];
+  if (!base) return value;
   return [colour, base].filter(Boolean).join(' ');
 }
 /** 这些类别脱掉之后要翻成对应的 `no xxx`；其余衣物只能靠 `Not wearing …` 句子表达。 */
@@ -1291,7 +1455,7 @@ function covers(kind: string): { upper: boolean; lower: boolean; both: boolean }
   // pajamas 是一整套(上衣＋睡裤/睡裙)，它必须同时算上、下两个半身：
   // 只算 a半身的话，脱睡衣时另一半身仍被记为「穿着」，clothingCaption 就永远
   // 走不到 nude/topless 那一支，画面停在「还穿着白天那套」。
-  const both = kind === 'dress' || kind === 'pajamas' || kind === 'swim';
+  const both = kind === 'dress' || kind === 'pajamas' || kind === 'swim' || kind === 'lingerie';
   return {
     both,
     upper: both || kind === 'shirt' || kind === 'bra' || kind === 'jacket',
@@ -1582,11 +1746,13 @@ const PIECE_PROSE: Record<string, RegExp> = {
   panties: /内裤|底裤|丁字裤/,
   bra: /胸罩|文胸|内衣|奶罩/,
   skirt: /裙/,
-  dress: /裙|旗袍|礼服|汉服|和服|浴衣|连衣/,
+  dress: /裙|旗袍|礼服|汉服|和服|浴衣|连衣|连体裤|连身裤|韩服|纱丽|长袍|道袍/,
   // 睡衣必须在里面：PIECE_PROSE 少了这一类时，`pieceMentioned` 对睡衣永远返回 false，
   // 于是「睡衣被推到胸口上方」这句谁都不点名 → pieces 空 → 整段床戏的服装一条不记。
   pajamas: /睡衣|睡裙|睡袍|浴袍|睡裤|家居服|居家服|晨衣|pajamas|nightgown|bathrobe/i,
   swim: /泳衣|泳装|泳裤|比基尼|死库水|swimsuit|swimwear|bikini|monokini|tankini/i,
+  lingerie: /情趣|蕾丝内衣|镂空内衣|网纱内衣|半透明内衣|lingerie|babydoll|teddy|chemise/i,
+  accessory: /吊袜带|袜带|束具|束带|胸背带|乳贴|胸贴|garter|harness|pasties/i,
   pants: /牛仔|(?<!内)裤/,
   shirt: /衬衫|上衣|t恤|T恤|背心|吊带|毛衣|卫衣|连衣|抹胸|吊带|上衣/,
   jacket: /外套|夹克|大衣|西装|风衣/,
@@ -1894,7 +2060,7 @@ const CHANGE_SCENE =
 const WEARING_STATE = /穿着|身穿|身着|穿了|套着|披着|一身|换了|换成了|已经是/;
 // 能接管账本的主衣物类别。pajamas 必须在里面:换睡衣是最典型的「整套换」，
 // 它不在这个集合里时,「换上睡衣」这句永远走不到接管分支,账本停在白天那套。
-const MAIN_GARMENTS = new Set(['shirt', 'skirt', 'pants', 'dress', 'pajamas', 'swim']);
+const MAIN_GARMENTS = new Set(['shirt', 'skirt', 'pants', 'dress', 'pajamas', 'swim', 'lingerie']);
 /**
  * 剧情明确换装、但模型只写了 patch（或压根没报）时，采纳图片里模型给的新衣物，
  * 避免「剧情换了衣服，画面还是旧账本那套」。
@@ -2165,7 +2331,7 @@ export function adoptStoryClothing(
       handled.add(key);
       const worn = record.pieces.filter((p) => (p.state.location ?? 'worn') === 'worn');
       const sameKind = worn.find((p) => garmentKind(p.design) === kind);
-      const whole = kind === 'dress' || kind === 'pajamas' || kind === 'swim';
+      const whole = kind === 'dress' || kind === 'pajamas' || kind === 'swim' || kind === 'lingerie';
       // 连体衣物(连衣裙/睡衣)换上去等于整套换掉；半身衣物只换那一件——
       // 后者用 change 会把上衣、内裤一起从账本里删掉，画面反而比正文更露。
       if (whole && (putOn || swap || stated)) {
@@ -2194,7 +2360,7 @@ export function adoptStoryClothing(
     // 用 change（整套重记）而不是 patch：patch 只能改已存在的部件 ID，
     // 新加的衬衫/长裙 ID 在旧账本里不存在，整条会被判「局部变化指向未知衣物部件」丢弃。
     const wornWhole = record.pieces.find(
-      (p) => (p.state.location ?? 'worn') === 'worn' && ['dress', 'pajamas', 'swim'].includes(garmentKind(p.design)),
+      (p) => (p.state.location ?? 'worn') === 'worn' && ['dress', 'pajamas', 'swim', 'lingerie'].includes(garmentKind(p.design)),
     );
     if (wornWhole && (putOn || swap || stated)) operation = 'change';
     else if (wornWhole) {
