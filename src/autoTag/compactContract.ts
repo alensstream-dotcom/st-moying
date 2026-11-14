@@ -47,7 +47,7 @@ tag 与 characters[].tag 只写镜头能拍到的东西，从这里挑，逗号�
 这些内容由插件本地词典按正文原文补齐 —— 你写了反而会让整份 JSON 被判违规截断，画面也不会更准。`;
 
 /**
- * 紧缩契约的完整文本。
+ * 紧缩契约的完整文本（3.x 系 Gemini 专用：连解剖词都不许写）。
  *
  * `images` 里保留 `characters`(而不是连它一起砍):角色块是**外貌锁定**的挂载点,
  * `enforceAppearance`/`enforceClothing` 都按它找条目;砍掉之后同楼多图会各画各的脸。
@@ -61,6 +61,38 @@ export const COMPACT_PLAN_CONTRACT = `【本轮输出格式（唯一的一种）
 ${TAG_WHITELIST}`;
 
 /**
+ * 4 系 Gemini（4-argon / 4-hydrogen）用的宽松版。
+ *
+ * 与严格版只差一件事:**不禁止**身体部位与衣物状态词。
+ * 理由是实测的:4-argon 对解剖词几乎不拦(带 `nude` / `breasts out` 仍是 80%),
+ * 而把它按 3.8 那套「连器官名都不许写」去压,画面会变得明显更保守——
+ * 用户抱怨的「NSFW 剧情出 SFW 图」有一半就是这条造成的。
+ *
+ * 仍然禁的:成段的自然语言描写(`nl`)、体液长句。那些才是真正被斩断的东西。
+ */
+export const COMPACT_PLAN_CONTRACT_LOOSE = `【本轮输出格式（唯一的一种）】
+只输出这一个对象，不要有任何其他键：
+{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag"}]}]}
+不要输出 nl、identities、outfitChanges、costumeContexts —— 程序会按档案与服装账本在本地补齐这些字段。
+不要写任何自然语言句子。
+
+【tag 写法】
+tag 与 characters[].tag 用英文短词、逗号连接，每张图 18~30 个。
+按正文如实写：人数（1girl / 1boy / 2girls）、景别与机位、姿态、场景、光线、表情、
+头发，以及正文里确实发生的身体状态与动作（nude / topless / breasts out / panties aside /
+spread legs / sweat / cum 等）与衣物状态（open shirt / skirt lift / panties down）。
+写成 danbooru 风格的短词，不要写成句子，不要写体液与器官的成段描写。`;
+
+/**
+ * 按模型挑契约文本。
+ *
+ * 3.x 系给严格版（它认字就斩），4 系给宽松版（它对解剖词宽容，压太狠只会更保守）。
+ */
+export function compactContractFor(model?: string): string {
+  return bansExplicitWords('gemini', model) ? COMPACT_PLAN_CONTRACT : COMPACT_PLAN_CONTRACT_LOOSE;
+}
+
+/**
  * 这次请求是否该用紧缩契约。
  *
  * 只在 gemini 档启用:其它档位(strong/max/off 与本地小模型)没有这个过滤问题,
@@ -68,4 +100,26 @@ ${TAG_WHITELIST}`;
  */
 export function useCompactContract(jailbreakTier: string | undefined): boolean {
   return jailbreakTier === 'gemini';
+}
+
+/**
+ * 这一档是否**完全不许写裸露/性行为词**。
+ *
+ * 拆成两档是因为两个 Gemini 代际的过滤口径差得很远(实测,同一份请求各 8 次):
+ * - gemini-3.8-flash:裸模型 80% 通过;带上露骨词就掉到 33%。压缩字段后回到 80%。
+ *   它认得出「胸」「私处」这类词就直接斩断,所以这一档连器官名都不能写。
+ * - gemini-4-argon:裸模型只有 40%,但对**构图白名单**几乎不拦(80%)。
+ *   它对解剖词宽容得多——把 `nude` / `breasts out` 一起禁掉反而画出更保守的图。
+ *
+ * 换句话说:3.8 要「少写字」,4-argon 要「只写该写的」。
+ * 一刀切成同一档,3.8 会漏拦、4-argon 会被过度阉割——用户看到的「NSFW 剧情出 SFW 图」
+ * 有一半是后者造成的。
+ */
+export function bansExplicitWords(jailbreakTier: string | undefined, model?: string): boolean {
+  if (jailbreakTier !== 'gemini') return false;
+  // 模型名缺失时按严的一档走(宁保守不砍图)。
+  if (!model) return true;
+  const bare = model.replace(/^(?:假流式-|抗截断-)+/, '').toLowerCase();
+  // 4 系(4-argon / 4-hydrogen / 4-carbon)不锁解剖词;只有 3.x 系锁。
+  return !/gemini-4[-.]/.test(bare);
 }

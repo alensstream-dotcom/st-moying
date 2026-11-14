@@ -86,7 +86,7 @@ import {
 } from '@/autoTag/outfitTimeline';
 import { enforceAppearance } from '@/autoTag/appearanceLock';
 import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
-import { COMPACT_PLAN_CONTRACT, useCompactContract } from '@/autoTag/compactContract';
+import { compactContractFor, useCompactContract } from '@/autoTag/compactContract';
 import { autoTagProfile, buildAutoTagMessages, flattenToSystem } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
@@ -613,6 +613,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             : null;
     const outfitBlock = clothingBlock(slotWardrobe ?? wardrobe);
     const costumeRequest: CostumeRequest = { inherited: costumeBefore(context.chat, floor) };
+    const channel = getTagGenChannel();
+    // 当前实际请求的渠道。梯队换过模型后它指向新模型,契约文案要跟着变
+    // (3.x 用严格版、4 系用宽松版,见 compactContract.ts)。
+    let activeChannel = channel;
     /**
      * 组装一次请求历史。
      *
@@ -661,12 +665,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             IDENTITY_PROTOCOL + '\n已核实身份（旧绘图档案不是性别证据）：' + JSON.stringify(knownIdentities),
         });
       }
-      if (compact) built.push({ role: 'system', content: COMPACT_PLAN_CONTRACT });
+      if (compact) {
+        // 3.x 系给严格版(连解剖词都不许写)、4 系给宽松版(允许 nude/breasts out 这类状态词)。
+        // 一刀切用严格版会把 4-argon 压成 SFW —— 实测它本来对解剖词几乎不拦。
+        built.push({ role: 'system', content: compactContractFor(activeChannel?.model) });
+      }
       return flatten ? flattenToSystem(built) : built;
     };
     const messages = await assemble(false);
     costumeRequest.story = source;
-    const channel = getTagGenChannel();
     // 被拦之后按梯队换模型名再试。
     //
     // 为什么只在失败之后换:不是每个网关都上过这些变体/老一代模型,名字不存在会变成
@@ -678,7 +685,6 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 所以梯队是「同模型换网关路径」→「退到同厂商老一代 flash」。
     const modelLadder = channel ? fallbackModels(channel.model) : [];
     let ladderStep = 0;
-    let activeChannel = channel;
     const identitySources: IdentitySources = {
       story: source,
       card: messages

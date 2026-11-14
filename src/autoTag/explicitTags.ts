@@ -28,8 +28,17 @@ import { group } from './sexVocab';
 interface ExplicitRule {
   /** 命中判据(中文动作短语)。 */
   re: RegExp;
-  /** 要补的 tag。 */
-  tags: string[];
+  /** 要补的 tag。与 {@link tagsOf} 二选一。 */
+  tags?: string[];
+  /**
+   * 需要看上下文才能定 tag 时用这个。返回空数组 = 这条规则不适用。
+   *
+   * 为什么需要它:真实正文写「纤细玉手…按着震动棒，在小穴内反复来回抽送」——同一批动词
+   * (`抽送`/`插`)既是性交也是用道具自慰。旧的固定 `tags: ['vaginal sex','penis','pussy']`
+   * 会在这里补出 `penis`,于是画面里女主面前凭空多出一根。这件事不能靠 `without` 兜:
+   * 句子同时提到道具与器官时,该出的是 `masturbation` + `vibrator`,不是整条作废。
+   */
+  tagsOf?: (body: string) => string[];
   /** 附加条件:必须同时命中才算数(可选)。 */
   requires?: RegExp;
   /** 否定语境:命中即整条作废(可选)。 */
@@ -41,6 +50,29 @@ const LOWER_BODY = /(下面|下身|腿间|双腿|私处|花(?:唇|穴|心)|穴|�
 
 /** 衣物被隔开的语境。 */
 const THROUGH_CLOTHES = /(隔着(?:衬衫|衣服|衣物|布料|内衣|毛衣|睡裙|裙子|裤子|衣料)|没有脱|还穿着|衣着完整)/;
+
+/** 道具在场:这类句子里的「抽送/插入」是自慰,不是性交。 */
+const TOY = new RegExp(group('toy'));
+
+/** 男根在场(含龟头这类只有男性才有的部位)。 */
+const HAS_PENIS = new RegExp(`${group('penis')}|${group('glans')}`);
+
+/** 画面里还有一个男人:有它才可能是性交。 */
+const HAS_MALE = /(他|男人|男主|少年|对方|两根?手指?以外的另一只)/;
+
+/**
+ * 胸部在句中的位置(名词在动词前也算):
+ * 「手指肆意揉搓…柔软乳球」是「动词…名词」语序,旧的「动词 + 6 字内 + 胸」漏掉,
+ * 而这正是网文最常用的写法。这里两种语序都认。
+ */
+/** 胸部名词的替代串。**必须包一层 `(?:…)`** —— `group()` 只返回裸的 `a|b|c`,
+ * 直接拼进更大的正则会让整个模式被 `|` 切散(实测导致 `breast play` 永远补不出来)。 */
+const BREAST_NOUN = `(?:${group('breast')})`;
+const BREAST_VERB = /(?:揉|搓|掐|捏|抚|摸|拨|捻|夹|含|吮|舔|咬|蹂躏|拉扯|把玩|玩弄|覆上|握住|捧)/;
+const BREAST_VERB_SRC = `(?:${BREAST_VERB.source})`;
+
+/** 乳头的委婉写法:只在已经进入情色语境时才算(单写「樱桃」可能真的是水果)。 */
+const NIPPLE_EUPH = /(?:樱桃|花蕾|蕾珠|蕊珠)/;
 
 /**
  * 规则表。顺序即优先级——越靠前越具体的动作先占名额。
@@ -81,12 +113,21 @@ const RULES: ExplicitRule[] = [
     requires: LOWER_BODY,
     without: THROUGH_CLOTHES,
   },
-  // —— 插入 / 性交 ——
+  // —— 插入 / 性交：先看是道具还是真家伙 ——
   {
     re: new RegExp(
       `(${group('penetrate')}|整根没入|整根抽出|${group('thrust')}|扶(?:着)?${group('penis')}|${group('penis')}(?:抵|顶|插)|${group('sex')})`,
     ),
-    tags: ['vaginal sex', 'penis', 'pussy'],
+    // 三种语境分开判,不再一律补 penis:
+    // ① 句子里有男根/龟头 → 真的性交;
+    // ② 句子里有道具、没有男根 → 用震动棒自慰(这是用户那本书开篇的真实情形);
+    // ③ 两者都没有、也没有男人 → 只剩「手指」之类,交给 fingering/自慰那几条,不补器官。
+    tagsOf: (body) => {
+      if (HAS_PENIS.test(body)) return ['vaginal sex', 'penis', 'pussy'];
+      if (TOY.test(body)) return ['masturbation', 'vibrator', 'pussy'];
+      if (HAS_MALE.test(body)) return ['vaginal sex', 'pussy'];
+      return ['masturbation', 'pussy'];
+    },
   },
   {
     re: /(从后面(?:插|进|进入)|后入|背后位|狗爬式)/,
@@ -106,10 +147,22 @@ const RULES: ExplicitRule[] = [
     re: new RegExp(`(${group('released')}(?:外面|背上|肚子|胸口|脸上|身上)|颜射)`),
     tags: ['cum on body'],
   },
-  // —— 胸 ——
+  // —— 胸:两种语序都要认 ——
   {
-    re: new RegExp(`((?:揉|掐|捏|覆上|含住|吮)[^。！？]{0,6}(?:${group('breast')}|胸)|掌心(?:直接)?覆上)`),
+    // 「手指肆意揉搓…乳球」:名词在动词后面 ≥8 字,旧规则的 6 字窗口接不住。
+    // 窗口给到 24 字:网文常写成「柔软乳球被埋入得近乎消失的手指肆意揉搓」——
+    // 名词在动词前,中间隔着 13 个字的修饰语,8 字窗口接不住。
+    re: new RegExp(
+      `${BREAST_VERB_SRC}[^。！？]{0,24}${BREAST_NOUN}|${BREAST_NOUN}[^。！？]{0,24}${BREAST_VERB_SRC}`,
+    ),
     tags: ['breast play', 'nipples'],
+    without: THROUGH_CLOTHES,
+  },
+  {
+    // 「樱桃被双指夹住拨弄」:乳头的委婉写法,单独出现不算。
+    re: new RegExp(`(?:${NIPPLE_EUPH.source})[^。！？]{0,10}${BREAST_VERB_SRC}|${BREAST_VERB_SRC}[^。！？]{0,8}(?:${NIPPLE_EUPH.source})`),
+    tags: ['nipples'],
+    requires: new RegExp(`${group('breast')}|乳|胸|裸|上身`),
     without: THROUGH_CLOTHES,
   },
   {
@@ -122,7 +175,13 @@ const RULES: ExplicitRule[] = [
     tags: ['kiss'],
   },
   {
-    re: new RegExp(`(${group('masturbate')}|抚慰自己)`),
+    // 道具自慰:只提到道具 + 泛动作时也要能被认出来(否则整句只出 masturbation 没有道具)。
+    re: new RegExp(`${group('toy')}`),
+    tagsOf: (body) => (HAS_PENIS.test(body) ? ['sex toy'] : ['masturbation', 'vibrator']),
+    requires: /(抽送|插|按|抵|塞|磨|转|震动|嗡嗡|弄|玩|进出|抽插)/,
+  },
+  {
+    re: new RegExp(`(${group('masturbate')}|抚慰自己|自己来)`),
     tags: ['masturbation'],
   },
 ];
@@ -167,7 +226,8 @@ export function explicitTagsFor(text: string, tags = ''): string[] {
     if (!rule.re.test(body)) continue;
     if (rule.requires && !rule.requires.test(body)) continue;
     if (rule.without && rule.without.test(body)) continue;
-    for (const tag of rule.tags) {
+    const resolved = rule.tagsOf ? rule.tagsOf(body) : (rule.tags ?? []);
+    for (const tag of resolved) {
       if (added.length >= MAX_ADDED) break;
       push(tag);
     }

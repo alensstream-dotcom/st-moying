@@ -1108,17 +1108,34 @@ const GARMENT_KINDS: Array<[RegExp, string]> = [
     /\b(?:dress|sundress|frock|robe|kimono|yukata|qipao|cheongsam|hanfu|ruqun|ao dai|gown|jumpsuit|bodysuit|uniform|serafuku|sailor uniform|one-piece)\b/i,
     'dress',
   ],
+  [
+    // 中文款式也要认:正文写「白连衣」「连衣裙」「旗袍」时账本里就是中文 design,
+    // 认不出来 → 脱了也渲染不出 `no dress`,画面照旧穿得整整齐齐。
+    /连衣裙|连身裙|连衣|长裙|短裙|裙装|旗袍|汉服|和服|浴衣|礼服|婚纱|长袍|道袍|僧袍|制服|水手服/,
+    'dress',
+  ],
   [/\b(?:panties|underwear|underpants|briefs|thong|panty)\b/i, 'panties'],
+  [/内裤|底裤|亵裤|丁字裤|三角裤|安全裤/, 'panties'],
   [/\b(?:bra|lingerie|bikini top|bandeau)\b/i, 'bra'],
+  [/胸罩|文胸|奶罩|抹胸|内衣/, 'bra'],
   [
     /\b(?:shirt|blouse|camisole|sweater|sweatshirt|hoodie|t-shirt|tank top|crop top|turtleneck|corset|tunic|dudou|chest wrap)\b/i,
     'shirt',
   ],
+  [
+    /衬衫|衬衣|上衣|恤|T恤|背心|吊带|毛衣|卫衣|针织衫|开衫|罩衫|小褂|短褂|褂子|兜肚|肚兜|束胸/,
+    'shirt',
+  ],
   [/\bskirt\b/i, 'skirt'],
+  [/(?<!连衣)(?<!连身)(?<!长)(?<!短)裙(?!装)/, 'skirt'],
   [/\b(?:pants|trousers|jeans|shorts|leggings|culottes)\b/i, 'pants'],
+  [/牛仔裤|长裤|短裤|裤子|裤装|西裤|休闲裤|打底裤|皮裤|热裤/, 'pants'],
   [/\b(?:jacket|blazer|coat|cloak|cape|cardigan|suit)\b/i, 'jacket'],
+  [/外套|夹克|大衣|西装|风衣|披风|斗篷|小袄|棉袄|坎肩/, 'jacket'],
   [/\b(?:socks|stockings|thighhighs|pantyhose|tights)\b/i, 'socks'],
+  [/丝袜|长袜|短袜|连裤袜|网袜|袜/, 'socks'],
   [/\b(?:shoes|boots|heels|slippers|sneakers)\b/i, 'shoes'],
+  [/高跟鞋|皮鞋|靴|鞋/, 'shoes'],
 ];
 export function garmentKind(design: string): string {
   const value = String(design ?? '');
@@ -1235,6 +1252,16 @@ const NUDE_SCENE = /赤身裸体|一丝不挂|全裸|赤裸.{0,4}(?:身|躯)|脱
 /** 只有真正发生关系/裸露身体的词才算亲密情节；亲吻、隔着衣服的抚摸不算。 */
 const SEX_SCENE =
   /做爱|性交|交合|交欢|歡好|欢好|云雨|翻云覆雨|床事|承欢|交媾|插入|抽插|内射|口交|乳交|骑乘|跨坐/;
+/**
+ * 独自的情色场面:自慰/用道具。
+ *
+ * 为什么必须单独一类:这类场面**没有男主**,但画面同样是 NSFW、同样需要脱衣。
+ * 旧版只有 SEX_SCENE(含「插入/抽插」),而真实正文写「按着震动棒…反复来回抽送」
+ * 时一个都不命中 → 账本一条不记 → 图里她还是全套穿好。用户看到的「NSFW 剧情出 SFW 图」
+ * 主要就是这一类被整段漏掉。
+ */
+const SOLO_SCENE =
+  /自慰|自亵|自渎|手淫|抚慰自己|玩弄自己|抚弄自己|揉搓|揉弄|揉捏|拨弄|蹂躏|爱抚自己|摩擦(?:着)?(?:自己|腿间|下体)|夹紧(?:双腿|腿)|震动棒|跳蛋|按摩棒|假阳具/;
 /** 明确的裸露/脱光表述。 */
 const NAKED_STATE =
   /赤裸|裸体|全裸|一丝不挂|未着寸缕|赤身|脱光(?:了)?(?:衣服|衣物|全身)|衣服全脱|光着(?:身子|身体)/;
@@ -1256,20 +1283,52 @@ const OPEN_ACTION =
  * 部位裸露。语序两种都要认：正文既写「露出整个胸部」（露在前），
  * 也写「胸口裸露着」（露在后）——旧版只认后者，最常写的「露出」全漏。
  */
-const BARE_UPPER =
-  /(?:露出|裸露|暴露|亮出|敞开|扒开|扯开|掀开)[^，。！？；]{0,8}(?:乳房|胸部|胸脯|胸口|双乳|乳沟|乳头|乳尖)|(?:上身|胸口|乳房|胸部|胸脯|双乳|乳沟|乳头|乳尖|奶子)[^，。！？；]{0,6}(?:赤裸|裸露|暴露|露出|光着|外露)/;
-const BARE_LOWER =
-  /(?:露出|裸露|暴露|亮出|敞开|扒开|扯开|掀开)[^，。！？；]{0,8}(?:私处|阴部|下体|秘处|股间|屁股|臀)|(?:下身|私处|阴部|下体|秘处|腿间|股间|屁股)[^，。！？；]{0,6}(?:赤裸|裸露|暴露|露出|光着|外露)/;
+const BARE_UPPER = RegExp(
+  `(?:露出|裸露|暴露|亮出|敞开|扒开|扯开|掀开|毫无遮挡|毫无遮掩|一览无余)[^，。！？；]{0,10}(?:乳房|胸部|胸脯|胸口|双乳|乳沟|乳头|乳尖|乳球|乳峰|雪乳|椒乳|奶子|躯体|身子)|(?:上身|胸口|乳房|胸部|胸脯|双乳|乳沟|乳头|乳尖|乳球|乳峰|雪乳|椒乳|奶子)[^，。！？；]{0,6}(?:赤裸|裸露|暴露|露出|光着|外露)`,
+);
+const BARE_LOWER = RegExp(
+  `(?:露出|裸露|暴露|亮出|敞开|扒开|扯开|掀开|探入|伸进|探进|摸进|毫无遮挡|毫无遮掩|一览无余)[^，。！？；]{0,10}(?:私处|阴部|下体|秘处|股间|屁股|臀|小穴|花穴|蜜穴|腿心)|(?:下身|私处|阴部|下体|秘处|腿间|股间|屁股|小穴|花穴|蜜穴)[^，。！？；]{0,8}(?:赤裸|裸露|暴露|露出|光着|外露|被.{0,4}(?:手指|掌|舌|唇))`,
+);
+/**
+ * 整具身子已经几乎没遮住。
+ *
+ * 网文最常写「躯体近乎毫无遮挡」，既不点乳房也不点私处，但画面就是全露。
+ * 旧版只认「全裸 / 一丝不挂」这类明写的词，这种描写整段漏掉，账本停在「穿得整整齐齐」。
+ */
+const BODY_BARE = /(?:躯体|身子|身体|全身|浑身)[^，。！？；]{0,8}(?:毫无遮挡|毫无遮掩|一览无余|一览无遗|赤裸|裸露)|(?:毫无遮挡|毫无遮掩|一览无余)[^，。！？；]{0,6}(?:躯体|身子|身体|全身)/;
 /** 明确「没脱」的写法：这类情节一律不碰账本，宁可少脱也不错脱。 */
 const OVER_CLOTHES =
   /(?:隔着(?:衣服|衣料|布料|衣物|内衣|内裤|裤子|裙子|胸罩|睡衣)|未脱|没脱|没有脱|不脱|衣着完整|衣服还在|穿着衣服)/;
+/**
+ * 正文这一段明摆着在裸 / 在做爱。
+ *
+ * 用途只有一个：**当账本说「全套穿好」而正文明确不是**时，别把模型写对的裸露状态
+ * 剥成一身衣服。这是「NSFW 剧情出 SFW 图」的最后一道兜底——场景推断再全也有漏网的
+ * 写法，而模型读到的是同一段正文，它写 `nude` 往往比账本准。
+ *
+ * 词表刻意写得紧，避免把「隔着衣服摸胸」「正常亲嘴」也放进来：
+ * 不收单独的「胸」「亲」「吻」，只收明确的裸露与性行为。
+ */
+const NUDITY_HINT =
+  /(赤裸|全裸|裸体|一丝不挂|未着寸缕|赤身|光着(?:身子|身体)|毫无遮挡|毫无遮掩|一览无余|乳房|乳球|乳峰|乳尖|乳头|双乳|奶子|私处|下体|小穴|花穴|蜜穴|腿心|性交|做爱|交合|交欢|交媾|插入|抽插|内射|口交|自慰|手淫|高潮|射在(?:里|体)?|淫水|爱液)/;
+/**
+ * 手或道具已经进到下半身里面了。
+ *
+ * 真实正文「探入裙底的纤细玉手死死按着震动棒，在…小穴内反复来回抽送」里既没有
+ * 「脱下内裤」，也没有「露出私处」——但画面上那条内裤不可能是穿好的。
+ * 旧版只认「脱/褪/露」三类动词，这类描写整段漏掉，于是图里她穿得整整齐齐。
+ */
+const HAND_OR_TOY_LOWER =
+  /(?:震动棒|跳蛋|按摩棒|假阳具|手指|两指|玉手|指腹|指尖|指节)[^。！？；]{0,24}(?:小穴|花穴|蜜穴|穴内|阴道|私处|腿心|股间|下身|体内)|(?:探入|伸进|探进|摸进)[^。！？；]{0,8}(?:裙|腿|股)/;
+/** 肩带垮落/裙腰下滑这类「衣服自己滑下去」。 */
+const SLIP_ACTION = /(?:肩带|吊带|衣襟|衣领|领口|裙腰|裤腰)[^。！？；]{0,6}(?:垮落|滑落|下落|松脱|滑下)|(?:垮落|滑落)[^。！？；]{0,6}(?:肩带|吊带|裙|衣)/;
 const PIECE_PROSE: Record<string, RegExp> = {
   panties: /内裤|底裤|丁字裤/,
   bra: /胸罩|文胸|内衣|奶罩/,
   skirt: /裙/,
-  dress: /裙|旗袍|礼服|汉服|和服/,
+  dress: /裙|旗袍|礼服|汉服|和服|浴衣|连衣/,
   pants: /牛仔|(?<!内)裤/,
-  shirt: /衬衫|上衣|t恤|T恤|背心|吊带|毛衣|卫衣/,
+  shirt: /衬衫|上衣|t恤|T恤|背心|吊带|毛衣|卫衣|连衣|抹胸|吊带|上衣/,
   jacket: /外套|夹克|大衣|西装|风衣/,
   socks: /袜/,
   shoes: /鞋/,
@@ -1281,6 +1340,35 @@ function pieceMentioned(kind: string, text: string): boolean {
   return text.split(/[，。；！？,;]/).some((clause) => {
     if (!expression.test(clause)) return false;
     return !/(?:仍然|还|依旧|依然)?(?:穿着|穿在|没脱|未脱|还在身上)/.test(clause);
+  });
+}
+/**
+ * 只截取**这张图所在位置**附近的正文。
+ *
+ * 不能拿整楼正文判裸露:同一楼里第 3 段才脱光,第 1 段的图必须是穿着的。
+ * 用整楼判定会把「后面脱了」当成「这张图也脱了」,第 1 张图就会跟着裸。
+ */
+function storyNearImage(source: string, image: ImageInsertion): string {
+  if (!source) return '';
+  const at = Math.max(0, absoluteOffset(source, image.sourceLine ?? 0, image.charOffset ?? 0));
+  const start = Math.max(0, at - 240);
+  const end = Math.min(source.length, at + 120);
+  return source.slice(start, end);
+}
+/**
+ * 账本里这套衣服是否已经记了「脱掉 / 半脱 / 露出」。
+ *
+ * 只用来决定要不要把话语权让给模型：账本**记了**脱除就按账本（它是逐楼累积的事实），
+ * 账本**什么都没记**而正文这段明显在裸时，才让模型写的状态过。
+ */
+function ledgerShowsUndress(record: ClothingRecord): boolean {
+  return record.pieces.some((piece) => {
+    const state = piece.state ?? {};
+    if (state.location && state.location !== 'worn' && state.location !== 'unknown') return true;
+    if (state.exposure && state.exposure !== 'covered' && state.exposure !== 'unknown') return true;
+    if (state.arrangement && state.arrangement !== 'normal' && state.arrangement !== 'unknown') return true;
+    if (state.fastening && state.fastening !== 'closed' && state.fastening !== 'unknown') return true;
+    return false;
   });
 }
 /**
@@ -1297,10 +1385,13 @@ export function synthesiseSceneClothing(
   const notes: string[] = [];
   const text = source.replace(/\r\n?/g, '\n');
   if (!text || !before.size) return { changes, notes };
-  const scenes: Array<{ expression: RegExp; mode: 'bath' | 'nude' | 'sex'; label: string }> = [
+  const scenes: Array<{ expression: RegExp; mode: 'bath' | 'nude' | 'sex' | 'solo'; label: string }> = [
     { expression: BATH_SCENE, mode: 'bath', label: '洗澡 / 入水' },
     { expression: NUDE_SCENE, mode: 'nude', label: '全裸' },
     { expression: SEX_SCENE, mode: 'sex', label: '亲密情节' },
+    // 排在 sex 之后:有男主在场的场面由 sex 分支处理(它认更多动作词)。
+    // 这里只兜「没有男主、但正文明确在自慰/用道具」的场面——旧版这一类整段漏掉。
+    { expression: SOLO_SCENE, mode: 'solo', label: '独自的情色场面' },
   ];
   const handled = new Set<string>();
   for (const scene of scenes) {
@@ -1328,7 +1419,7 @@ export function synthesiseSceneClothing(
       const window = sentenceWindow(text, index, 80);
       const evidence = window.text.trim();
       const pieces: ClothingPiece[] = [];
-      if (scene.mode === 'sex') {
+      if (scene.mode === 'sex' || scene.mode === 'solo') {
         // 严格按剧情：没写脱衣/裸露就不动账本；写了「隔着衣服」更是明确不脱。
         if (OVER_CLOTHES.test(evidence)) {
           notes.push(`${name}: 亲密情节但原文写着隔着衣物/没有脱，服装账本保持原样`);
@@ -1336,11 +1427,23 @@ export function synthesiseSceneClothing(
           continue;
         }
         const naked = NAKED_STATE.test(evidence);
+        const bodyBare = BODY_BARE.test(evidence);
         const undress = TAKEOFF_ACTION.test(evidence);
         const opened = OPEN_ACTION.test(evidence);
         const bareUpper = BARE_UPPER.test(evidence);
         const bareLower = BARE_LOWER.test(evidence);
-        if (!naked && !undress && !opened && !bareUpper && !bareLower) {
+        const lowerInside = HAND_OR_TOY_LOWER.test(evidence);
+        const slipped = SLIP_ACTION.test(evidence);
+        if (
+          !naked &&
+          !bodyBare &&
+          !undress &&
+          !opened &&
+          !bareUpper &&
+          !bareLower &&
+          !lowerInside &&
+          !slipped
+        ) {
           // 亲吻、隔着衣服的抚摸、单纯的爱抚描写：不推断任何脱衣。
           handled.add(key);
           continue;
@@ -1352,13 +1455,35 @@ export function synthesiseSceneClothing(
           const mentioned = pieceMentioned(kind, evidence);
           const upper = kind === 'shirt' || kind === 'bra' || kind === 'jacket' || kind === 'dress';
           const lower = kind === 'pants' || kind === 'skirt' || kind === 'panties' || kind === 'dress';
-          // 三层优先级：真脱掉 > 只把挡住的部分亮出来 > 掀起裙摆。
-          // 中间这层是这次的核心修正——「衣领被扒开、整个胸部露出来」里衣服还在身上，
+          // 优先级：整具身子已经露出来 > 真脱掉 > 只把挡住的部分亮出来 > 手/道具已经进去了 > 肩带垮落 > 掀起裙摆。
+          // 中间那层是核心修正——「衣领被扒开、整个胸部露出来」里衣服还在身上，
           // 记成 removed 会让渲染变成 no shirt + 上半身光着，比实际脱得更多。
-          // 「扒开/掀开/敞开」本身就是 OPEN_ACTION，即便句子同时写了「露出」也不能算脱下。
-          if (naked || (undress && mentioned && !opened)) {
+          // 「扒开/掀开/敞开」本身就是 OPEN_ACTION，即便句子同时写了「露出」也不算脱下。
+          //
+          // bodyBare 单独一层：正文写「躯体近乎毫无遮挡」时不点任何一件衣服，
+          // 旧版谁都不命中 → pieces 空 → 整段 continue，于是账本停在「全套穿好」，
+          // 那正是「NSFW 剧情出 SFW 图」最主要的成因。
+          if (naked || bodyBare) {
             pieces.push({ id: piece.id, design: '', state: { location: 'removed' } });
-          } else if ((bareUpper && upper) || (bareLower && lower) || (opened && mentioned)) {
+          } else if (undress && mentioned && !opened) {
+            pieces.push({ id: piece.id, design: '', state: { location: 'removed' } });
+          } else if ((bareUpper && upper) || (bareLower && lower)) {
+            pieces.push({ id: piece.id, design: '', state: { exposure: 'bare' } });
+          } else if (lowerInside && lower) {
+            // 手或道具已经进到下身里：那条内裤/裤子不可能是穿好的，但也没写它被脱下，
+            // 记成 removed 会画出比正文更光的画面。用「还穿着但被拨到一边」这一档。
+            pieces.push({
+              id: piece.id,
+              design: '',
+              state: {
+                ...(kind === 'panties' || kind === 'pants' ? { arrangement: 'pulled_aside' } : {}),
+                exposure: 'bare',
+              },
+            });
+          } else if (slipped && upper) {
+            // 肩带垮落：衣服还在身上，但已经挂不住了。
+            pieces.push({ id: piece.id, design: '', state: { exposure: 'partial', fastening: 'loose' } });
+          } else if (opened && mentioned) {
             pieces.push({ id: piece.id, design: '', state: { exposure: 'bare' } });
           } else if (mentioned && /掀起|撩起|掀开|撩开/.test(evidence) && (kind === 'skirt' || kind === 'dress')) {
             pieces.push({ id: piece.id, design: '', state: { arrangement: 'lifted' } });
@@ -1532,6 +1657,17 @@ export function enforceClothing(
     // 账本一套衣服都没记下来(旧版残档 design 为空)时，别把模型写的衣服也剥掉，
     // 否则人物会变成「没写任何衣物」→ 出图直接裸。整条跳过，连 Base 也不剥。
     if (!caption.tag.trim()) continue;
+    // 账本说「全套穿好」但正文这段明摆着在裸 —— 以正文为准，保留模型写的状态。
+    //
+    // 为什么需要这道兜底：场景推断再全也有漏网的写法（比喻、方言、隐晦描写），
+    // 而模型读的就是同一段正文，它写 `nude` / `panties down` 往往比账本准。
+    // 旧版无条件用账本覆盖，于是账本一旦漏判，模型写对的裸露就被抹成一身衣服——
+    // 用户看到的「NSFW 剧情出 SFW 图」就是这个。只在「账本没记任何脱除」时放行，
+    // 反向不会成立：账本记了 removed 仍然压过模型。
+    if (caption.tag.trim() && source && NUDITY_HINT.test(storyNearImage(source, image)) && !ledgerShowsUndress(record)) {
+      managed++;
+      continue;
+    }
     managed++;
     const dynamic = dropProps(
       c.tag

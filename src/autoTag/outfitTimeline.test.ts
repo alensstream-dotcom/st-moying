@@ -12,6 +12,7 @@ import {
   clothingBefore,
   clothingBlock,
   clothingCaption,
+  garmentKind,
   initialiseClothingFromImage,
   parseClothingChanges,
   proseGarment,
@@ -680,4 +681,105 @@ describe('服装账本的呈现与固定着装', () => {
   it('没有固定着装的角色不进基准账本', () => {
     expect(clothingBefore([], 0, [{ ...entry('无名'), fields: { ...entry('无名').fields, outfit: '' } }]).size).toBe(0);
   });
+});
+describe('真实正文：场景推断与账本兜底', () => {
+  // 用户那本小说开篇的原句（保留原写法）。这一句同时踩了三个坑：
+  // ①「躯体近乎毫无遮挡」不点任何一件衣服；②「按着震动棒…反复抽送」没有脱的动词；
+  // ③「肩带垮落」是衣服自己滑下去。旧版全不命中 → 账本一条不记 → 图里全套穿好。
+  const PROSE =
+    '名为茉莉的少女靠着柱子，近乎透明的白连衣的肩带垮落，稚嫩饱满真娇躯体近乎毫无遮挡，柔软乳球被埋入得近乎消失的手指肆意揉搓，挺拔娇粉的樱桃被双指夹住拨弄，探入裙底的纤细玉手死死按着震动棒，在瘙痒难耐淫水流满的小穴内反复来回抽送。';
+
+  function seeded(name: string): ClothingState {
+    const state: ClothingState = new Map();
+    state.set(name, {
+      name,
+      outfitId: 'o1',
+      source: '',
+      suitMode: 'style',
+      pieces: [
+        { id: 'shirt', design: 'white camisole', state: { location: 'worn' } },
+        { id: 'skirt', design: 'black skirt', state: { location: 'worn' } },
+        { id: 'panties', design: 'white panties', state: { location: 'worn' } },
+      ],
+    } as ClothingRecord);
+    return state;
+  }
+
+  function apply(state: ClothingState, changes: ClothingChange[]): void {
+    for (const change of changes) {
+      const record = state.get(change.name);
+      if (!record) continue;
+      for (const piece of change.pieces) {
+        const target = record.pieces.find((item) => item.id === piece.id);
+        if (target) target.state = { ...target.state, ...piece.state };
+      }
+    }
+  }
+
+  it('「躯体毫无遮挡」这种不点名衣物的写法也要推进账本', () => {
+    const state = seeded('茉莉');
+    const out = synthesiseSceneClothing(PROSE, [entry('茉莉')], state, []);
+    expect(out.changes.length).toBeGreaterThan(0);
+    apply(state, out.changes);
+    expect(clothingCaption(state.get('茉莉')!).tag).toContain('nude');
+  });
+
+  it('中文款式能归类，脱掉后才渲染得出 no dress', () => {
+    expect(garmentKindOf('白连衣')).toBe('dress');
+    expect(garmentKindOf('牛仔长裤')).toBe('pants');
+  });
+
+  it('手/道具已经进到下身里时，内裤记成半脱而不是消失', () => {
+    const state = seeded('茉莉');
+    const out = synthesiseSceneClothing(
+      '茉莉的手探进自己内裤里，按着跳蛋在小穴内来回抽送。',
+      [entry('茉莉')],
+      state,
+      [],
+    );
+    apply(state, out.changes);
+    const panties = state.get('茉莉')!.pieces.find((piece) => piece.id === 'panties')!;
+    expect(panties.state.exposure).toBe('bare');
+    expect(panties.state.arrangement).toBe('pulled_aside');
+  });
+
+  it('账本漏判但正文在裸时，保留模型写的 nude；正文只是亲吻仍按账本', () => {
+    const state = seeded('茉莉');
+    const nude = { ...image('1girl, nude, black hair') } as ImageInsertion;
+    enforceClothing(nude, state, false, true, [entry('茉莉')], '她赤裸着身子躺在床上，乳球随着呼吸起伏。');
+    expect(nude.characters[0].tag).toContain('nude');
+
+    const kiss = { ...image('1girl, nude, black hair') } as ImageInsertion;
+    enforceClothing(kiss, state, false, true, [entry('茉莉')], '他低头吻了她，两人贴近了一些。');
+    expect(kiss.characters[0].tag).not.toContain('nude');
+    expect(kiss.characters[0].tag).toContain('white camisole');
+  });
+
+  it('账本已经记了脱除时，模型写的穿着也压不过账本', () => {
+    const state = seeded('茉莉');
+    state.get('茉莉')!.pieces.forEach((piece) => {
+      piece.state = { location: 'removed' };
+    });
+    const dressed = { ...image('1girl, white camisole, white panties') } as ImageInsertion;
+    enforceClothing(dressed, state, false, true, [entry('茉莉')], '她赤裸着身子。');
+    expect(dressed.characters[0].tag).toContain('no shirt');
+  });
+
+  function image(charTag: string): ImageInsertion {
+    return {
+      position: 'P2',
+      after: '',
+      tag: '1girl, solo, lying, bedroom',
+      nl: '',
+      negative: '',
+      size: 'portrait',
+      characters: [{ name: '茉莉', tag: charTag, nl: '' }],
+      sourceLine: 0,
+      charOffset: 0,
+    } as unknown as ImageInsertion;
+  }
+
+  function garmentKindOf(design: string): string {
+    return garmentKind(design);
+  }
 });
