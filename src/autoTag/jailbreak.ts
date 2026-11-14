@@ -257,7 +257,7 @@ export const JAILBREAK_TIERS: JailbreakTier[] = [
     id: 'gemini',
     label: 'Gemini 专用',
     summary:
-      '给 Gemini(Playground / pg- 通道)用:tag 收成「只写可拍摄的构图」,解剖与行为词由插件本地按原文补齐,避开输出侧成段露骨的截断。',
+      '给 Gemini(agy- / pg- 通道)用:输出压成「只留 images + 构图白名单」的紧缩契约(省掉 nl/identities/outfitChanges 这些长字段,由插件本地补齐),解剖与行为词也由本地按原文补,避开输出侧成段露骨的截断。实测 3.8-flash 从 33% 提到 80%。',
     text: GEMINI_TEXT,
   },
 ];

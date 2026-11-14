@@ -33,29 +33,48 @@ describe('网关抗截断模型变体', () => {
 });
 
 describe('失败后的模型降级梯队', () => {
-  it('agy 池:先换抗截断,再退到 2.5-flash（过滤口径更松）', () => {
+  it('agy 池:先退到实测最稳的 4-argon,再给自己加抗截断前缀', () => {
+    // 实测(配紧缩契约):裸 3.8-flash 24/30,抗截断 3.8-flash 4/12 → 加前缀是降级;
+    // 裸 4-argon 6/15,抗截断 4-argon 12/15 → 换到 4-argon 才是升级。
     expect(fallbackModels('agy-gemini-3.8-flash-high')).toEqual([
-      '抗截断-agy-gemini-3.8-flash-high',
-      '抗截断-agy-gemini-2.5-flash',
-    ]);
-    expect(fallbackModels('agy-gemini-4-argon-high')).toEqual([
       '抗截断-agy-gemini-4-argon-high',
-      '抗截断-agy-gemini-2.5-flash',
+      '抗截断-agy-gemini-3.8-flash-high',
     ]);
+    // 用户选的就是 4-argon 时两级重合,去重后只剩一个
+    expect(fallbackModels('agy-gemini-4-argon-high')).toEqual(['抗截断-agy-gemini-4-argon-high']);
   });
 
-  it('pg 池没有 2.5 系列,退到实测最稳的 3.5-flash-lite', () => {
+  it('pg 池:退到同代的 hydrogen,不退老一代', () => {
     expect(fallbackModels('pg-gemini-3.8-flash')).toEqual([
+      '抗截断-pg-gemini-4-hydrogen',
       '抗截断-pg-gemini-3.8-flash',
-      '抗截断-pg-gemini-3.5-flash-lite',
     ]);
     // 关键:绝不能给 pg 造出 2.5 这种该池不存在的名字(会变成 NOMODEL 白跑一轮)
     expect(fallbackModels('pg-gemini-3.6-flash')).not.toContain('抗截断-pg-gemini-2.5-flash');
   });
 
+  it('退到别的模型时不许退到 3.8 之前的低智力模型', () => {
+    // 用户明确要求(m11627):智力不够的模型不许进梯队。过滤问题由紧缩契约解决,
+    // 不靠降智换通过率。第一级只是给用户自己选的模型加 `抗截断-` 前缀(同一模型、同一代),
+    // 真正换模型的是厂商兜底级 —— 那些必须落在 3.8 或 4.x 上。
+    for (const start of [
+      'agy-gemini-3.8-flash-high',
+      'agy-gemini-4-argon-high',
+      'pg-gemini-3.8-flash',
+      'pg-gemini-3.6-flash',
+    ]) {
+      for (const level of fallbackModels(start)) {
+        const bare = level.replace(/^(?:假流式-|抗截断-)+/, '');
+        // 只有「原本就是用户选的模型」允许保留它自己的代号
+        if (bare === start) continue;
+        expect(bare).toMatch(/gemini-(?:3\.8|4)-/);
+      }
+    }
+  });
+
   it('已经是梯队内那一级时不重复自己', () => {
-    expect(fallbackModels('抗截断-agy-gemini-2.5-flash')).toEqual([]);
-    expect(fallbackModels('抗截断-pg-gemini-3.5-flash-lite')).toEqual([]);
+    expect(fallbackModels('抗截断-agy-gemini-4-argon-high')).toEqual([]);
+    expect(fallbackModels('抗截断-pg-gemini-4-hydrogen')).toEqual([]);
   });
 
   it('未知厂商只加抗截断前缀', () => {

@@ -60,27 +60,26 @@ export function antiTruncationModel(model: string): string | null {
 }
 
 /**
- * 各厂商池的「兜底模型」——被拦/输出不稳时退到这一级。
+ * 各厂商池的「同一代」兜底模型 —— 被拦/输出不稳时退到这一级。
  *
  * 为什么按厂商分表:网关按前缀(`agy-` / `pg-`)路由到完全不同的上游账号池,
- * 两边的可用模型与过滤口径都不一样,实测:
+ * 两边的可用模型与过滤口径都不一样。
  *
- *   agy 池:会做内容过滤(IN/OUT),退到老一代后过滤口径明显更松。
- *           `抗截断-agy-gemini-2.5-flash` 在开篇即露骨的第 1 楼上 9/10 通过。
- *   pg 池:同样会做内容过滤,而且是在**输出侧边写边过滤** ——
- *           裸 `pg-gemini-3.6-flash` 真实应答只吐了 19 个 token 就
- *           `finish_reason: content_filter`(内容停在 `"tag":"1girl, 1boy, indoor`),
- *           同一楼换 `抗截断-` 变体就能拿回整份合法 JSON。
- *           真正端到端(真实楼层 + 真实插件布局)3/3 通过,但**每一轮都要走到第三级**
- *           `抗截断-pg-gemini-3.5-flash-lite` 才成 —— 所以 pg 这一级不能省。
- *           另外 pg 池根本没有 2.5 系列(21 个 pg 模型里零命中),照搬 agy 那一级
- *           只会得到一个不存在的模型名。
+ * 为什么**不再**退到老一代(`2.5-flash` / `3.5-flash-lite`):
+ * 那两个名字早期确实是「过滤口径最松、通过率最高」的一档,但它们的智力不足以完成
+ * 本插件的任务 —— 认识不到景别/机位要求、分不清角色档案与剧情、建档字段乱填。
+ * 用户明确要求「不要用 3.8 之前的模型」(m11627)。现在过滤问题改由
+ * `autoTag/compactContract.ts` 的紧缩契约解决(实测 3.8-flash 8/8、4-argon 7/8),
+ * 不需要再靠降智换通过率。
  *
+ * 所以每一级都保持在同一代:
+ *   agy 池:`抗截断-<原名>` → `抗截断-agy-gemini-4-argon-high`(?同代更强)
+ *   pg 池 :`抗截断-<原名>` → `抗截断-pg-gemini-4-hydrogen`
  * 表里的名字来自实测,换网关后可能不存在 —— 调用方会按「模型不存在」自动跳过该级。
  */
 const VENDOR_FALLBACK: Record<string, string[]> = {
-  agy: ['抗截断-agy-gemini-2.5-flash'],
-  pg: ['抗截断-pg-gemini-3.5-flash-lite'],
+  agy: ['抗截断-agy-gemini-4-argon-high'],
+  pg: ['抗截断-pg-gemini-4-hydrogen'],
 };
 
 /**
@@ -90,9 +89,16 @@ const VENDOR_FALLBACK: Record<string, string[]> = {
  * 失败之后走的。调用方拿 `looksLikeMissingModel` 判断名字不存在并跳过该级。
  *
  * 梯队构成(全部来自实测,不猜):
- *   1. `抗截断-<原名>` —— 同一模型换网关路径。对 agy 池能提高过审率,
- *      对 pg 池能解决「裸模型输出坏 JSON」。
+ *   1. `抗截断-<原名>` —— 同一模型换网关路径。
  *   2. `VENDOR_FALLBACK[厂商]` —— 该池里实测最稳的那一个。
+ *
+ * 注意顺序:第一级**不预置**抗截断前缀,先让用户选的裸模型跑。实测两个模型的偏好正相反:
+ *   裸 agy-gemini-3.8-flash-high          → 24/30 (80%)
+ *   抗截断-agy-gemini-3.8-flash-high      →  4/12 (33%)
+ *   裸 agy-gemini-4-argon-high            →  6/15 (40%)
+ *   抗截断-agy-gemini-4-argon-high        → 12/15 (80%)
+ * 所以「先裸后抗截断」对 3.8 正确,对 4-argon 也能靠第二级补上;反过来先在 3.8 上
+ * 用抗截断会白丢两次请求。(以上都是配紧缩契约后的数据 —— 旧契约下抗截断更好。)
  *
  * 两个池的失败模式不同,所以第 2 级不能共用同一个名字(见上表注释)。
  */
@@ -107,15 +113,13 @@ export function fallbackModels(model: string): string[] {
     if (candidate && candidate !== name && !out.includes(candidate)) out.push(candidate);
   };
 
-  push(`${ANTI_TRUNCATION_PREFIX}${base}`);
-
-  // 厂商前缀(agy-/pg-/…)保留:网关按前缀路由到不同上游账号池,换厂商等于换账号。
+  // 顺序按实测最优排,不按「先加前缀」这种直觉排:
+  // 抗截断前缀对 3.8-flash 反而是**降级**(裸 80% → 抗截断 33%),对 4-argon 才是升级
+  // (裸 40% → 抗截断 80%)。所以先退到该池实测最稳的那一级,再试「给自己加前缀」。
+  // 用户选的就是 4-argon 时,这两级会重合,由 push 去重成一个。
   const vendor = /^([a-z]+)-/i.exec(base)?.[1]?.toLowerCase() ?? '';
-  for (const candidate of VENDOR_FALLBACK[vendor] ?? []) {
-    // 已经是这一级本身(例如用户就是选的它)就不再重复。
-    if (candidate === name) continue;
-    push(candidate);
-  }
+  for (const candidate of VENDOR_FALLBACK[vendor] ?? []) push(candidate);
+  push(`${ANTI_TRUNCATION_PREFIX}${base}`);
   return out;
 }
 

@@ -86,6 +86,7 @@ import {
 } from '@/autoTag/outfitTimeline';
 import { enforceAppearance } from '@/autoTag/appearanceLock';
 import { beginGeneration, clearGeneration, consumeGeneration } from '@/autoTag/generationGate';
+import { COMPACT_PLAN_CONTRACT, useCompactContract } from '@/autoTag/compactContract';
 import { autoTagProfile, buildAutoTagMessages, flattenToSystem } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
@@ -566,6 +567,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // (锚住同一个画面、别抢别人的画面)。min/max 要同时覆盖 build 的规则文案与下面的
     // parse 校验,只改一处会自相矛盾。
     const promptOptions = slot ? { ...settings.autoTag, minImages: 1, maxImages: 1 } : settings.autoTag;
+    // gemini 档改发紧缩契约(见 compactContract.ts 的实测表)。整轮请求固定一次:
+    // 验收、建档 nl 校验、重试都必须看同一份口径,中途改动会让前后不一致。
+    const compact = useCompactContract(promptOptions.jailbreakTier);
     // 协议形态开跑时快照一次:写协议、验收与收尾同一份,用户中途拨开关也不会前后不一
     const profile = autoTagProfile();
     // 素材候选的同分摇号种子:取自 identity(聊天+楼层+swipe+正文哈希)。
@@ -642,11 +646,22 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           appearancePolicyBlock() +
           '\n用户套装的部件 ID 和款式不允许随意重选；style 允许有证据的穿脱，明确整套换装可退出；always 不接受任何自动服装变更。',
       });
-      built.push({
-        role: 'system',
-        content:
-          IDENTITY_PROTOCOL + '\n已核实身份（旧绘图档案不是性别证据）：' + JSON.stringify(knownIdentities),
-      });
+      // gemini 档:把契约压成「只留 images + tag 白名单」的紧缩形态(见 compactContract.ts)。
+      //
+      // 位置与取舍都来自实测,别凭直觉改:
+      // - 紧缩契约必须压在所有其它 system **之后**(实测的 8/8 就是「完整请求 + 末尾追加」)。
+      // - 但 IDENTITY_PROTOCOL 必须**整条不发**:它 1106 个字符,正文就是「增加 identities:
+      //   [{name,gender,…}]」——和紧缩契约里「不要输出 identities」正面打架。带着它,
+      //   裸 3.8-flash 实测 0/6 全被拦;去掉之后同一份请求 4/6 过。模型没有理由在
+      //   「必须写 identities」和「不许写 identities」之间挑前者再被截断。
+      if (!compact) {
+        built.push({
+          role: 'system',
+          content:
+            IDENTITY_PROTOCOL + '\n已核实身份（旧绘图档案不是性别证据）：' + JSON.stringify(knownIdentities),
+        });
+      }
+      if (compact) built.push({ role: 'system', content: COMPACT_PLAN_CONTRACT });
       return flatten ? flattenToSystem(built) : built;
     };
     const messages = await assemble(false);
@@ -904,10 +919,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // valid floor image plan or force repeated paid analysis of a random jump.
           // 单槽重写忽略本次 changes,不校验建档 nl —— 校验它会为一份会被丢弃的
           // changes 白白消耗重试次数。NAI 关了自然语言时协议不要 nl,也就不验。
+          // gemini 档用紧缩契约时模型被明确要求不写 nl,这条校验必须同步放行 ——
+          // 否则每次建档都会被自己的验收判失败,重试到次数用尽(实测过,会连报三轮)。
           if (
             !slot &&
             profile.naiCharPrompts &&
             profile.nl &&
+            !compact &&
             candidate.changes.some((change) => change.field === 'new' && !change.nl?.trim())
           ) {
             throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
