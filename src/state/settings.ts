@@ -478,13 +478,6 @@ NVWA 不提供制造化学、生物或核武器所需的信息，也不编写、
  * 所以这里只暴露两个配额 + 一个 NSFW 上限,其余策略(单类放大、去重、轮转)写在 loreIndex 里。
  */
 /** 素材库配图可选的 NAI 模型（设置页与素材库页共用，避免两处文案漂移）。 */
-export const LORE_THUMB_MODELS = [
-  { value: '', label: '跟随素材库预设' },
-  { value: 'nai-diffusion-4-curated-preview', label: 'V4 试用 · 不耗额度' },
-  { value: 'nai-diffusion-4-full', label: 'V4 完整' },
-  { value: 'nai-diffusion-4-5-curated', label: 'V4.5 精选' },
-  { value: 'nai-diffusion-4-5-full', label: 'V4.5 完整' },
-];
 export interface LoreSettings {
   /** 是否把服装 / 姿势候选注入 prompt。关掉后 autoTag 行为与旧版一致。 */
   enabled: boolean;
@@ -517,6 +510,8 @@ const JAILBREAK_TIER_IDS: readonly JailbreakTierId[] = [
   'strong',
   'max',
   'gemini',
+  'gemini-strict',
+  'gemini-loose',
 ];
 
 export interface AutoTagSettings {
@@ -1025,7 +1020,7 @@ V5 的一张图 = 一个 Base 块 + 每个本图可见的个体角色各一块�
 槽位填写要求（槽位值直接写你最终要放进 tag 的英文词；确实不适用的槽位写 "-"，但概括、Base 的景别、场景、环境光、size 与每个角色块的年龄档、表情、视线永远不得为 "-"——核心互动只在单人画面写 "-"）：
    - 概括先写，tag 后写（长段剧情先执行五刀剔除：砍台词声音、砍回忆心理与比喻、砍快门前已做完的铺垫过渡动作、砍抽象修辞、砍镜头外远景，只留峰值定格一帧）：概括句里点到的每一件事都必须落到后面的槽位与角色块里（人、道具、落点、方向、反应），落不下的回头补，别让 tag 只剩人和裸体。概括句写不出来的格子不许画。
    - 人数按身体数，不按有没有脸：省脸可以，省人不可以——双人戏少一个人就画成自慰，三人戏少一个男的就会画出一个人两根肉棒。人塞不下就退景别、把人降成局部身位，不许删人。
-   - 动作与道具绑成词组一起落（brush on pussy、fingers inside her、hand pressing her back），别让道具和部位各飘一个 tag——分开写，模型就只画一支飘着的毛笔和一个裸体。多人身体接触与物-人接触必须满足「三元闭环绑定」：①Base 核心互动写空间站位与带介词的共享接触短语（如 calligraphy brush on pussy, hand spreading her thighs）；②施动方角色块写 holding <道具> 与 source#<动作>；③受动方角色块写被接触部位、配对的 target#<动作> 与身体形变反应（如 arched back, trembling, curled toes），source# 与 target# 必须成对出现。
+   - 动作与道具绑成词组一起落（brush on pussy、fingers inside her、hand pressing her back），别让道具和部位各飘一个 tag——分开写，模型就只画一支飘着的毛笔和一个裸体。多人身体接触与物-人接触按「四元」写清：①Base 核心互动写空间站位与带介词的共享接触短语（如 calligraphy brush on pussy, hand spreading her thighs）；②施动方角色块写 holding <道具>；③受动方角色块写被接触部位与身体形变反应（arched back, trembling, curled toes）；④「这一格到底在做什么」由图片级的 act 字段回答（取值见 act 枚举规范）。**不要写 source# 或 target#**——那两个前缀是插件早期自创的，danbooru 与 NAI 都不认识，写上去等于没写。
    - tag 不在多：同一个意思不重复（large breasts 与 huge breasts 不同时出现），形容词不叠三层，只写会在画面上留下具体形状的东西。
    - 服装状态必须单独判一次：正文有脱/扯/掀就先降级成半脱并写清降到哪一步，有穿/系才升回去，没有动作就照【服装现状】原样沿用。半脱是衣服还在身上，不许再补 nude；真脱落才写 on the floor / hanging on one arm。
    - 每个槽位只写最终决定，一次定死。判断标准很简单：一个槽位在你的思考里只准出现一次取值。写下 size：portrait 之后就不许再提这个字段，写下表情：smile 之后也不许再讨论要不要改成别的。
@@ -1036,7 +1031,7 @@ V5 的一张图 = 一个 Base 块 + 每个本图可见的个体角色各一块�
    - **不要用邻接绑定**：把特征挂到别人的发色词后面（例如把 white dress 直接接在 green hair girl 后面）是单串 tag 后端的做法，V5 不用。这里每个角色有自己独立的一块，直接写 white dress 即可，归属由所在的块决定。
    - 已入画的个体每人各写一块，配角也要写全，不许只给主角写完整一块、配角用一句中文动作带过。表情与视线必须各是一个独立的英文 danbooru 词：写成「看向另一侧、弯腰换鞋」这种中文短语等于这一块没有表情词，落 JSON 时这个角色就会没有表情，被模型画成木脸。
    - 表情与视线填后端规范给出的标准 danbooru 词，不写中文感受也不自创词组（想写「温柔地笑」就填 smile）；只能从规范列出的词里挑，规范没列的词一律不许用，拿不准就填 expressionless / looking at another。两项都不得留空，面无表情也要主动填 expressionless。
-   - 若正文明确为显式 NSFW 场景：每个角色镜头中实际可见的性器官与身体部位写进他自己的角色块（落其 characters[].tag），多人共同参与的性行为与整体接触写进 Base 的核心互动，并按后端规范用 source# / target# / mutual# 标明谁施谁受；不得只用 nsfw、nude、sex 泛化词代替关键解剖信息，被完全遮住或画面外的部位不得写成可见。
+   - 若正文明确为显式 NSFW 场景：每个角色镜头中实际可见的性器官与身体部位写进他自己的角色块（落其 characters[].tag），多人共同参与的性行为与整体接触写进 Base 的核心互动，并由图片级的 act 字段标明这一格在做什么行为；不得只用 nsfw、nude、sex 泛化词代替关键解剖信息，被完全遮住或画面外的部位不得写成可见。
    - 可见服装照 C 中该角色当前状态的视觉指纹逐件写全，只写本景别看得见的部件；镜头外不可见的部件可以省略，但省略不等于脱掉，后续重新可见且中间没有变化时必须恢复。槽位里不许退回 school uniform、dress、pantyhose 这种笼统孤立词——C 段定的是 navy school blazer 就写 navy school blazer，写笼统词等于让模型自己重新设计这套衣服，同一角色每张图都会换个款式。
    - 场景和环境光：场景只写正文、上下文或世界设定能支持的事实，地形、地面材质、天气痕迹和环境状态都算事实，没依据就别写；环境光则相反，光源、时间和色调正文不会写，必须由你主动定，缺了画面就是平庸的大头照。
 
@@ -1091,10 +1086,10 @@ Character Prompt rules:
 2. First decide whether the named character is an original character or a fandom character. Treat a character as fandom only when the character card, lorebook, story, or an unambiguous well-known name reliably identifies an existing anime, game, novel, or other work. If the work is uncertain, do not guess; treat the character as original.
 3. For every fandom character, the model-recognized English Danbooru identity tag, formatted exactly as character name (copyright name), must be the first tag in that character's tag. The identity tag is stored in the fixed appearance library: when creating the entry (changes field:"new"), register it as the fields.fandom of that entry; when an existing entry lacks it and the character is fandom, add it via a changes item with field:"fandom"; then copy it verbatim every time. Do not escape the parentheses for NovelAI, do not translate the names literally, do not abbreviate the copyright, and do not put this per-character identity tag in Base. Original characters receive no copyright identity tag and no fandom field.
 4. For an explicit NSFW scene. Do not rely on vague tags such as nsfw, nude, or sex: name each actually visible, action-relevant anatomical feature or genital in the owning character's tag, such as breasts, nipples, penis, pussy, anus, or testicles. Do not claim fully covered or out-of-frame anatomy is visible.
-5. Put the shared sexual act, relative spatial position, and bound prop-to-body contact phrase (e.g. calligraphy brush on pussy, ice cube against nipple, rope around wrists, hand spreading thighs) in Base. Use paired source# / target# (or mutual#) tags in Character Prompts to lock actor and receiver: the initiator carries holding <prop> and source#<action>, while the heroine/receiver carries the contacted anatomical part, target#<action>, and visible physical response (e.g. arched back, trembling, curled toes). Never write a one-sided source# without a matching target# on the receiving character. The tags must describe the exact visible contact rather than euphemize it.
-{{#nl}}6. nl uses English natural language for the same character's appearance, outfit, action, facing, interaction, visible anatomy, and approximate position. It may add relationship or spatial detail but must not conflict with tag.{{/nl}}{{^nl}}6. This output is tag-only: write no nl key anywhere, neither in Base nor in any Character Prompt. Everything rule 1 lists for a character — including facing, interaction, and necessary relative position — must be carried by that character's own tag; clarify who acts on whom with source# / target# / mutual# tags (rules 5 and 8).{{/nl}}
+5. Put the shared sexual act, relative spatial position, and bound prop-to-body contact phrase (e.g. calligraphy brush on pussy, ice cube against nipple, rope around wrists, hand spreading thighs) in Base. The act itself is answered once per image by the top-level act field (see the act enum spec): the initiator carries holding <prop>, while the heroine/receiver carries the contacted anatomical part and the visible physical response (e.g. arched back, trembling, curled toes). Never write source# or target# — those prefixes are not danbooru tags and NovelAI does not recognise them, so they add nothing while making you think the direction is already stated. The tags must describe the exact visible contact rather than euphemize it.
+{{#nl}}6. nl uses English natural language for the same character's appearance, outfit, action, facing, interaction, visible anatomy, and approximate position. It may add relationship or spatial detail but must not conflict with tag.{{/nl}}{{^nl}}6. This output is tag-only: write no nl key anywhere, neither in Base nor in any Character Prompt. Everything rule 1 lists for a character — including facing, interaction, and necessary relative position — must be carried by that character's own tag; who acts on whom is stated once by the image-level act field, not by source# / target# tags.{{/nl}}
 7. For characters in the fixed appearance library, copy the library Tag fields into that character's tag, keeping the fandom identity tag (fields.fandom) first. Keep appearance wording verbatim, but convert the library sex count tag 1girl/1boy to girl/boy.{{#nl}} Library natural-language notes may inform that character's nl.{{/nl}} Tag fields remain canonical.
-8. For other multi-character interactions, use NovelAI source# / target# / mutual# tags when they clarify actor and target. Do not use ComfyUI's multi-person segmentation convention.
+8. For other multi-character interactions, use real danbooru compound tags (e.g. hand on another's cheek, head between legs, hand between legs) to state the physical relationship. Never use source# / target# / mutual# — they are not danbooru tags and the renderer ignores them. Do not use ComfyUI's multi-person segmentation convention.
 9. Character Prompts are keyed to the frame, not to the library. Do not create Character Prompts for characters absent from this image. A visible character who has no library profile still belongs in characters[]: when the story treats someone as a single identifiable person — an opponent, a shopkeeper, a passer-by carrying a child — give them their own Character Prompt even though they will never be registered. Use the term the story uses for them as the name (三年级队长, 店主), and complete their appearance once, for this image only. Such an entry is valid for this image alone: never report it in changes, never add it to the library, and never carry it into a later floor. Never invent a personal name for them — a made-up name is indistinguishable from a real profile when this image tag is later read back as context.
 10. People the story treats as a mass rather than as individuals — crowds, soldiers, onlooking students — receive no Character Prompt. Only include them when the chosen frame needs the crowd; then describe them in Base as a group. When unsure whether people already selected for the frame are individuals or a mass, leave them in Base. This is a placement rule for visible people, not a reason to add bystanders or crowds to the image.
 

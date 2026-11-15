@@ -118,6 +118,26 @@ function isStreamCut(result: CompletionResult): boolean {
   return !!result.finishReason && STREAM_CUT_RE.test(result.finishReason) && !looksComplete(result.content);
 }
 
+/**
+ * 这次失败是否属于「渠道不受理这个传输方式」,而不是内容/模型/破限问题。
+ *
+ * 实测(odyfree 自建站,2026-11-15):同一模型、同一份 5 万字符请求,
+ * `stream=false` 恒定 502 `Bad Gateway`,`stream=true` 立刻 200 且内容完整。
+ * 判据只看**网关级**回执:502/504、`Bad Gateway`、`Unexpected end of JSON input`、
+ * `Service Unavailable`、`upstream connect error`。
+ *
+ * 不能把 4xx 也算进来:400/422 通常是请求体本身不合规(模型名、参数),
+ * 换传输方式重发没意义,还会多花一次额度。
+ */
+function isTransportReject(e: unknown): boolean {
+  const message = String((e as Error)?.message ?? e ?? '');
+  if (!message) return false;
+  if (/已取消|aborted|AbortError/i.test(message)) return false;
+  return /\b50[234]\b|Bad Gateway|Service Unavailable|Unexpected end of JSON input|upstream connect error|网关/i.test(
+    message,
+  );
+}
+
 /* ============ 请求历史埋点(纯辅助,绝不允许影响主流程) ============ */
 
 /** 从响应体取 OpenAI 标准 usage。ST 代理非流式分支原样透传上游 JSON,故这里拿到的是真值。 */
@@ -375,7 +395,14 @@ async function requestCompletionAtUrl(
 
       const data = await resp.json();
       if (data?.error) {
-        throw new ApiError(data.error.message || '副 API 返回错误');
+        // 渠道把上游故障包在 HTTP 200 里回执(实测 odyfree:`{"error":{"message":"Bad Gateway"}}`)。
+        // 旧行为是直接抛出这句 message —— 上层只看到「Bad Gateway」四个字,不知道它其实
+        // 是一条渠道级故障、更不知道该怎么处理。这里补上状态码语境,判据才有得吃。
+        const errCode = typeof data.error?.code === 'string' ? data.error.code : '';
+        const errType = typeof data.error?.type === 'string' ? data.error.type : '';
+        const detail = [errCode, errType].filter(Boolean).join('/');
+        const message = data.error.message || '副 API 返回错误';
+        throw new ApiError(detail ? `${message} (${detail})` : message);
       }
 
       // ST 代理非流式分支是 response.send(json) 原样透传,故 usage 是上游真值。
@@ -389,7 +416,27 @@ async function requestCompletionAtUrl(
     });
 
   try {
-    let result = await sendOnce(stream);
+    let result: CompletionResult;
+    try {
+      result = await sendOnce(stream);
+    } catch (e) {
+      // 反向兜底:渠道把**非流式**请求直接拒掉时,同一份内容改流式重发一次。
+      //
+      // 实测(odyfree 自建站,2026-11-15):同一模型、同一份 5 万字符请求,
+      // `stream=false` 恒定 502 `Bad Gateway`,`stream=true` 立刻 200 并正常出完内容。
+      // 这是**运输方式**问题,与内容、长度、模型、破限都无关。
+      // 旧逻辑只做了「流式被斩断 → 改非流式」单向兜底,反方向没有,于是用户
+      // 渠道里 stream 一关就每次点每次失败,满屏 Bad Gateway,还会被上层误判成
+      // 「渠道拦截」去换模型 —— 方向全错。
+      if (!stream && isTransportReject(e)) {
+        console.info('[墨影] 渠道拒了非流式请求，改流式重发同一份请求', {
+          error: String((e as Error)?.message ?? e).slice(0, 160),
+        });
+        result = await sendOnce(true);
+      } else {
+        throw e;
+      }
+    }
     // 流式被输出侧过滤斩断 → 同一条请求改非流式重发一次。
     //
     // 这一步吃掉的是「渠道的传输方式问题」,不是模型问题:内容一个字没改,
@@ -483,7 +530,16 @@ export async function readSseContent(
       if (payload === '[DONE]') continue;
       try {
         const json = JSON.parse(payload);
-        if (json?.error) throw new ApiError(json.error.message || '副 API 返回错误');
+        if (json?.error) {
+          // SSE 的 error 帧同样是「渠道把上游故障包在 200 里」(实测 odyfree:
+          // `data: {"error":{"code":"network_error","message":"上游连接不稳定，请重试"}}`)。
+          // 不把 code/type 一起带出来,上层就只看到一句中文提示,认不出这是上游抖动。
+          const errCode = typeof json.error.code === 'string' ? json.error.code : '';
+          const errType = typeof json.error.type === 'string' ? json.error.type : '';
+          const detail = [errCode, errType].filter(Boolean).join('/');
+          const message = json.error.message || '副 API 返回错误';
+          throw new ApiError(detail ? `${message} (${detail})` : message);
+        }
         const choice = json?.choices?.[0];
         if (finish) {
           if (typeof choice?.finish_reason === 'string') finish.finishReason = choice.finish_reason;

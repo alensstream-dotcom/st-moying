@@ -49,6 +49,15 @@ const RULES: ShieldRule[] = [
   { re: new RegExp(group('underwear'), 'g'), to: '贴身衣物' },
   { re: new RegExp(group('naked'), 'g'), to: '没穿衣服' },
   { re: new RegExp(group('climax'), 'g'), to: '绷紧' },
+  // 以下五个键是 0.2.0 把 `oral` 拆表之后新增的(lick/mouth/fingertip/inside/toy),
+  // 这份规则表当时没跟着补,于是它们**一个都不过滤**:
+  // 真实素材(第18/19/20/30/31/32 楼拼接 13162 字)shield 之后仍残留 77 处露骨词,
+  // 其中「含住/舔了/舌头」全部来自这三张新表。补进来是 P1 的直接内容。
+  { re: new RegExp(group('lick'), 'g'), to: '凑近' },
+  { re: new RegExp(group('mouth'), 'g'), to: '嘴部' },
+  { re: new RegExp(group('fingertip'), 'g'), to: '指腹' },
+  { re: new RegExp(group('inside'), 'g'), to: '里面' },
+  { re: new RegExp(group('toy'), 'g'), to: '道具' },
 ];
 
 /**
@@ -210,13 +219,47 @@ export function repairQuotes(jsonText: string, story: Shielded | null): string {
 }
 
 /**
- * 屏蔽整份请求。
+ * 这些消息是「给模型的规范」而不是「素材」—— shield 一个字都不许动。
  *
- * system 消息整条清;user 消息**也整条清**,不只清目标正文那一段。
+ * **P0 的核心分界线**(0.2.0 的实测教训,别改回去):
+ * 上一版对每一条消息整条做词典替换,于是插件自己的紧缩契约与破限词也被打散:
+ *   `（nude / topless / breasts out /`          → `（unclothed / unclothed / breasts out /`
+ *   `panties aside / open shirt / skirt lift`    → `undergarment aside / open shirt / skirt lift`
+ *   `写 pants down / skirt lift / breasts out`   → `写 pose / skirt lift / breasts out`
+ *   `mouth-on-him = 女方的嘴在男根（口交）`       → `女方的嘴在那一根（凑近）`
+ * 七条白名单词 shield 完之后只剩三条活着,模型收到的是「放开写 unclothed / pose / part C」——
+ * 既不知道具体能写什么,也读不出枚举值在说什么。`unclothed` 更不是 danbooru 词,写了等于没写,
+ * 于是画面被压回 SFW。这是「越修越保守」的第一号原因:**请求里的指令被自己的过滤器改成了半截话**。
  *
- * 为什么 user 也要整条清:同一条 user 消息里还有「上一楼正文」「近期已出图的实拍 tag」
+ * 注意范围:只保护**规范**。正文/账本/实拍 tag/上镜锚点照旧过 shield ——
+ * 输入侧的拦截压力来自那些素材,这一点没变(实测控制组 10 次里 9 次被输入侧拦下)。
+ */
+const PROTECTED_SPECS: RegExp[] = [
+  // 紧缩契约(严格版与宽松版共用这个抬头)
+  /【本轮输出格式（唯一的一种）】/,
+  // 破限词(各档共有的框架标签)
+  /<task_framing>/,
+  /<output_lock>/,
+  // 命中拦截/截断/空计划后的重试指令
+  /<retry_after_block>/,
+  /<retry_after_truncation>/,
+  /<retry_empty_images>/,
+  // act 枚举说明(嵌在契约里,单独出现时也要保护)
+  /【act：这一格在做什么/,
+];
+
+function isProtectedSpec(content: string): boolean {
+  return PROTECTED_SPECS.some((re) => re.test(content));
+}
+
+/**
+ * 屏蔽整份请求,但跳过 `PROTECTED_SPECS` 认出的那些规范消息。
+ *
+ * 为什么不只清目标正文那一段:同一条 user 消息里还有「上一楼正文」「近期已出图的实拍 tag」
  * 「服装现状账本」——它们同样带露骨词,而输入侧判定看的是整份请求。只清目标正文,
  * 那几个区块照样能把请求顶回去(实测控制组 10 次里 9 次被输入侧拦下)。
+ *
+ * 为什么规范不清:见 PROTECTED_SPECS 上面的注释。
  *
  * 屏蔽是词典级一对一替换,不认识档案里的 `long black hair`、`grey skirt` 这类写法;
  * 而真正决定画面的是插件本地的账本与词典(它们一律读**原正文**),所以清掉不影响出图。
@@ -244,9 +287,12 @@ export function shieldMessages<T extends { role: string; content: string }>(
     }
   }
   let story: Shielded | null = null;
-  // 每条都整条清:上一楼正文、服装账本、实拍 tag 里同样有露骨词,只清正文那一段
-  // 照样能把请求顶回去(实测控制组 10 次里 9 次被输入侧拦下)。
   const out = messages.map((message, index) => {
+    if (isProtectedSpec(message.content)) {
+      // 规范消息需要参与 story 定位(它可能是 storyIndex),但内容一个字节都不改。
+      if (index === storyIndex) story = { text: message.content, source: message.content, map: [] };
+      return message;
+    }
     const shielded = shieldWithMap(message.content);
     if (index === storyIndex) story = shielded;
     return { ...message, content: shielded.text };

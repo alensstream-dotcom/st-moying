@@ -31,17 +31,6 @@ const SLOT_IDS: ReadonlySet<string> = new Set<WardrobeSlot>([
   'state',
 ]);
 
-export const WARDROBE_SLOT_LABELS: ReadonlyArray<{ id: WardrobeSlot; label: string }> = [
-  { id: 'full', label: '整套 / 全身' },
-  { id: 'top', label: '上衣' },
-  { id: 'bottom', label: '下身' },
-  { id: 'underwear', label: '内衣' },
-  { id: 'hosiery', label: '袜类 / 腿饰' },
-  { id: 'shoes', label: '鞋履' },
-  { id: 'accessory', label: '配饰' },
-  { id: 'state', label: '半脱 / 状态' },
-];
-
 export interface CustomLoreStore {
   wardrobe: WardrobeItem[];
   poses: PoseEntry[];
@@ -225,16 +214,6 @@ export function addCustomFandom(input: CustomFandomInput): AddResult<FandomPrese
   if (existing) return existing.tags === item.tags ? { ok: true, item: existing } : { ok: false, error: '同名同作品角色已存在，请编辑已有条目' };
   if (fandom.length >= 400) return { ok: false, error: '自定义同人已达 400 条上限' };
   persist({ ...store, fandom: [...fandom, item] }); return { ok: true, item };
-}
-
-export function updateCustomFandom(id: string, input: CustomFandomInput): AddResult<FandomPreset> {
-  const store = loadCustomLore(), fandom = [...(store.fandom ?? [])];
-  const index = fandom.findIndex(m => m.id === id);
-  if (index < 0) return { ok: false, error: '找不到要修改的同人条目' };
-  const item = normalizeFandom({ ...input, id, aliases: splitList(input.aliases) }, index);
-  if (!item || !item.aliases.length || !item.franchise) return { ok: false, error: '请填写名称、作品、英文标签和中文别名' };
-  if (fandom.some((m, at) => at !== index && nameKey(m) === nameKey(item) && m.franchise.toLowerCase() === item.franchise.toLowerCase())) return { ok: false, error: '同名同作品角色已存在' };
-  fandom[index] = item; persist({ ...store, fandom }); return { ok: true, item };
 }
 
 /** 新条目的 id:时间戳 + 序号,足够在单机内唯一,也不与内置的 w2- 前缀冲突。 */

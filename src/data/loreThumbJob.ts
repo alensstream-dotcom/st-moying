@@ -63,9 +63,6 @@ export function onThumbTaskDone(fn: (t: ThumbTask) => void) {
 export function thumbJobState() {
   return snapshot();
 }
-export function isThumbJobRunning() {
-  return state.running;
-}
 function clearTimer() {
   if (timer !== null) clearTimeout(timer);
   timer = null;

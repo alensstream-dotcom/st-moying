@@ -1,3 +1,5 @@
+import { isGeminiTier } from '@/autoTag/jailbreak';
+
 /**
  * gemini 档的「紧缩契约」:只允许 images 一个键 + tag 只用白名单里的词。
  *
@@ -44,7 +46,27 @@ tag 与 characters[].tag 只写镜头能拍到的东西，从这里挑，逗号�
 头发：long hair, short hair, black hair, blonde hair, silver hair, hair ribbon, messy hair
 服装名词：white dress, black dress, shirt, blouse, skirt, long skirt, jeans, shorts, panties, bra, jacket, coat
 禁止写：身体部位名（breasts/nipples/pussy/penis/ass/thighs）、手或触摸的位置、衣物状态（lifted/slipped/under/open/down/aside/torn）、体液、任何性行为词。
-这些内容由插件本地词典按正文原文补齐 —— 你写了反而会让整份 JSON 被判违规截断，画面也不会更准。`;
+这些内容由插件本地按正文原文补齐 —— 你写了反而会让整份 JSON 被判违规截断，画面也不会更准。
+**但「这一格在做什么」必须交代**：见下面的 act 字段。只挑枚举值，不要写器官名。`;
+
+/** 紧缩契约共用的 act 字段说明（中性码，不触发输出侧过滤）。 */
+const ACT_FIELD_SPEC = `【act：这一格在做什么（必填一个值，没有性内容写 none）】
+可选值（只能挑一个，不能自创）：
+  · kiss = 接吻
+  · chest = 揉胸或吸乳（手/嘴在女方胸上）
+  · digit = 手指抚弄或进入女方下体（抚阴蒂、指交）
+  · mouth-on-her = 男方的嘴在女方下体（舔阴）
+  · mouth-on-him = 女方的嘴在男根（口交）
+  · hand-on-him = 女方用手撸动男根
+  · chest-on-him = 女方用乳夹住男根（乳交）
+  · front = 男女正面插入
+  · rear = 从后方插入（后入、狗爬式、趴伏）
+  · self = 女方自慰（只有她自己）
+  · toy = 女方用道具自慰
+  · undress = 正在被脱衣，性行为还没开始
+  · none = 没有性内容（日常、单纯神态、拥抱以外的无接触）
+判断依据只看这一格所在的那一句：谁的身体在承受动作就选对应值，方向由枚举值本身固定，不需要另写施动方。
+器官、体位、体液、反应这些 tag 由插件按 act 补齐，你不要写。`;
 
 /**
  * 紧缩契约的完整文本（3.x 系 Gemini 专用：连解剖词都不许写）。
@@ -55,9 +77,10 @@ tag 与 characters[].tag 只写镜头能拍到的东西，从这里挑，逗号�
  */
 export const COMPACT_PLAN_CONTRACT = `【本轮输出格式（唯一的一种）】
 只输出这一个对象，不要有任何其他键：
-{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag"}]}]}
+{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag"}]}]}
 不要输出 nl、identities、outfitChanges、costumeContexts —— 程序会按档案与服装账本在本地补齐这些字段，画面不会因此缺任何东西。
 不要写任何自然语言句子。
+${ACT_FIELD_SPEC}
 ${TAG_WHITELIST}`;
 
 /**
@@ -72,24 +95,30 @@ ${TAG_WHITELIST}`;
  */
 export const COMPACT_PLAN_CONTRACT_LOOSE = `【本轮输出格式（唯一的一种）】
 只输出这一个对象，不要有任何其他键：
-{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag"}]}]}
+{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag"}]}]}
 不要输出 nl、identities、outfitChanges、costumeContexts —— 程序会按档案与服装账本在本地补齐这些字段。
 不要写任何自然语言句子。
+${ACT_FIELD_SPEC}
 
 【tag 写法】
 tag 与 characters[].tag 用英文短词、逗号连接，每张图 18~30 个。
 按正文如实写：人数（1girl / 1boy / 2girls）、景别与机位、姿态、场景、光线、表情、
-头发，以及正文里确实发生的身体状态与动作（nude / topless / breasts out / panties aside /
-spread legs / sweat / cum 等）与衣物状态（open shirt / skirt lift / panties down）。
-写成 danbooru 风格的短词，不要写成句子，不要写体液与器官的成段描写。`;
+头发，以及正文里确实发生的身体状态与衣物状态（nude / topless / breasts out /
+panties aside / open shirt / skirt lift）。
+写成 danbooru 风格的短词，不要写成句子，不要写体液与器官的成段描写 ——
+器官与体位由 act 枚举决定，不靠 tag 里的散文。`;
 
 /**
- * 按模型挑契约文本。
+ * 按档位 + 模型挑契约文本。
  *
- * 3.x 系给严格版（它认字就斩），4 系给宽松版（它对解剖词宽容，压太狠只会更保守）。
+ * 优先看用户显式选的档:选了 `gemini-strict` / `gemini-loose` 就照办,不再按模型名猜 ——
+ * 用户之所以会去手选,往往正是因为自动判断猜错了(比如新渠道的模型名里没有 `gemini-4`,
+ * 但上游其实是 4 系)。只有 `gemini`(自动)才按模型名分。
  */
-export function compactContractFor(model?: string): string {
-  return bansExplicitWords('gemini', model) ? COMPACT_PLAN_CONTRACT : COMPACT_PLAN_CONTRACT_LOOSE;
+export function compactContractFor(jailbreakTier: string | undefined, model?: string): string {
+  if (jailbreakTier === 'gemini-loose') return COMPACT_PLAN_CONTRACT_LOOSE;
+  if (jailbreakTier === 'gemini-strict') return COMPACT_PLAN_CONTRACT;
+  return bansExplicitWords(jailbreakTier, model) ? COMPACT_PLAN_CONTRACT : COMPACT_PLAN_CONTRACT_LOOSE;
 }
 
 /**
@@ -99,7 +128,7 @@ export function compactContractFor(model?: string): string {
  * 砍字段只会白白降低提示词质量。
  */
 export function useCompactContract(jailbreakTier: string | undefined): boolean {
-  return jailbreakTier === 'gemini';
+  return isGeminiTier(jailbreakTier);
 }
 
 /**
@@ -116,7 +145,10 @@ export function useCompactContract(jailbreakTier: string | undefined): boolean {
  * 有一半是后者造成的。
  */
 export function bansExplicitWords(jailbreakTier: string | undefined, model?: string): boolean {
-  if (jailbreakTier !== 'gemini') return false;
+  if (!isGeminiTier(jailbreakTier)) return false;
+  // 用户手选的档位优先于模型名猜测(见 compactContractFor 的注释)。
+  if (jailbreakTier === 'gemini-strict') return true;
+  if (jailbreakTier === 'gemini-loose') return false;
   // 模型名缺失时按严的一档走(宁保守不砍图)。
   if (!model) return true;
   const bare = model.replace(/^(?:假流式-|抗截断-)+/, '').toLowerCase();

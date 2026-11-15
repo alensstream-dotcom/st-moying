@@ -224,8 +224,18 @@ export function assessIdentityClaims(
   }
   return mergeIdentityFacts(facts);
 }
+/**
+ * 女性线索分成两类，因为它们的语境范围完全不同。
+ *
+ * 「她 / 少女 / 女人」这类是在**说这个人本身**，句子里出现就能算。
+ * 「小姐 / 女士 / 夫人 / 太太」是**称呼**，可以挂在别人身上——「真田的内心记下了
+ * 那个大小姐的名字」里一个女性代词都没有，旧词表却因为「小姐」二字把真田判成
+ * 女性，于是没有女角的楼层被当成「有女主」，出了纯男主图。称呼类只有在紧贴人名
+ * 时（「苏晚晴小姐」）才算线索。
+ */
 const FEMALE_PRONOUNS =
-  /她|女性|女子|女孩|女生|少女|姑娘|女人|女修|师姐|师妹|女士|小姐|女仆|母亲|妻子|姐姐|妹妹|夫人|太太/;
+  /她|女性|女子|女孩|女生|少女|姑娘|女人|女修|师姐|师妹|女仆|母亲|妻子|姐姐|妹妹/;
+const FEMALE_TITLE = /^(?:小姐|女士|夫人|太太|小姐家)/;
 const MALE_PRONOUNS =
   /他|男性|男人|男子|男孩|男生|少年|男修|师兄|师弟|先生|公子|少爷|父亲|兄弟|丈夫|哥哥|弟弟/;
 const SENTENCE_EDGE = /[。！？!?…\n]/;
@@ -235,6 +245,18 @@ function sentenceAround(text: string, index: number): string {
   let end = index;
   while (end < text.length && !SENTENCE_EDGE.test(text[end])) end++;
   return text.slice(start, end).trim();
+}
+/**
+ * 称呼类线索只认「人名 + 小姐/女士」这种紧贴写法。
+ *
+ * 「真田的内心记下了那个大小姐的名字」里有「小姐」二字，但那是在说别人；
+ * 把它算成女性线索会让男主被判成女性，于是「这一段有女主」成立、纯男主图不被丢弃。
+ * 只有紧贴人名的称呼（「苏晚晴小姐」）才是她本人的线索。
+ */
+function titleRightAfter(quote: string, name: string): boolean {
+  const at = quote.indexOf(name);
+  if (at < 0) return false;
+  return FEMALE_TITLE.test(quote.slice(at + name.length, at + name.length + 4));
 }
 /**
  * 从正文原句里给角色补一条保守的性别事实。
@@ -250,7 +272,8 @@ export function femaleStoryFact(name: string, story: string): IdentityFact | nul
   for (let index = story.indexOf(needle); index >= 0; index = story.indexOf(needle, index + needle.length)) {
     const quote = sentenceAround(story, index);
     if (quote.length < needle.length + 1) continue;
-    if (!FEMALE_PRONOUNS.test(quote) || MALE_PRONOUNS.test(quote)) continue;
+    if (MALE_PRONOUNS.test(quote)) continue;
+    if (!FEMALE_PRONOUNS.test(quote) && !titleRightAfter(quote, needle)) continue;
     return {
       name,
       gender: 'female',

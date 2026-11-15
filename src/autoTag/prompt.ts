@@ -14,7 +14,8 @@ import {
   fetchWorldInfo,
 } from '@/autoTag/context';
 import type { BookMemoryContext } from '@/autoTag/bookMemory';
-import { resolveJailbreakText } from '@/autoTag/jailbreak';
+import { isGeminiTier, resolveJailbreakText } from '@/autoTag/jailbreak';
+import { ACT_ENUM_RULE } from '@/autoTag/actTags';
 import {
   DESIGN_AUDIT_RULE,
   DESIGN_CHAIN,
@@ -125,7 +126,7 @@ function backendPromptSpec(options: AutoTagSettings, nlOn: boolean, naiCharPromp
 /** gemini 档:在后端规范末尾压一段「不写露骨词」的覆盖说明;其它档原样返回。 */
 function withGeminiOverride(spec: string, options: AutoTagSettings): string {
   if (!spec.trim()) return spec;
-  if (options.jailbreakTier !== 'gemini') return spec;
+  if (!isGeminiTier(options.jailbreakTier)) return spec;
   return `${spec.trim()}\n\n${GEMINI_SPEC_OVERRIDE}`;
 }
 
@@ -339,6 +340,11 @@ export async function buildAutoTagMessages(
    * ——实拍 tag 是原话,账本是索引。
    */
   shotLedgerText?: string,
+  /**
+   * 本次请求实际要用的模型名。`gemini`(自动)档靠它决定发严格版还是宽松版破限词
+   * (见 jailbreak.ts 的 geminiWantsExplicitWords)。缺省时按「保守一档」处理。
+   */
+  channelModel?: string,
 ): Promise<ChatMsg[]> {
   const target = context.chat[targetFloor];
   const preparedTarget =
@@ -425,6 +431,8 @@ export async function buildAutoTagMessages(
   if (negativeOn) sampleImage.negative = 'extra people, duplicate character';
   sampleImage.after = '从目标正文逐字引用画面事件已经发生的场景句（至少6字，不是示例句）';
   sampleImage.size = profile.lockedSize ?? 'portrait';
+  // act 只在有性内容的场景出现；示例里给一个中性占位，让模型知道字段长什么样。
+  sampleImage.act = 'none';
   const outputShape = JSON.stringify({
     images: [sampleImage],
     changes: [],
@@ -520,7 +528,7 @@ ${imageCountRule} 多张图必须是剧情或视觉状态明显不同的单一�
   - 同一动作只要没发生实质变化（还在同一个体位、同一处接触，只是继续台词或心理描写），不要重复出图——重复的图价值是零。
   - 如果目标正文全是平淡过渡、重复闲聊或纯心理，**允许输出空图片列表**：images 返回 []，changes 照样检查。不要为凑数硬画一张谁都能套的废图。
   - **动作变了就必须出图**：只要站位、入口、接触部位或身体姿势发生了实质变化（后入→口交、抚摸→插入、站着→被压到床上、从正面→从背后），就是另一格，必须占一个名额。名额紧张时先保留「动作变化」的那一张，再考虑同动作换机位——绝不许因为还能再画一张同姿势，把变化的动作挤掉，最后交两张一模一样的图。
-  - **同类姿势要给第二张时必须有分工**：同一体位出现两张，一张必须是第三人称、镜头对着女主正面（from front + looking at viewer + 她的脸与胸口），另一张必须是第一人称背后视角（pov + from above + 塌腰的弧度与臀部），并加强「我在她身后」的代入感；两张都写正面或两张都写背后，等于同一张图拍了两遍。
+  - **同类姿势要给第二张必须有分工**：同一体位两张，一张第三人称正面（from front + looking at viewer + 脸与胸口），另一张第三人称背后（from behind + from above + 塌腰弧度 + his hands on her hips 标明身后是谁）；都写正面或都写背后就是同一张图拍两遍。背后位、四足跪趴一律不用 pov（见视角规则）。
 3. 每层先按用户最少/最多数量选出该层最值得绘制的若干独立剧情节点，每个节点只插一张对应图片。图片按各自剧情位置分散插入，不集中放在整段、整行或整层末尾；同一物理行里有多个节点，也须分别选各自 P 位置。每张 images 必须增加 after：逐字引用目标正文中该画面所需事实已经完整发生的场景句，尽量至少6字（原句更短时完整引用短句），不得引用尚未发生前的铺垫。after 与 position 必须指向同一处，图片放在这句之后。不要画后一句的事件却选前一句的位置。position 必须是“目标正文”段尾标出的 P编号（如 P2），表示把图片 tag 插在该段之后；选择让画面所需事实刚刚完整成立、且尚未切换到下一场景的位置。不要返回此前上下文中的位置，也不要自行编造编号。
 ${contentRule}${negativeRule}
 ${sizeRule}
@@ -574,13 +582,14 @@ ${characterRule}
   - 一格分镜必须同时有：主体（女主）、动作或张力（在做什么、正被怎样）、可见的关系或情绪（看谁、忍什么、让谁看见）。三者缺一个就把这个候选划掉。
   - 不要选：纯环境描写、纯对话无身体动作、纯体力打斗全景、大段心理活动。
   - **只有神态的瞬间不进候选**：本楼有前戏/情欲内容时，最容易犯的错是把「她脸颊泛红、眼神迷离」这类只有脸在动的句子选成图——画出来是一张表情特写，手在胸上、衣服被扒开这些真正该看的东西全没了。神态句只有在**同句里还带着接触或衣物状态**（手在她胸口、衣领被扯开、内裤被扒到一边）时才算数；抽出来单独看还成立的才选，否则往下找那句带接触的。
-  - 多图时优先覆盖剧情推进的不同阶段（事件起点、转折、收束；亲密戏按「前戏半脱/诱惑姿态 → 核心体位推进 → 敏感点特写/高潮余韵」递进），不要同一场景换姿势硬凑数量。**禁止紧邻选位与同机位连拍**：由于 P 编号精确到单句，正文句数充裕时严禁把两张图选在紧挨着的前后两句话（如 P5 与 P6，那是同一自然段里的同一个瞬间），两张图之间至少隔开 2 句以上正文；同一楼的多张图必须拉开景别与机位层次（如「七分身/半身建立 → 侧面/后入/POV 互动 → 局部特写/俯仰失神定格」），禁止整楼连续输出相同景别+机位的半身正面证件照。
+  - 多图优先覆盖剧情推进的不同阶段（起点、转折、收束；亲密戏按「前戏半脱/诱惑姿态 → 核心体位推进 → 敏感点特写/高潮余韵」递进），不要同场景换姿势硬凑。**禁止紧邻选位与同机位连拍**：P 编号精确到单句，句数充裕时严禁把两张图选在紧挨的前后两句（如 P5 与 P6，那是同一瞬间），两张之间至少隔 2 句；同楼多图必须拉开景别与机位层次，禁止整楼输出同景别同机位的半身正面证件照。
+  - **不许「开头一张 + 结尾一张」跳过中间**：本楼只要有连续的亲密链（第一次接触一路到事后、中间没换场景），名额全部落在链内按强度取样，不许分给链前铺垫或链后的另一场景。链中最强的两处（揉乳含乳头、手指按上内裤）永远优先于链首的「亲吻」与链尾的「抱进浴室」——后者往往已无接触。两点隔不足 2 句时另一张退到同链稍远的推进节点，不许借口「必须隔开」跳到别处。
   - 第五步，做一遍**不可替代性过滤**（这一步最容易漏，却直接决定这张图有没有价值）：把候选里的人物名字换成随便一个路人，如果这张图仍然能套进几十段别的剧情（站在窗边、坐在桌边聊天、正常走路、普通微笑、抬头看天），它就是通用废图——降权或直接划掉。留下那种「只有这一刻、只有这两个人、只有这段关系才成立」的构图。
   - 同等分数下的优先顺序：①关系或身份发生实质变化的一瞬（告白、拒绝、答应、翻脸、承认、第一次碰触）②接触正在发生的一瞬（手刚碰到、衣服刚被拉开、唇刚贴上、刚进入）③重要角色首次亮相或重新登场的第一印象 ④重大转折（拿到或失去关键物件、被撞见、被揭穿）。
   - 首次亮相优先给「角色作为整体」的第一印象（脸＋造型＋身材曲线＋姿态同框），不要一上来就局部特写。
 ⟪endfold⟫
 ⟪lean⟫
-  - 三步走完就挑：列 3～6 个候选 → 按「张力 / 可见信息 / 可画性」各 1～5 分挑最高分 → 把画面说成一句人话再翻成 tag。同一瞬间只出一张，图之间至少隔两句正文。情欲瞬间优先于日常；日常只在没有情欲或情欲已出过图时选。
+  - 三步走完就挑：列 3～6 个候选 → 按「张力 / 可见信息 / 可画性」各 1～5 分挑最高分 → 把画面说成一句人话再翻成 tag。同一瞬间只出一张，图之间至少隔两句正文。情欲瞬间优先于日常；日常只在没有情欲或情欲已出过图时选。名额落在同一亲密链内，不跳中间。
 ⟪end⟫
 10. 服装与姿势的取值优先级：
  - 【新版衣橱候选】只供首次穿搭或明确换装时选择；已有服装账本或用户绑定时不得重选。款式用独立标签，如 white shirt, collared shirt, black skirt, pleated skirt；不拼形容词长句，不注入旧姿势或脸型素材。
@@ -606,7 +615,7 @@ ${characterRule}
   - **默认第三人称（配合男主无脸/局部入画）**。两人同场时，第三人称永远能同时交代女主的完整曲线、接触点与位置关系，pov 做不到。常规机位：from side（侧面拍清女主胸腰臀S曲线、后入/深吻/抵墙的体位深度，男主写 faceless male）、from front、over shoulder（从男主虚化肩背越肩看女主表情与正身）、from behind（拍女主后背、塌腰与回眸）。
   - **只在三条同时成立时才用第一人称**（pov、first-person view）：①这一格的全部价值都在她身上——她的表情、她的身体、她被怎样（如正面口交仰视 fellatio + pov + from above + looking up、正面骑乘位 straddling + pov + looking down、传教士正面俯视、女主主动掀裙/足交展示身体）；②不需要交代男主的手在哪、是什么姿势、站在哪儿（或只需 pov hands / pov crotch / penis 即可锚定）；③她正对或背对镜头（正对她就是正对男主，脸与身体天然成立，不用扭头）。
   - **下列任一成立就必须第三人称**，硬用 pov 会把她拍成一个人在空中扭：①要交代两人的位置关系（并肩、一前一后、隔着桌子、离多远）；②男主的身体本身就是施力点或接触点（他掐着腰、抬着她的腿、压着她的背、把她的手按在墙上）；③要看她的后背、肩胛、塌腰与臀部曲线——这只有第三人称的 from behind / from side 拍得全。
-  - 后背位／从背后进入是唯一「第一视角与背面机位相容」的情形：他就是从她背后看，写 pov、from behind、from above、looking down，让玩家看见塌腰、回眸、肩背与臀部。但**必须同时把他的手写进画面**（his hands on her hips、his hand on her waist），否则身后空无一人。只有剧情专门写「从背后环抱并揉捏胸部」这一种，才转正面：leaning back against him、from front，让背贴进他怀里，从正面拍表情与胸口。
+  - 后背位必须用**第三人称背后机位**：from behind、from above、looking down、looking back，写清塌腰、回眸与臀部曲线，并把他的手写进画面（his hands on her hips），否则身后空无一人。**这一类禁用 pov**：裸 pov 会把观看者身体当前景色块画进来，屁股后平白多一根黑柱。只有「从背后环抱揉胸」才转正面 from front。
   - **第一人称必须有锚点**：pov hands、his arm、his chest、partially visible body 至少写一个，告诉观者「我站在这个位置」。没有锚点的 pov 就是一张普通正面照，看起来像她一个人。
   - **施动方不许搞反**（女方伸手，就是 her hand 伸出去，不是 his hand）：**pov hands 只属于观看者（玩家角色）的手**，女主主动伸手时绝对不能写 pov hands，那会把施动方换成男主；她的动作写在她自己的角色块里（her hand reaching out、her fingers on his chest）。
   - **不许为了「看得清」把背对镜头的身体硬拧成正面**：脖子会断、腰会扭，模型只能画成畸形。要换机位，不要扭人。
@@ -652,10 +661,11 @@ ${characterRule}
     · 涂抹 / 书写 → X on \<部位\>、writing on \<部位\>、smeared across \<部位\>
     · 碰到自己 → \<部位\> on own \<部位\>（hand on own cheek、fingers on own lips），不写 hand、cheek
   - **先定空间关系，再写动作**：两人的位置关系是构图的地基，必须在 base 里先写清——facing each other、in front of him、behind her、side by side、back to back、straddling him、bent over、kneeling in front of him。位置关系缺了，模型只能把两个人并排摆好，再让谁也没碰到谁。
-  - **多人身体接触＋物-人接触的「三元闭环绑定公式」**（同时解决人和人的运动方向一致、物体和人的关系与剧情一致）：
+  - **同时解决「人和人的运动方向一致」与「物体和人的关系跟剧情一致」的做法**：四元闭环绑定公式——先写空间关系，再写接触词组，最后用 act 枚举交代这一格在做什么。
     · 第一元【Base 写空间方位＋共享接触词组】：把人与人的接触点、物与身体的交汇点写成带介词/分词的短语放进 Base（如 calligraphy brush on pussy, writing on belly, red ink on skin, hand spreading her thighs）。
-    · 第二元【施动方写持有物＋source#施力动作】：在发起动作的角色块写 holding \<道具\> 与成对的 source#\<动作\>（如男主块写 boy, faceless male, pov hands, holding calligraphy brush, source#writing on body, source#spreading her thighs）。
-    · 第三元【受动方写受力部位＋target#受迫状态＋生理反应】：在承受动作的女主角色块写明被接触的部位、target#\<动作\> 与身体形变反应（如 spread legs, pussy, belly, red ink on skin, target#written on, target#thighs spread, biting lip, blush, trembling, curled toes）。三元缺一不可，且有 source# 就必须在受力方配对写 target#，锁死运动箭头方向。
+    · 第二元【施动方写持有物】：在发起动作的角色块写 holding \<道具\>（如男主块写 boy, faceless male, pov hands, holding calligraphy brush）。
+    · 第三元【受动方写受力部位与生理反应】：在承受动作的女主角色块写明被接触的部位与身体形变反应（如 spread legs, pussy, belly, red ink on skin, biting lip, blush, trembling, curled toes）。
+    · 第四元【act 枚举交代行为本体】：「谁对谁在做什么」由图片级的 act 字段回答（见下面 14c 的 act 枚举）。**不要再写 source# 或 target# 这两个前缀** —— 它们不是 danbooru 标签，绘图端不认识，等于没写。
   - 绑不住就换取景，不要硬绑：接触太细、部位太小、两人全身塞不进一个画面时，改成 close-up + 只留这一段接触（她的手指＋他的手背），比画两个人各自站着强得多。
   - 施受方向跟着正文走：女主主动时动作词挂在女主身上（她伸手、她拉、她按、她跨坐），男主只写被作用的部位。
   - 局部特写（埋胸、摸腿、亲锁骨这类）**必须尽量同框女主的眼睛或脸**：改用 from above + looking up + upper body，或 cowboy shot + 俯视，让关键部位和她的脸同时在画面里；同框不下就退一档景别，**绝不许把头切掉只画两条腿**。只有当正文的看点就是那个部位本身（乳首被含住、穴口被拨开、手指进出）时，才允许纯局部 close-up / lower body，此时靠 body tag 交代是哪一层。
@@ -665,6 +675,7 @@ ${characterRule}
     · 第一人称与第三人称混用（如 ov 越肩 + pov）时以主视觉为准：pov 主导就看镜头，其余按剧情。
     · 单人对镜（自拍、镜子、发呆）想说「看着镜头」也要有依据：正文出现「看向我/望过来/与他四目相对」时才写 looking at viewer。
 14b. ${EMBODIED_BLOCK}
+14c. ${ACT_ENUM_RULE}
 15. 服装状态是连续的，跨段落、跨楼层都不重置：
   - **本楼先按正文判一次穿脱，判完就写状态词**：只有正文明确写了脱下/褪下/解开/掀开某件衣物的动作（动词和那件衣物在同一句里），才把这件降到半脱或脱落，并写清降到哪一步；正文有穿、系、套上的动作，才升回去。接吻、拥抱、隔着衣服抚摸、把衣服揉皱或拉扯但衣服还在身上——一律保持【服装现状】原样，不写任何脱衣状态词（需要表现接触时写 clothes on、through clothes 这类不改变状态的词）。没有动作就照【服装现状】原样沿用，一格都不许自己变。
   - **例外：正文直接写了穿着什么，以正文为准**。正文写「她穿着一条长牛仔裤」「换上黑色吊带」，即使【服装现状】是别的，也要按正文写，并与【服装现状】同类别的那件对齐（牛仔裤替掉长裤、吊带替掉衬衫），其余部件照旧。这是唯一能纠正账本款式错记的通道——账本记错过一次就该被正文纠正，不许一路错到底。
@@ -703,7 +714,7 @@ ${characterRule}
   // 附加词留空回落内置默认(NVWA):0.4.0 把它连同叠加一起下线,这段默认就成了没人引用的死常量,
   // 老用户的破限词也一起失效——那是「开到极限也没用」的真正原因,这里按老语义恢复。
   const customJailbreak = (options.prompts?.jailbreak ?? '').trim() || DEFAULT_JAILBREAK_PROMPT;
-  const jailbreak = resolveJailbreakText({ jailbreak: customJailbreak }, options.jailbreakTier);
+  const jailbreak = resolveJailbreakText({ jailbreak: customJailbreak }, options.jailbreakTier, channelModel);
   if (jailbreak) messages.push({ role: 'system', content: jailbreak });
   if (charCard) messages.push({ role: 'system', content: buildCharCardSystem(charCard) });
   if (persona) messages.push({ role: 'system', content: buildPersonaSystem(persona) });
@@ -720,7 +731,7 @@ ${characterRule}
   // gemini 档整段不发:实测同一请求带思考段成功率 43%(13/30),明确禁止思考段后 20/20 全过。
   // 原因很直接——思考里它会用中文复述正文原句,而那段内容同样被网关检查。
   const thinking =
-    options.jailbreakTier === 'gemini' ? '' : backendThinkingPrompt(options, nlOn, naiCharPromptsOn, options.maxImages, lean);
+    isGeminiTier(options.jailbreakTier) ? '' : backendThinkingPrompt(options, nlOn, naiCharPromptsOn, options.maxImages, lean);
   if (thinking) messages.push({ role: 'system', content: thinking });
   const libraryBlock =
     library?.trim() ||
@@ -763,7 +774,7 @@ ${characterRule}
   const ledgerBlock = shotLedgerText?.trim() ? `${shotLedgerText.trim()}\n\n` : '';
   const ledgerText = `${memoryText}\n\n${libraryBlock}\n\n${reuseBlock}${outfitBlock}${anchorBlock}${ledgerBlock}${lastShotBlock}${loreBlock ? `${loreBlock}\n\n` : ''}${taskBlock}${previous ? `${previous}\n\n` : ''}`;
   const userContent = `${ledgerText}--- 目标正文｜${roleLabel(context, targetFloor)} ---\n${preparedTarget.promptText}`;
-  if (options.jailbreakTier === 'gemini') {
+  if (isGeminiTier(options.jailbreakTier)) {
     // gemini 档(实测,别改回去):这条网关在**提交阶段**就按「单条 user 里的露骨素材密度」拦人,
     // 拦下来时模型连正文都没看到,返回 blockReason: PROHIBITED_CONTENT。
     // 逐项消融验证过:总长度无关(system 加到 46K 仍过)、词表无关(把词全换掉仍拦)、

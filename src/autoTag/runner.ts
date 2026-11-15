@@ -35,15 +35,15 @@ import {
   type IdentitySources,
 } from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
-import { fallbackModels, looksLikeBadSchema, looksLikeMissingModel } from '@/api/modelVariant';
-import { BLOCK_RETRY_NOTE, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
+import { looksLikeCredentialFailure, looksLikeTimeout, looksLikeUpstreamJitter } from '@/api/modelVariant';
+import { blockRetryNote, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
+import { isGeminiTier } from '@/autoTag/jailbreak';
 import { repairQuotes, shieldMessages, type Shielded } from '@/autoTag/geminiShield';
 import { readBookMemory } from '@/autoTag/bookMemory';
 import { applyPositionedCharRefs, resolveCharAnchors, type PositionedCharOp } from '@/autoTag/charAnchors';
 import {
   diagnoseCast,
   diagnoseContact,
-  diagnoseDirection,
   diagnoseFemaleSubject,
   diagnosePropTarget,
   castRetryNote,
@@ -128,7 +128,8 @@ import {
   type CharTagNewOp,
 } from '@/state/charTags';
 import { injectImageTags, parseImagePlan, type ImageInsertion, type ImagePlan } from '@/autoTag/protocol';
-import { appendExplicitTags, explicitSentence, explicitTagsFor } from '@/autoTag/explicitTags';
+import { appendExplicitTags, explicitSentence, explicitTagsFor, mouthSide } from '@/autoTag/explicitTags';
+import { actExpansion, alignMouthAct, enforceActFraming } from '@/autoTag/actTags';
 import { thinDesign } from '@/data/designGuide';
 import { clearAutoGenerateForFloor, consumeAutoGenerate, markForAutoGenerate } from '@/floor/autoGenerate';
 import {
@@ -648,6 +649,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         anchorLedger,
         lean,
         shotLedger,
+        // 破限词的口径必须与下面的紧缩契约同源(见 jailbreak.ts 的 geminiWantsExplicitWords):
+        // `gemini`(自动)档在 4 系上要发宽松版,否则「档位文本禁器官词 + 契约允许器官词」自相矛盾。
+        activeChannel?.model,
       );
       built.push({
         role: 'system',
@@ -675,22 +679,22 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       if (compact) {
         // 3.x 系给严格版(连解剖词都不许写)、4 系给宽松版(允许 nude/breasts out 这类状态词)。
         // 一刀切用严格版会把 4-argon 压成 SFW —— 实测它本来对解剖词几乎不拦。
-        built.push({ role: 'system', content: compactContractFor(activeChannel?.model) });
+        built.push({ role: 'system', content: compactContractFor(promptOptions.jailbreakTier, activeChannel?.model) });
       }
       return flatten ? flattenToSystem(built) : built;
     };
     const messages = await assemble(false);
     costumeRequest.story = source;
-    // 被拦之后按梯队换模型名再试。
+    // 只打用户选的那一个模型,不建梯队、不再自动换名。
     //
-    // 为什么只在失败之后换:不是每个网关都上过这些变体/老一代模型,名字不存在会变成
-    // 404/400;而失败过一次的那次请求本来就已经被拦了,换名字不亏。
-    // 实测(用户那本小说的真实请求,每项 5~10 次):
-    //   agy-gemini-3.8-flash-high        → 2/5   (开篇即露骨的楼层)
-    //   抗截断-agy-gemini-3.8-flash-high  → 1/5
-    //   抗截断-agy-gemini-2.5-flash       → 9/10  ← 老一代过滤口径明显更松
-    // 所以梯队是「同模型换网关路径」→「退到同厂商老一代 flash」。
-    const modelLadder = channel ? fallbackModels(channel.model) : [];
+    // 旧版在这里建一条 `fallbackModels` 梯队,失败后逐级替换 model 重发。它解决过问题
+    // (2026-11 之前 agy 池确实存在「裸模型被拦、抗截断变体放行」),但代价是:
+    //   ① 用户手选的模型被悄悄换掉,选渠道与选模型失去意义;
+    //   ② 成功/失败无法归因到底是谁过的,「破限到底行不行」永远说不清;
+    //   ③ 自建站上的备用名大多是 404/400,等于白花重试额度(实测 odyfree 整站如此)。
+    // 真正的修法是把**这一份请求**改到能过(见下面 leanOnce / blockedOnce / retryNote),
+    // 而不是换名字赌运气。梯队只在用户完全没选模型时用作兜底(不会发生:UI 必填)。
+    const modelLadder: string[] = [];
     let ladderStep = 0;
     const identitySources: IdentitySources = {
       story: source,
@@ -725,6 +729,14 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 而「被拦」之后原样重发同一个模型只是白花——换梯队里下一个模型是一次**不同**的尝试,
     // 每换一级补一次机会。总请求数上限仍是 retries+1+梯队长度,不会失控。
     let granted = retries + 1;
+    // 上游网关抖动(502 / Unexpected end of JSON input)的额外重发次数上限。
+    // 这类失败重发同一份请求就能过,不该消耗用户设的重试额度,也不该换掉手选的好模型;
+    // 但也不能无限重发,封顶 2 次(实测连续 3 次抖动基本等于渠道真的挂了)。
+    let jitterRetries = 0;
+    // 这条渠道的上游号池有没有可用凭据。一次就够:凭据是账号侧的事实,重发不会变,
+    // 换模型名也不会变(实测 agy 整站 16 个模型名全回同一句 agy_credential_missing)。
+    // 一旦命中就直接结束循环,把「换渠道」这句话交给用户,而不是白烧 5 次重试。
+    let credentialDead = false;
     for (let attempt = 0; attempt < granted && !plan; attempt++) {
       if (controller.signal.aborted) {
         processed.delete(identity);
@@ -743,7 +755,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       // 模型连正文都没看到。所以整份请求先过一次屏蔽器。
       // story 要留着——模型看到的引文是屏蔽后的字面,校验时得靠它还原成原文,
       // 否则服装账本的 evidence 永远匹配不上,换装又会静默失效。
-      const shielded = promptOptions.jailbreakTier === 'gemini' ? shieldMessages(attempted) : null;
+      const shielded = isGeminiTier(promptOptions.jailbreakTier) ? shieldMessages(attempted) : null;
       const attemptMessages: ChatMsg[] = shielded ? shielded.messages : attempted;
       const story: Shielded | null = shielded?.story ?? null;
       try {
@@ -756,7 +768,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           const block = diagnoseBlock(raw, meta?.finishReason);
           if (block.blocked) {
             blockedOnce = true;
-            retryNote = BLOCK_RETRY_NOTE;
+            retryNote = blockRetryNote(isGeminiTier(promptOptions.jailbreakTier));
             throw new Error(`被渠道内容过滤拦下(${block.reason})`);
           }
           const verdict = diagnoseTruncation(raw, meta?.finishReason);
@@ -986,8 +998,11 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           }
           // 景别过远:正文点名了具体部位,画面却拍成远景。这条排在缺项检查之前——
           // 缺景别词只是「画面会平」,景别过远是「这张图白拍」,前者由后者一并带上。
-          // 同样只在还有重试次数时纠,没次数就放行。
-          if (attempt < retries) {
+          //
+          // 不再受重试次数限制:下游的处理是**直接改写 tag**(applySuggestedDistance),
+          // 不重新请求模型,也不占重试预算。旧版把它包在 attempt < retries 里,
+          // 用户把重试次数设成 0 时这条修正就整个失效,废片照出。
+          {
             const segmentText = new Map(preparedTarget.segments.map((item) => [item.id, item.text]));
             const prevSegText = (pos: string): string => {
               const m = /^P(\d+)$/i.exec(pos.trim());
@@ -1043,14 +1058,6 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               source,
               candidate.images.flatMap((image) => (image.characters ?? []).map((c) => c.name)),
             );
-            // 男性名单只用来判「source# 是不是挂在男主身上」：施受写反了图就整张废。
-            const maleNames = [
-              ...new Set(
-                [...entriesBefore]
-                  .filter((entry) => isMaleIdentity(entry.name, knownIdentities))
-                  .map((entry) => entry.name),
-              ),
-            ];
             for (const image of candidate.images) {
               const text = segmentText.get(image.position) ?? '';
               const aliasPresent = findCharAliases(entriesBefore, text).map((hit) => hit.name);
@@ -1065,7 +1072,6 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 ...diagnoseCast(text, image.tag, image.characters ?? [], present, profile.naiCharPrompts, femaleNames),
                 ...diagnosePropTarget(text, image.tag, charTagList),
                 ...diagnoseContact(text, image.tag, charTagList),
-                ...diagnoseDirection(text, image.characters ?? [], maleNames),
                 ...diagnoseFemaleSubject(text, image, femaleNames),
               ];
               for (const gap of found) {
@@ -1153,52 +1159,75 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         // 两者都要降载,判错方向的代价只是这一次重试更短,不会更差。
         if (/空内容/.test(lastError) || diagnoseBlock(lastError).blocked) {
           blockedOnce = true;
-          retryNote = BLOCK_RETRY_NOTE;
+          retryNote = blockRetryNote(isGeminiTier(promptOptions.jailbreakTier));
         }
-        // 梯队里报「模型不存在」→ 直接跳过这一级,继续下一级(不消耗重试次数之外的东西:
-        // 这一步只是改名字,请求内容不变)。
-        while (
-          channel &&
-          ladderStep < modelLadder.length &&
-          looksLikeMissingModel(lastError) &&
-          activeChannel?.model === modelLadder[ladderStep]
-        ) {
-          console.warn('[墨影] 该网关没有这个模型，跳过该级', { model: modelLadder[ladderStep] });
-          ladderStep += 1;
-          activeChannel = modelLadder[ladderStep]
-            ? { ...channel, model: modelLadder[ladderStep] }
-            : channel;
+        // 换模型这一步已经删掉(见上面 modelLadder 的注释)。模型名不存在/400 现在由
+        // 失败提示直接告诉用户,不再自动跳到别的名字试。
+        // 降载与改淡(leanOnce / blockedOnce / retryNote)仍然生效:下一次用**同一个**
+        // 渠道与模型,发一份更短、更淡、格式更窄的请求。
+        const timedOut = looksLikeTimeout(lastError);
+        // 凭据失效:渠道号池空了。这是**账号侧**的事实,不是这一次请求的问题——
+        // 实测 agy 号池挂掉时,同一个 key 对 16 个模型名一律回 429
+        // `no valid AGY credential available` / `agy_credential_missing`,
+        // 而 429 本来落在抖动判据里,于是插件把它当限流原样重发,白耗 5 次
+        // (每次约 30 秒),用户看到的是「卡很久然后全失败」。
+        // 这里一次就停,并把原因写进失败提示:能救的只有换渠道,不是换模型名。
+        if (looksLikeCredentialFailure(lastError)) {
+          credentialDead = true;
+          console.warn('[墨影] 渠道上游没有可用凭据，停止重试', { model: activeChannel?.model ?? channel?.model });
+          break;
         }
-        // 换下一级模型再发的两种触发:
-        //   ① 被内容过滤拦下 —— agy 池的主要失败模式,换路径能明显提高过审率;
-        //   ② 输出不是合规 JSON —— pg 池的主要失败模式(该池几乎不过滤内容),
-        //      裸模型全 BADJSON、抗截断变体全 OK,换名字才是对症的那一半。
-        // 降载(改请求内容)与换模型(改走上游哪条路)是两件事,两者都不冲突。
-        const shouldAdvance =
-          !!channel &&
-          !looksLikeMissingModel(lastError) &&
-          ladderStep < modelLadder.length &&
-          (blockedOnce || looksLikeBadSchema(lastError));
-        if (shouldAdvance) {
-          const from = activeChannel?.model ?? channel!.model;
-          activeChannel = { ...channel!, model: modelLadder[ladderStep] };
-          ladderStep += 1;
-          // 换模型是新的尝试,不占用户设的重试次数(见上面 granted 的注释)。
+        // 上游抖动(502 / `Unexpected end of JSON input` / 网关炸了):同一份请求重发就过。
+        // 这里只补一次机会,让这次抖动不花用户设的重试额度(实测这类抖动重发成功率很高)。
+        const jitter = looksLikeUpstreamJitter(lastError) && jitterRetries < 2;
+        if (jitter) {
+          jitterRetries += 1;
           granted += 1;
-          console.info(
-            blockedOnce
-              ? '[墨影] 上一条请求被渠道拦下，改用下一级模型重试'
-              : '[墨影] 上一条输出不是合规 JSON，改用下一级模型重试',
-            { from, to: activeChannel.model },
-          );
+          console.info('[墨影] 上游网关抖动，原样重发同一级模型', { model: activeChannel?.model ?? channel?.model });
         }
-        console.warn(`[墨影] 第 ${floor} 楼第 ${attempt + 1}/${retries + 1} 次生成 tag 失败`, error);
+        /**
+         * 不在重试里换模型、也不换渠道。
+         *
+         * 用户选的是哪个渠道的哪个模型,就只打那一个 —— 自动换名会把「用户手选的最优档」
+         * 换成同名兄弟、把成功归因搞乱,还会让「我选渠道和模型还有什么意义」这个问题
+         * 无解。破限该做的是**把这一份请求改到能过**,而不是赌另一个名字。
+         *
+         * 所以这里只做两件事:
+         *   ① 抖动 → 原样重发(上面);
+         *   ② 被拦/超时/输出不守协议 → 改请求本身(leanOnce / blockedOnce / retryNote
+         *      已在上面按错误类型设好),下一次用同一渠道同一模型重发。
+         * 换模型这件事留给用户:失败提示里会明确写出该换什么。
+         */
+        void timedOut;
+        void modelLadder;
+        void ladderStep;
+        console.warn(`[墨影] 第 ${floor} 楼第 ${attempt + 1}/${granted} 次生成 tag 失败`, error);
       }
     }
     if (!plan) {
       // 重试耗尽:允许同一正文在后续重新渲染后再试
       processed.delete(identity);
-      toastr.error(`${lastError}${retries > 0 ? `(已自动重试 ${retries} 次)` : ''}`, '墨影自动 tag 失败');
+      // 超时与「渠道持续不可用」各给一句人话:用户看到的是一句上游回执,
+      // 不知道该干什么。实测根因几乎总是「这个模型名/这条渠道撑不住本插件的长请求」。
+      const hint = credentialDead
+        ? `：渠道「${channel?.name ?? '未知'}」的上游号池没有可用凭据（agy_credential_missing / access_terminated / 当前无可用模型）。重发与换模型名都不会好，只能换一条渠道，或等这条渠道补号。`
+        : looksLikeTimeout(lastError)
+          ? '：该模型承载不了本插件的长请求，请在渠道里换一个变体（实测名字里带「防外审」的最稳）'
+          : looksLikeUpstreamJitter(lastError)
+            ? `：渠道「${channel?.name ?? '未知'}」连续回网关错误 —— 这不是破限或截断的问题，是这条渠道/这个模型现在不可用。请用「say hi」单独试一次该渠道；若非流式失败而流式能过，把渠道的「流式」打开。`
+            : '';
+      if (credentialDead) {
+        toastr.error(
+          `${lastError}${hint}`,
+          '墨影自动 tag 失败',
+          { timeOut: 20000, extendedTimeOut: 10000 },
+        );
+      } else {
+        toastr.error(
+          `${lastError}${hint}${retries > 0 ? `(已自动重试 ${retries} 次)` : ''}`,
+          '墨影自动 tag 失败',
+        );
+      }
       if (opts.headless) throw new Error(lastError || 'tag 分析未通过校验');
       return;
     }
@@ -1431,11 +1460,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           (note) => '待核对的穿脱动作：' + note,
         ),
       );
-    if (accepted.rejected.length)
+    if (accepted.rejected.length) {
+      diagnostic('outfit:rejected', { floor, notes: accepted.rejected.slice(0, 12) });
       toastr.warning(
         '部分服装变化无法确认，已记录原因并保留既有状态；本楼继续生成图片。可在图片说明中核对。',
         '墨影',
       );
+    }
     const costumeRepairs = await prepareCostumeRepairs(
       slotWardrobe ?? wardrobe,
       accepted.changes,
@@ -1597,10 +1628,39 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         if (!wardrobe.has(name) && !accepted.changes.some((c) => c.name === name))
           completion.set(name, entry);
       enforceClothing(image, at, profile.nl, profile.naiCharPrompts, activeEntries, source);
+      // 受控枚举:模型选 act,这里展开成 danbooru 复合 tag(器官/体位/反应)+ 兜底构图。
+      // 老路径(模型没给 act)继续走下面的正则词表,两条通道互不否定——多补只会更准,
+      // 去重由 appendExplicitTags 统一处理。
+      // 方向以正文为准:模型的枚举选择也会错(第 18 节「男含女」被选成 mouth-on-him),
+      // 但正文里「嘴落在谁身上」有确定答案——动词最近的那个器官就是宾语。
+      // 模型整个漏掉 act 时也用同一个判据补一次:嘴上动作是本插件唯一能从原文
+      // 100% 判定方向的行为,补上比交给词表猜稳。
+      {
+        const mouth = mouthSide(explicitSentence(source, image.sourceLine, image.charOffset));
+        const inferred = mouth === 'on-her' ? 'mouth-on-her' : mouth === 'on-him' ? 'mouth-on-him' : null;
+        image.act = alignMouthAct(image.act, mouth) ?? image.act ?? inferred;
+      }
+      if (image.act) {
+        const expansion = actExpansion(image.act);
+        if (expansion.base.length) image.tag = appendExplicitTags(image.tag, expansion.base);
+        // 承受方 = 非男性角色块。`self`/`toy` 没有 source 段,男性块什么都不加。
+        for (const character of image.characters) {
+          const receiving = !isMaleIdentity(character.name, planIdentities);
+          const extra = receiving ? expansion.target : expansion.source;
+          if (extra.length) character.tag = appendExplicitTags(character.tag, extra);
+        }
+      }
+      // 构图兜底**不依赖枚举**:模型没给 act 时,`pov + all fours + looking back`
+      // 照样会把观看者的下体画成屁股后面一根黑柱;看点在下体的图也照样会被裁成大头照。
+      image.tag = enforceActFraming(image.tag, image.act);
       // gemini 档让模型只写「可拍摄的构图」,性器官/性行为/体液这些词由这里按原文补。
       // 其它档不补:模型本来就写了,重复追加只会让 tag 更长、稀释主体。
-      if (promptOptions.jailbreakTier === 'gemini') {
-        const extra = explicitTagsFor(explicitSentence(source, image.sourceLine, image.charOffset), image.tag);
+      if (isGeminiTier(promptOptions.jailbreakTier)) {
+        const extra = explicitTagsFor(
+          explicitSentence(source, image.sourceLine, image.charOffset),
+          image.tag,
+          image.act,
+        );
         if (extra.length) image.tag = appendExplicitTags(image.tag, extra);
       }
       // 账本与档案都按主名记，快照筛选也要归一，否则模型写别称时这帧的

@@ -29,8 +29,3 @@ export function hasFemaleSignal(
   // 已建档女性在本楼被提到(含「晚晴」这种简称)。
   return femaleNames.some((name) => mentionIndexes(text, name, entries).length > 0);
 }
-
-/** 供 runner 组装名单时复用:库里的女性 + 正文判定出的女性。 */
-export function femaleSignalNames(entries: readonly CharTagEntry[], names: readonly string[]): string[] {
-  return [...new Set([...entries.map((entry) => entry.name), ...names])];
-}

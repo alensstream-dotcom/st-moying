@@ -69,7 +69,9 @@ describe('泳装换装要落进账本', () => {
     expect(clothingCaption(record([{ id: 'swim', design: '白色泳衣', state: { location: 'worn' } }])).tag).toBe(
       'white swimsuit',
     );
-    expect(clothingCaption(record([{ id: 'swim', design: '白色泳衣', state: { location: 'removed' } }])).tag).toBe('nude');
+    expect(clothingCaption(record([{ id: 'swim', design: '白色泳衣', state: { location: 'removed' } }])).tag).toBe(
+      'completely nude, naked, nipples, no bra, no panties',
+    );
   });
 
   it('中文款式翻成英文 tag，长裙是 skirt 不是 dress', () => {

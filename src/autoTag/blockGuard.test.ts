@@ -11,6 +11,33 @@ describe('渠道拦截识别', () => {
     expect(diagnoseBlock('{', 'content_filter').blocked).toBe(true);
   });
 
+  // 这条是实测漏网的那个:odyfree 渠道的 gemini-4-hydrogen 每次被拦都回
+  // finishReason: PROHIBITED_CONTENT —— 里面既没有 content_filter 也没有 sensitive。
+  // 漏判的后果不是「少报一个错」,而是整条换模型链路不触发:用户看到卡 100 秒两次全失败。
+  it.each([
+    'PROHIBITED_CONTENT',
+    'PROHIBITED_CONTENT_BLOCK',
+    'safety',
+    'blocked',
+  ])('finish_reason 为 %s 时也定性为拦截', (reason) => {
+    expect(diagnoseBlock('', reason).blocked).toBe(true);
+    expect(diagnoseBlock('', reason).reason).toContain(reason);
+  });
+
+  // 实测原文(odyfree):渠道把拦截包进 error.message 原样透传,插件拿到的是一条 ApiError
+  // 字符串,finishReason 参数是空的。只判 finishReason 的话 blockedOnce 恒 false,
+  // 换模型链路一次都不触发 —— 用户看到「同一个模型连失败两次,备用名一个都没试」。
+  const RECEIPT = '上游内容拦截 (finishReason: PROHIBITED_CONTENT): The model output could not be generated. This output contains sensitive words that violate Google\'s [Generative AI Prohibited Use policy]';
+  it('拦截文案出现在错误正文里时也算拦截(不看 finishReason 参数)', () => {
+    expect(diagnoseBlock(RECEIPT).blocked).toBe(true);
+    expect(diagnoseBlock(RECEIPT).reason).toContain('渠道回执');
+  });
+
+  it('正文里已经写了合法 JSON 时不因出现 prohibited 字样误判', () => {
+    const plan = '{"images":[{"position":"P1","tag":"1girl, prohibited area sign, indoors"}]}';
+    expect(diagnoseBlock(plan).blocked).toBe(false);
+  });
+
   it('只回一段中文客气话、没有 JSON 起点时判为拦截', () => {
     expect(diagnoseBlock('抱歉,这段内容涉及成人向描写,我无法继续输出。').blocked).toBe(true);
     expect(diagnoseBlock('由于篇幅限制,以下是概要:').blocked).toBe(true);

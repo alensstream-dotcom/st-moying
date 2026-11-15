@@ -475,15 +475,6 @@ export function posesByCategory(): Map<string, PoseEntry[]> {
   return map;
 }
 
-/** UI 用:分类展示名。 */
-export function wardrobeCategoryLabel(id: string): string {
-  return WARDROBE_CATEGORY_LABEL.get(id) ?? id;
-}
-
-export function poseCategoryLabel(id: string): string {
-  return POSE_CATEGORY_LABEL.get(id) ?? id;
-}
-
 /**
  * 内置 + 自定义的完整候选池。
  *

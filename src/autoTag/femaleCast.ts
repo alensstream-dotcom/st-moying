@@ -28,7 +28,7 @@ const FEMALE_SEX_RE = /girl|female|woman|女/i;
 const MALE_SEX_RE = /boy|male|man|男/i;
 /** 只要句中只有「她」这类女性指代，就说明这一段有女性在场。 */
 export const FEMALE_CUE_RE =
-  /她|少女|女人|女子|女孩|姑娘|女修|女士|小姐|女仆|母亲|妻子|姐姐|妹妹|夫人|太太/;
+  /她|少女|女人|女子|女孩|姑娘|女修|女士|(?<![大二三小])小姐|女仆|母亲|妻子|姐姐|妹妹|夫人|太太/;
 
 export function sexSaysFemale(entry?: CharTagEntry): boolean {
   const sex = (entry?.fields?.sex ?? '').trim();

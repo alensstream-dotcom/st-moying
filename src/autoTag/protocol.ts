@@ -1,5 +1,6 @@
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import type { TargetSegment } from '@/autoTag/clean';
+import { normalizeAct, normalizeGiver, type ActGiver, type SexAct } from '@/autoTag/actTags';
 import { parseClothingChanges, type ClothingChange } from './outfitTimeline';
 import { parseIdentityClaims, type IdentityClaim } from '@/state/characterIdentity';
 import { FORBIDDEN_SUBTAG, readCenter, serializeImageTag } from '@/st/imageTagRegex';
@@ -41,6 +42,16 @@ export interface ImageInsertion {
   characters: ImageCharacterPrompt[];
   /** 画幅方向:模型只判横/竖,具体像素由用户在后端面板配置。漏给/乱给一律降级竖屏。 */
   size: Orientation;
+  /**
+   * 这一格实际发生的性行为。模型只做选择题(枚举),器官/体位/反应 tag 由
+   * `actTags.ts` 展开成 danbooru 标准复合 tag。
+   *
+   * 为什么不再让模型自由写 `source#`/`target#`:那两个词是我自创的,NAI 不认识,
+   * 实测「含住女主下体」因此被画成舔耳朵。枚举值缺省 `null` = 不补任何行为 tag。
+   */
+  act?: SexAct | null;
+  /** 施动方:`1boy` = 男对女,`1girl` = 女对男/女方主动。缺省按行为推断。 */
+  by?: ActGiver | null;
 }
 
 export interface ImagePlan {
@@ -328,6 +339,9 @@ export function parseImagePlan(
       const characters = sanitizeCharacters(entry.characters, index);
       // 兼容模型按习惯返回 orientation / aspect 键
       const size = normalizeOrientation(entry.size ?? entry.orientation ?? entry.aspect);
+      // 受控枚举:容忍大小写/同义词/脏值,认不出就是 null(不补行为 tag),绝不因此丢图。
+      const act = normalizeAct(entry.act ?? entry.action ?? entry.sex_act);
+      const by = normalizeGiver(entry.by ?? entry.giver ?? entry.who);
       images.push({
         position,
         sourceLine,
@@ -337,6 +351,9 @@ export function parseImagePlan(
         negative,
         characters,
         size,
+        // 缺省不写键:老楼层里存过的 <bbi_image> 也不带这两个字段,序列化保持稳定。
+        ...(act ? { act } : {}),
+        ...(by ? { by } : {}),
       });
     } catch (error) {
       // 单张图落不了位不该毁掉整楼:记下原因、丢掉这一张,其余照常落位。

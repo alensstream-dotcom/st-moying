@@ -23,6 +23,7 @@
  */
 
 import { group } from './sexVocab';
+import type { SexAct } from './actTags';
 
 /** 一条中文写法 → danbooru 短词的映射规则。 */
 interface ExplicitRule {
@@ -43,6 +44,14 @@ interface ExplicitRule {
   requires?: RegExp;
   /** 否定语境:命中即整条作废(可选)。 */
   without?: RegExp;
+  /**
+   * 已经给了 `act` 枚举时跳过本条(可选)。
+   *
+   * 枚举展开出来的 tag 更准(它带方向、带构图兜底),正则这条只是老路径的兜底。
+   * 两条同时生效时会出现「枚举说是舔阴、正则说是口交」这种自相矛盾，
+   * 所以凡是枚举已覆盖的行为,正则就闭嘴。
+   */
+  coveredByAct?: SexAct[];
 }
 
 /** 下半身语境:手指相关规则必须踩到,否则「手指插进头发里」会被补成 fingering。 */
@@ -75,36 +84,104 @@ const BREAST_VERB_SRC = `(?:${BREAST_VERB.source})`;
 const NIPPLE_EUPH = /(?:樱桃|花蕾|蕾珠|蕊珠)/;
 
 /**
+ * 嘴部动作的动词核。
+ *
+ * **不再区分口交/舔阴**——同一个「含」在两句真文里方向完全相反:
+ * - 「李斌…一口含在了温婉柔嫩的蜜穴之上」→ 男给女舔;
+ * - 「温婉…一口含住了李斌的肉棒」→ 女给男含。
+ * 旧表把「吸吮/含弄/舔弄/舔舐」全塞进 `oral` 组,只要命中就补 `fellatio, penis`,
+ * 于是第一种被画成了女主治男(第 18 节实测)。这里只认「嘴在动」,方向交给
+ * {@link mouthSide} 按句子里的器官位置判断。
+ */
+const MOUTH_VERB =
+  /(含|舔|吮|吸吮|吸弄|吸住|亲吻|吻上|吻住|吻了|吞进|吞下|吞吐|吮吸|啃咬|啮咬|咬住)/;
+
+/** 抚摸/按压类动词。 */
+const TOUCH_VERB = /(抚|揉|按|压|扣|拨|捻|摩|挑|弄|掐|搓|夹|抵|蹭|磨|挠|刮|玩)/;
+
+/** 阴蒂(及其常见写法)。 */
+const CLITORIS = /(?:阴蒂|阴核|花核|蕊珠|clit)/;
+
+/** 器官与动词之间允许的最大间隔(字)。超过就不算这句在写它——压「呼吸」误撞「蜜穴」。 */
+const MAX_ORGAN_SPAN = 24;
+
+/** `re` 在 text 里所有匹配的起止位置。 */
+function spans(re: RegExp, text: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  const flags = re.flags.includes('g') ? re : new RegExp(re.source, `${re.flags}g`);
+  for (const m of text.matchAll(flags)) {
+    const at = m.index ?? 0;
+    out.push([at, at + m[0].length]);
+  }
+  return out;
+}
+
+/** 某个位置到 `re` 任意匹配的最短距离(间距字数)。没有匹配返回 `null`。 */
+function nearestSpan(re: RegExp, text: string, at: number): number | null {
+  let best: number | null = null;
+  for (const [start, end] of spans(re, text)) {
+    const distance = at < start ? start - at : Math.max(0, at - end);
+    if (best === null || distance < best) best = distance;
+  }
+  return best;
+}
+
+/**
+ * 判断这一句里「嘴是谁对着谁」。
+ *
+ * 只看**距离**:离动作最近的那个器官就是宾语。都超出 {@link MAX_ORGAN_SPAN} 就返回
+ * `null` —— 宁可少补一个 tag(画面缺点细节),也不要把方向补反(画面完全错)。
+ */
+export function mouthSide(body: string): 'on-her' | 'on-him' | null {
+  const verb = body.match(MOUTH_VERB);
+  if (!verb) return null;
+  const at = (verb.index ?? 0) + verb[0].length;
+  const her = nearestSpan(new RegExp(`(?:${group('vulva')})`), body, at);
+  const him = nearestSpan(new RegExp(`(?:${group('penis')}|${group('glans')})`), body, at);
+  const herOk = her !== null && her <= MAX_ORGAN_SPAN;
+  const himOk = him !== null && him <= MAX_ORGAN_SPAN;
+  if (!herOk && !himOk) return null;
+  if (herOk && !himOk) return 'on-her';
+  if (himOk && !herOk) return 'on-him';
+  return (her as number) <= (him as number) ? 'on-her' : 'on-him';
+}
+
+/**
  * 规则表。顺序即优先级——越靠前越具体的动作先占名额。
  */
 const RULES: ExplicitRule[] = [
-  // —— 口交 ——
+  // —— 嘴对下体：方向由 organs 的距离决定 ——
   {
-    re: new RegExp(
-      `(含了进去|含进嘴里|含住(?:那根|${group('penis')}|前端)|${group('oral')}|吞吐)`,
-      'i',
-    ),
-    tags: ['fellatio', 'penis'],
+    // 旧版这里是一条无方向的 `oral` 规则 + 一条几乎永不命中的舔阴规则，结果
+    // 「一口含在了…蜜穴之上」既没补 cunnilingus（舔阴规则要「脸埋进腿间」这种句型），
+    // 又被口交规则认成 fellatio。现在统一成一条：先认「嘴在动」，再看宾语是谁。
+    re: MOUTH_VERB,
+    tagsOf: (body) => {
+      const side = mouthSide(body);
+      if (side === 'on-her') return ['cunnilingus', 'licking pussy', 'spread pussy', 'pussy juice'];
+      if (side === 'on-him') return ['fellatio', 'licking penis', 'penis'];
+      // 方向不明（只写「含住」没说部位）→ 什么都不补，交给 act 枚举或模型自己写。
+      return [];
+    },
+    without: THROUGH_CLOTHES,
+    coveredByAct: ['mouth-on-her', 'mouth-on-him'],
   },
   {
     re: /(顶到(?:了)?喉咙|喉咙(?:口)?被顶|深喉|几乎顶进喉咙|顶进喉咙)/,
     tags: ['deepthroat'],
+    coveredByAct: ['mouth-on-him'],
   },
   {
     re: new RegExp(`(${group('released')}(?:她)?(?:的)?(?:嘴|口)里|咽了下去|吞了下去)`),
     tags: ['cum in mouth'],
+    coveredByAct: ['mouth-on-him'],
   },
   {
-    re: new RegExp(`(?:舔|舌头|舌尖)[^。！？]{0,12}(?:${group('glans')}|那根)|(?:舌头|舌尖)[^。！？]{0,12}(?:舔|绕|扫|抵)`),
-    tags: ['licking penis'],
-  },
-  // —— 舔阴 ——
-  {
-    re: new RegExp(
-      `((?:脸|头)埋进(?:她)?(?:的)?(?:两腿|腿间|腿心)|舔(?:她)?(?:的)?(?:${group('vulva')}|下面|那点|花)|口(?:她|舔)|舔阴)`,
-    ),
-    tags: ['cunnilingus', 'pussy'],
+    // 「脸/头埋进两腿之间」这类**明确**是男给女口的句型，即使没写器官也认。
+    re: /((?:脸|头|嘴|脑袋)埋进(?:她)?(?:的)?(?:两腿|双腿|腿间|腿心)|舔阴|口(?:她|舔))/,
+    tags: ['cunnilingus', 'licking pussy', 'spread pussy'],
     without: THROUGH_CLOTHES,
+    coveredByAct: ['mouth-on-her'],
   },
   // —— 手指(必须踩到下半身语境) ——
   {
@@ -112,6 +189,25 @@ const RULES: ExplicitRule[] = [
     tags: ['fingering', 'pussy'],
     requires: LOWER_BODY,
     without: THROUGH_CLOTHES,
+    coveredByAct: ['digit', 'self', 'toy'],
+  },
+  {
+    // 「拇指轻轻的扣住温婉犹如阴蒂一般的…轻柔的抚弄」→ 第 17 节实测整条漏补。
+    // 抚弄 + 阴蒂/花核这种**明确点名**的器官，只要动词在附近就该出 fingering + spread pussy。
+    re: new RegExp(`(${CLITORIS.source}|${group('vulva')})`),
+    tagsOf: (body) => {
+      const organ = body.match(new RegExp(`(${CLITORIS.source}|${group('vulva')})`));
+      const at = organ?.index ?? 0;
+      const near = nearestSpan(TOUCH_VERB, body, at);
+      if (near === null || near > MAX_ORGAN_SPAN) return [];
+      // 只点名器官没有动词不算（「她的阴蒂很敏感」这种感受句）。
+      return CLITORIS.test(body)
+        ? ['fingering', 'spread pussy', 'clitoris', 'pussy juice']
+        : ['spread pussy', 'pussy juice'];
+    },
+    requires: new RegExp(`(?:${group('fingertip')}|手|指)`),
+    without: THROUGH_CLOTHES,
+    coveredByAct: ['digit', 'self', 'toy'],
   },
   // —— 插入 / 性交：先看是道具还是真家伙 ——
   {
@@ -128,10 +224,12 @@ const RULES: ExplicitRule[] = [
       if (HAS_MALE.test(body)) return ['vaginal sex', 'pussy'];
       return ['masturbation', 'pussy'];
     },
+    coveredByAct: ['front', 'rear', 'digit', 'self', 'toy'],
   },
   {
     re: /(从后面(?:插|进|进入)|后入|背后位|狗爬式)/,
     tags: ['doggystyle'],
+    coveredByAct: ['rear'],
   },
   {
     re: /(骑(?:乘|在|上)|跨坐|坐在(?:他|身上))/,
@@ -157,6 +255,7 @@ const RULES: ExplicitRule[] = [
     ),
     tags: ['breast play', 'nipples'],
     without: THROUGH_CLOTHES,
+    coveredByAct: ['chest', 'chest-on-him'],
   },
   {
     // 「樱桃被双指夹住拨弄」:乳头的委婉写法,单独出现不算。
@@ -164,6 +263,7 @@ const RULES: ExplicitRule[] = [
     tags: ['nipples'],
     requires: new RegExp(`${group('breast')}|乳|胸|裸|上身`),
     without: THROUGH_CLOTHES,
+    coveredByAct: ['chest'],
   },
   {
     re: new RegExp(`((?:${group('breast')})(?:露|弹)出|胸口完全露在外面|(?:乳尖|乳头)(?:立|红|硬)了|breasts out)`),
@@ -173,16 +273,19 @@ const RULES: ExplicitRule[] = [
   {
     re: /(低头吻(?:她|他)|舌尖(?:探进|交缠)|深吻|吻了下去|吻住|吻上)/,
     tags: ['kiss'],
+    coveredByAct: ['kiss'],
   },
   {
     // 道具自慰:只提到道具 + 泛动作时也要能被认出来(否则整句只出 masturbation 没有道具)。
     re: new RegExp(`${group('toy')}`),
     tagsOf: (body) => (HAS_PENIS.test(body) ? ['sex toy'] : ['masturbation', 'vibrator']),
     requires: /(抽送|插|按|抵|塞|磨|转|震动|嗡嗡|弄|玩|进出|抽插)/,
+    coveredByAct: ['toy', 'self'],
   },
   {
     re: new RegExp(`(${group('masturbate')}|抚慰自己|自己来)`),
     tags: ['masturbation'],
+    coveredByAct: ['self', 'toy'],
   },
 ];
 
@@ -208,8 +311,10 @@ function normalizeTagList(tags: string): Set<string> {
  * @param text 这一格对应的正文窗口。调用方应当只传**这一句**(见 {@link explicitSentence}),
  *             传整段会把邻句的动作算进来。
  * @param tags 模型已写出的 tag 串,用于去重
+ * @param act  模型给出的 act 枚举。给了它,正则就不再重复推断同一件事
+ *             (枚举展开的 tag 带方向与构图,比正则准;两条同时补会互相打架)。
  */
-export function explicitTagsFor(text: string, tags = ''): string[] {
+export function explicitTagsFor(text: string, tags = '', act?: SexAct | null): string[] {
   const body = String(text ?? '');
   if (!body.trim()) return [];
   const have = normalizeTagList(tags);
@@ -223,6 +328,7 @@ export function explicitTagsFor(text: string, tags = ''): string[] {
 
   for (const rule of RULES) {
     if (added.length >= MAX_ADDED) break;
+    if (act && rule.coveredByAct?.includes(act)) continue;
     if (!rule.re.test(body)) continue;
     if (rule.requires && !rule.requires.test(body)) continue;
     if (rule.without && rule.without.test(body)) continue;

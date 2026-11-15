@@ -101,34 +101,6 @@ describe('diagnoseCast', () => {
     ], [], false);
     expect(gaps).toEqual([]);
   });
-
-  it('多人角色块只写单边 source# 缺 target# 配对时报警(运动关系不闭合)', () => {
-    const gaps = diagnoseCast(
-      '他从背后揉捏她的胸口',
-      '1girl, 1boy',
-      [
-        { name: '林夏', tag: 'girl, large breasts, blush' },
-        { name: '男主', tag: 'boy, faceless male, pov hands, source#grabbing breasts' },
-      ],
-      [],
-      true,
-    );
-    expect(gaps.some(gap => gap.kind === 'contact-unbound' && gap.detail.includes('source#'))).toBe(true);
-  });
-
-  it('多人角色块 source# 与 target# 成对出现时通过', () => {
-    const gaps = diagnoseCast(
-      '他从背后揉捏她的胸口',
-      '1girl, 1boy',
-      [
-        { name: '林夏', tag: 'girl, large breasts, target#grabbed, blush' },
-        { name: '男主', tag: 'boy, faceless male, pov hands, source#grabbing breasts' },
-      ],
-      [],
-      true,
-    );
-    expect(gaps).toEqual([]);
-  });
 });
 
 describe('diagnosePropTarget', () => {
@@ -147,11 +119,11 @@ describe('diagnosePropTarget', () => {
     expect(gaps[0]?.kind).toBe('contact-unbound');
   });
 
-  it('NAI V5 道具与部位分属不同角色块且带绑定或 source#/target# 时通过', () => {
+  it('NAI V5 道具与部位分属不同角色块且带绑定词时通过', () => {
     expect(
       diagnosePropTarget('他用毛笔在她小腹上写字', '1girl, 1boy, calligraphy brush on belly', [
-        'girl, belly, target#written on, trembling',
-        'boy, faceless male, pov hands, holding calligraphy brush, source#writing on body',
+        'girl, belly, trembling',
+        'boy, faceless male, pov hands, holding calligraphy brush, writing on body',
       ]),
     ).toEqual([]);
   });
@@ -198,7 +170,7 @@ describe('diagnoseContact', () => {
     ).toEqual([]);
   });
 
-  it('NAI V5 手与身体部位分属不同角色块且无任何绑定词或 source#/target# 时报警', () => {
+  it('NAI V5 手与身体部位分属不同角色块且无任何绑定词时报警', () => {
     const gaps = diagnoseContact('他的大手按在她的胸口揉捏', '1girl, 1boy', [
       'girl, large breasts, blush',
       'boy, faceless male, pov hands',

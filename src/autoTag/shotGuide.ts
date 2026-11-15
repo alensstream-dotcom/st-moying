@@ -32,6 +32,15 @@ export interface ShotAdvice {
   reason: string;
   /** 是否仅由伴随神态/手部描写触发(无强解剖焦点且无同句中远景动作)。 */
   softOnly?: boolean;
+  /**
+   * 看点是否落在**腰以下**。
+   *
+   * 这一档不能再给「远一档」的余量:乳首在上半身,`upper body` 还能拍到;
+   * 而阴蒂、穴口、插入点都在腰以下,`upper body` / `portrait` 根本框不到,
+   * 画面必然变成女主的大头照。第 17 楼第 1 张就是这样废掉的:
+   * 正文写「拇指轻轻的扣住温婉…阴蒂…轻柔的抚弄」,画面却是 `upper body, from above, pov`。
+   */
+  lowerFocus?: boolean;
 }
 
 interface PointRule {
@@ -48,6 +57,8 @@ interface PointRule {
    *   则建议 cowboy shot 以同时容纳女主的腰臀腿曲线与绯红神态,并照常拦截 full body 远景。
    */
   soft?: boolean;
+  /** 看点是否在腰以下(阴蒂/穴口/插入点)。这一档不给「远一档」余量。 */
+  lowerFocus?: boolean;
 }
 
 /**
@@ -64,6 +75,7 @@ const POINT_RULES: readonly PointRule[] = [
     reason: '正文写到下体/插入点/足部特写,远景只剩一个点',
     // 阴蒂、蜜穴、私处、穴口、内裤被拨开、插入处、交合处、精液、足交/脚趾/足弓
     pattern: /阴蒂|阴核|阴唇|蜜穴|小穴|穴口|私处|下体|股间|胯间|内裤被|被拨开|插入|抽送|交合|结合处|精液|爱液|淫水|潮吹|足交|舔足|足弓|脚趾|脚心|足底/,
+    lowerFocus: true,
   },
   {
     distance: 'close',
@@ -187,6 +199,7 @@ export function recommendShot(text: string): ShotAdvice | null {
     points: [...new Set(orderedPoints)].slice(0, 3),
     reason: best.reason,
     softOnly: hardMatches.length === 0,
+    lowerFocus: !!best.lowerFocus,
   };
 }
 
@@ -227,7 +240,13 @@ export function diagnoseDistance(
   if (!actual) return null;
 
   // close 允许到 upper(rank 1);upper 与 mid 最高允许到 mid(cowboy shot,rank 2),一律拦截 full body(rank 3)。
-  let allowedRank = Math.min(DISTANCE_RANK.mid, DISTANCE_RANK[advice.distance] + 1);
+  //
+  // 但**腰以下的看点不给这一档余量**:阴蒂、穴口、插入点都在腰以下,
+  // `upper body` / `portrait` 在物理上框不到,那一档余量换来的是「女主大头照」。
+  // 第 17 楼第 1 张就是这么废掉的(正文「拇指扣住…阴蒂…抚弄」,画面却是 upper body + pov)。
+  let allowedRank = advice.lowerFocus
+    ? DISTANCE_RANK[advice.distance]
+    : Math.min(DISTANCE_RANK.mid, DISTANCE_RANK[advice.distance] + 1);
   let suggest = advice.tags;
   if (advice.softOnly && prevText.trim()) {
     const prevAdvice = recommendShot(prevText);

@@ -25,7 +25,7 @@ const CLOSE_THINK = '</thinking>';
  * 一张图写了一半的 tag 串收住了)——那种长相看不出问题,内容却缺。finish_reason 是
  * 上游的直接证词,有它就优先采信,再交给 salvage 按缺口补收尾。
  */
-const FINISH_LENGTH_RE = /^(?:length|max_tokens|max_output_tokens|MAX_TOKENS)$/i;
+export const FINISH_LENGTH_RE = /^(?:length|max_tokens|max_output_tokens|MAX_TOKENS)$/i;
 
 export function diagnoseTruncation(raw: string, finishReason?: string | null): TruncationVerdict {
   const text = (raw ?? '').trim();
@@ -113,9 +113,6 @@ export function truncationRetryNote(keep = 0): string {
     '</retry_after_truncation>',
   ].join('\n');
 }
-
-/** 兼容旧调用:不限图数时的重试指令。 */
-export const TRUNCATION_RETRY_NOTE = truncationRetryNote(0);
 
 /**
  * 「模型交了空 images」时的第二次要求。

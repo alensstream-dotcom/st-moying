@@ -3,6 +3,8 @@ import {
   DEFAULT_JAILBREAK_TIER,
   JAILBREAK_TIERS,
   getJailbreakTier,
+  isGeminiTier,
+  isPlainTier,
   normalizeJailbreakTier,
   resolveJailbreakText,
 } from '@/autoTag/jailbreak';
@@ -16,6 +18,8 @@ describe('破限挡位', () => {
       'strong',
       'max',
       'gemini',
+      'gemini-strict',
+      'gemini-loose',
     ]);
     expect(DEFAULT_JAILBREAK_TIER).toBe('strong');
   });
@@ -42,6 +46,37 @@ describe('破限挡位', () => {
     expect(text).toContain('镜头能拍到');
     expect(text).toContain('本地词典');
     expect(text).toContain('器官名称');
+  });
+});
+
+describe('三个 Gemini 档', () => {
+  it('自动 / 严格 / 宽松都算 Gemini 系', () => {
+    for (const id of ['gemini', 'gemini-strict', 'gemini-loose']) {
+      expect(isGeminiTier(id)).toBe(true);
+      expect(isPlainTier(id)).toBe(false);
+    }
+    for (const id of ['off', 'light', 'standard', 'strong', 'max']) {
+      expect(isGeminiTier(id)).toBe(false);
+      expect(isPlainTier(id)).toBe(true);
+    }
+  });
+
+  it('宽松档允许写状态词,严格档不许', () => {
+    const loose = getJailbreakTier('gemini-loose').text;
+    expect(loose).toContain('pants down');
+    expect(loose).toContain('breasts out');
+    // 严格档的说明里会提到这些词(「禁止写…」),但正文不能把它们当成可写项。
+    const strict = getJailbreakTier('gemini-strict').text;
+    expect(strict).toContain('镜头能拍到');
+    expect(strict).not.toContain('写成 danbooru 风格的短词,逗号连接,每张图 18~30 个');
+  });
+
+  it('三档都禁止思考段与复述原句', () => {
+    for (const id of ['gemini', 'gemini-strict', 'gemini-loose']) {
+      const text = getJailbreakTier(id).text;
+      expect(text).toContain('thinking');
+      expect(text).toContain('position');
+    }
   });
 });
 

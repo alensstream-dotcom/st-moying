@@ -177,17 +177,8 @@ export function diagnoseCast(
         gaps.push({ kind: 'missing-actor', detail: `角色「${item.name}」的 tag 是空的` });
       }
     }
-    // 多人角色块使用了单向动作标签 source# / target# 时,必须成对闭合(一施一受)
-    if (named >= 2) {
-      const hasSource = characters.some(item => /\bsource#/i.test(item.tag ?? ''));
-      const hasTarget = characters.some(item => /\btarget#/i.test(item.tag ?? ''));
-      if (hasSource !== hasTarget) {
-        gaps.push({
-          kind: 'contact-unbound',
-          detail: `角色块写了单边 ${hasSource ? 'source#' : 'target#'} 却没有另一方的 ${hasSource ? 'target#' : 'source#'} 配对,多人接触的施受运动方向不闭合`,
-        });
-      }
-    }
+    // 施受方向不再用 source#/target# 校验:那两个前缀不是 danbooru 标签,
+    // 绘图端不认识,写对写错都不影响画面。方向改由图片级的 act 枚举决定(见 diagnoseAct)。
   }
   return gaps;
 }
@@ -244,8 +235,7 @@ export function diagnosePropTarget(text: string, tag: string, charTags: string[]
     // 道具和部位都在,但如果正文明确有接触动作(写/划过/贴/刺/滴/捆等),却没有任何介词或动词绑定,模型会画成两样独立物体
     if (
       (CONTACT_VERB_RE.test(hay) || /(?:写字|抽打|滴落|滴在|捆住|绑住|铐住|戴上|塞入)/.test(hay)) &&
-      !BINDING_RE.test(allTagText) &&
-      !/(?:source#|target#|mutual#)/i.test(allTagText)
+      !BINDING_RE.test(allTagText)
     ) {
       gaps.push({
         kind: 'contact-unbound',
@@ -291,8 +281,10 @@ export function diagnoseContact(text: string, tag: string, charTags: string[] = 
   const tagText = tag ?? '';
   const allText = [tagText, ...charTags].filter(Boolean).join(', ');
   if (!allText.trim()) return [];
-  // 绑定词或 NAI V4.5/V5 的 source#/target#/mutual# 出现在任一处就算绑定成立
-  if (BINDING_RE.test(allText) || /(?:source#|target#|mutual#)/i.test(allText)) return [];
+  // 绑定词出现在任一处就算绑定成立。
+  // (旧版还把 source#/target#/mutual# 当作合法绑定词——它们是插件自创、绘图端不认识的前缀,
+  //  写上去等于没写,却会骗过这条检查,让「手和部位并排」漏网。)
+  if (BINDING_RE.test(allText)) return [];
 
   // 只有当画面(含 Base 与角色块)里确实同时有「手/手臂/道具」与「身体」两者时才可能是并列画法;
   // 少任何一边都不是这条要管的事。
@@ -335,7 +327,10 @@ export function diagnoseFemaleSubject(
       },
     ];
   }
-  if (/她|少女|女人|女子|女孩|姑娘|女修|女士|小姐/.test(text ?? '')) {
+  // 「大小姐」「二小姐」是在说别人（往往是男主的台词/心理），不是这一段有女性在场。
+  // 旧口径直接命中「小姐」，于是「真田记下了那个大小姐的名字」被当成有女主，
+  // 纯男主图不但没被丢弃，还触发了「把在场的女性补进画面」的重试。
+  if (/她|少女|女人|女子|女孩|姑娘|女修|女士|(?<![大二三小])小姐/.test(text ?? '')) {
     return [
       {
         kind: 'missing-female',
@@ -351,69 +346,21 @@ export function diagnoseFemaleSubject(
   ];
 }
 
-/**
- * 施受方向有没有写反。
- *
- * 用户原话：「人物动作对于是谁发起的、谁是被动的有点弄不清楚」。tag 里
- * `source#` 是施力方、`target#` 是受力方，这两个词一旦挂错人，整张图的动作关系
- * 就反了——她主动跨坐变成被他压，他按住她变成她夹住他。
- *
- * 判据只看**明确的主动句式**，不做语义猜测：正文写「她伸手/她按/她跨坐/她主动」
- * 这类，却把 source# 写在男性块上，就算反了。没写清楚的（「两人纠缠」）一律放过，
- * 不猜。
- *
- * @param text        该图对应那一句正文
- * @param characters  角色块
- * @param maleNames   已知男性角色名（用来判断 source# 挂在谁身上）
- */
-export function diagnoseDirection(
-  text: string,
-  characters: Array<{ name: string; tag: string }>,
-  maleNames: readonly string[] = [],
-): CastGap[] {
-  const hay = text ?? '';
-  const femaleLead = /她(?:主动|伸手|抓住|按住|压住|跨坐|骑上|骑在|坐上|俯身|跪下|含住|吞下|拉过|扯开|解开)/.test(hay);
-  if (!femaleLead) return [];
-  if (characters.length < 2) return [];
-  const males = new Set(maleNames.map((name) => name.trim()).filter(Boolean));
-  const maleBlocks = characters.filter((item) => males.has(item.name.trim()));
-  if (!maleBlocks.length) return [];
-  const femaleBlocks = characters.filter((item) => !!item.name.trim() && !males.has(item.name.trim()));
-  // 只有「男主挂了 source#、女主一个 source# 都没有、只有 target#」才算真反了;
-  // 两边都写了 source#(互相主动)是正常的,不拦。
-  const maleSources = maleBlocks.some((item) => /\bsource#/i.test(item.tag ?? ''));
-  const femaleSources = femaleBlocks.some((item) => /\bsource#/i.test(item.tag ?? ''));
-  const femaleTargets = femaleBlocks.some((item) => /\btarget#/i.test(item.tag ?? ''));
-  if (!maleSources || femaleSources || !femaleTargets) return [];
-  return [
-    {
-      kind: 'contact-unbound',
-      detail: `正文是女主主动（「${(hay.match(/她(?:主动|伸手|抓住|按住|压住|跨坐|骑上|骑在|坐上|俯身|跪下|含住|吞下|拉过|扯开|解开)[^。！？]{0,12}/) ?? [''])[0]}」），画面却把 source# 挂在男性角色块上、让女主当 target#，施受方向反了`,
-    },
-  ];
-}
-
 /** 重试话术。 */
 export function castRetryNote(gaps: CastGap[]): string {
   const lines = gaps.map(gap => `- ${gap.detail}`);
   const hasContact = gaps.some(gap => gap.kind === 'contact-unbound');
   const hasFemale = gaps.some(gap => gap.kind === 'missing-female');
-  const hasDirection = gaps.some(gap => gap.detail.includes('施受方向反了'));
   return `<cast_retry>
 上一版的画面事实对不上正文,主要是人数、道具落点、接触绑定与女性主体:
 ${lines.join('\n')}
 改法:
 - 人数:**双人戏**（一男一女）两个人都在动作里,就必须都在画面里——只画一个等于自慰,不是省人。
 - 人数:**三人以上的场面**换一套口径——镜头只留给这一格真正在动作里的人。男伴默认只留正在接触的那副身体（一根肉棒、一只手、一段腰胯、一截手臂),写成 faceless male 的最小角色块,不给脸也不给全身;**没参与这一格动作的女性也不用入画**（站在旁边看、刚进门、已经昏过去的人塞进来只会让构图崩）。挑一到两个关键女主完整入画,其余按参与度给局部。**不要为了凑人数把在场的人全画上。**
-- 道具:写了道具就必须按「三元闭环」写清谁拿着(holding <prop>)、落在哪个部位上(<prop> on/against/into/around <部位>)、以及受作部位的反应;只写一件孤立道具,模型会把它画在半空当摆设。${
+- 道具:写了道具就必须写清谁拿着(holding <prop>)、落在哪个部位上(<prop> on/against/into/around <部位>)、以及该部位的反应;只写一件孤立道具,模型会把它画在半空当摆设。${
     hasContact
       ? `
-- 接触:并排列出「手/道具」和「身体部位」不会让它们碰上,必须用一个绑定词把两者钉在一起(hand on cheek、brush on pussy、fingers inside her、hand pressing her back),并在 NAI V4.5/V5 角色块中用成对的 source#<动作> 与 target#<动作> 锁定施受方向;英文介词 on / against / into / around 或现在分词 pressing / holding / resting / writing 都算绑定。实在绑不住就改取景:close-up + hand focus,让画面里只留下这一段接触。`
-      : ''
-  }${
-    hasDirection
-      ? `
-- 施受方向:正文写的是女主主动（她伸手/她按/她跨坐/她俯身），施力方就该是女主——source# 写在她的角色块上，男主块写 target#<受迫状态> 与受力部位。反过来写成「男主 source#、女主 target#」，画出来就是她在被动承受，与她主动的剧情相反。两人互相主动时可以各写一个 source#。`
+- 接触:并排列出「手/道具」和「身体部位」不会让它们碰上,必须用一个**真实存在的**绑定词组把两者钉在一起(hand on cheek、brush on pussy、fingers inside her、hand pressing her back)。英文介词 on / against / into / around 或现在分词 pressing / holding / resting / writing 都算绑定。不要写 source# / target# / mutual# —— 那三个前缀是插件早期自创的,danbooru 与 NAI 都不认,写上去等于没写。实在绑不住就改取景:close-up + hand focus,让画面里只留下这一段接触。`
       : ''
   }${
     hasFemale

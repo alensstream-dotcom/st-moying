@@ -831,7 +831,7 @@ describe('auto tag prompt', () => {
       const messages = await buildAutoTagMessages(context(), 1, options, null);
       expect(messages.some(message => message.content.includes('one Base Prompt plus zero or more native Character Prompts'))).toBe(true);
       expect(messages.some(message => message.content.includes('"characters":['))).toBe(true);
-      expect(messages.some(message => message.content.includes('source# / target# / mutual#'))).toBe(true);
+      expect(messages.some(message => message.content.includes('Never write source# or target#'))).toBe(true);
       expect(messages.some(message => message.content.includes('Character tag uses girl/boy without a numeric count'))).toBe(true);
       expect(messages.some(message => message.content.includes('every field:"new" change must include a non-empty nl'))).toBe(true);
       expect(messages.some(message => message.content.includes('Expression and gaze are mandatory for every character'))).toBe(true);
@@ -1483,7 +1483,9 @@ describe('思考块预算上限', () => {
     expect(all).toContain('显式情欲与体位接触锚点（最高优）');
     expect(all).toContain('前戏半脱/诱惑姿态 → 核心体位推进 → 敏感点特写/高潮余韵');
     expect(all).toContain('长段剧情五刀剔除法');
-    expect(all).toContain('三元闭环绑定公式');
+    expect(all).toContain('四元闭环绑定公式');
+    // source#/target# 是插件早期自创的语法，danbooru 与 NAI 都不认，规范里必须明确禁掉。
+    expect(all).toContain('不要再写 source# 或 target#');
   });
 
   it('lean 版:思考清单与契约都变短,但输出协议不动', async () => {
@@ -1568,6 +1570,24 @@ describe('gemini 档把正文与账本挪进 system', () => {
     expect(systems.some(text => text.includes('--- 目标正文｜'))).toBe(true);
     expect(systems.some(text => text.includes('目标第一行'))).toBe(true);
     expect(systems.some(text => text.includes('【上镜锚点】'))).toBe(true);
+  });
+
+  // 新增的两个 Gemini 档必须共用同一套布局。写成 \`tier === 'gemini'\` 时,用户切到
+  // 「Gemini 宽松(4 系)」会被当成普通档,于是正文又被塞回一条 user —— 那正是被拦的形态。
+  it.each(['gemini-strict', 'gemini-loose'] as const)('%s 档同样把正文挪进 system', async (tier) => {
+    const messages = await buildAutoTagMessages(
+      context(),
+      1,
+      options(tier),
+      null,
+      undefined,
+      '【上镜锚点】锚点文本',
+    );
+    const user = messages.at(-1)!;
+    expect(user.role).toBe('user');
+    expect(user.content).not.toContain('目标第一行');
+    const systems = messages.filter(m => m.role === 'system').map(m => m.content);
+    expect(systems.some(text => text.includes('--- 目标正文｜'))).toBe(true);
   });
 
   it('其它档位仍合成一条 user（正文和库都在里面）', async () => {

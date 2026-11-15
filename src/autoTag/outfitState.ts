@@ -14,22 +14,22 @@
  * - 没写衣着的新楼有事实可抄,不再随机挑;
  * - 半脱是可持久化的中间态,不会因为没写就弹回全穿或滑到全裸。
  *
+ * 注意:0.2.x 起跨楼层账本已统一由 outfitTimeline.ts(v2)接管,这里只保留
+ * 「从 tag 串识别衣物 / 读穿脱程度 / 兼容读 v1 旧账本」三件事。
+ *
  * 指纹的取法是**词表匹配**而非自由文本:从服装库里取所有 tag 词做词表,
  * 命中即视为衣着部件;不在词表里的词(发色、体型、表情)不会混进来。
  */
 
-import { resolveCanonicalCharName } from '@/autoTag/charReuse';
 import { isAccessoryToken, isCollarToken, isPropToken } from '@/autoTag/props';
 import { allWardrobeItems } from '@/data/loreIndex';
 import { clothingWords } from '@/data/materialLibrary';
-import type { CharTagEntry } from '@/state/charTags';
 import type { STMessage } from '@/st/context';
-import { parseImageTags, parseImageTagContent } from '@/st/imageTagRegex';
 
 /** 穿着程度。三档足够,再多模型就用不准。 */
 export type WearLevel = 'worn' | 'partial' | 'off';
 
-export interface OutfitStateEntry {
+interface OutfitStateEntry {
   name: string;
   /** 冻结的衣着部件(英文 tag,取自服装库词表,已去重)。 */
   garment: string;
@@ -39,7 +39,7 @@ export interface OutfitStateEntry {
   state: string;
 }
 
-export interface OutfitFloorState {
+interface OutfitFloorState {
   v: 1;
   swipe: number;
   entries: OutfitStateEntry[];
@@ -292,268 +292,4 @@ export function readOutfitState(message: STMessage | undefined): OutfitFloorStat
     .filter((entry): entry is OutfitStateEntry => !!entry)
     .slice(0, ENTRY_CAP);
   return { v: 1, swipe, entries };
-}
-
-function activeSwipe(message: STMessage): number {
-  return typeof message.swipe_id === 'number' ? message.swipe_id : 0;
-}
-
-/**
- * 从本楼往前找最近一份服装状态,并与更早的账本合并。
- *
- * 合并方向是「后写覆盖先写」:半脱、脱下都能继承;但**只有**后写的楼里出现过该角色
- * 才有记录,没出现的人保留旧状态——她不会因为这一楼没被提及就自动穿回去。
- *
- * 双保险:除了读 message.extra.bbiOutfitState,若某楼正文里直接有 `<bbi_image>`,
- * 也从正文的实拍 tag 里推进服装状态——这样旧存档、单槽重写、手动编辑过的楼层
- * 以及任何没落 extra 的楼层都能把衣服稳稳传给下一楼。
- */
-export function latestOutfitStates(chat: STMessage[], beforeFloor: number): Map<string, OutfitStateEntry> {
-  let merged = new Map<string, OutfitStateEntry>();
-  const end = Math.min(Math.max(0, beforeFloor), chat.length);
-  for (let floor = 0; floor < end; floor += 1) {
-    const message = chat[floor];
-    if (!message) continue;
-    const state = readOutfitState(message);
-    if (state && state.swipe === activeSwipe(message)) {
-      for (const entry of state.entries) merged.set(entry.name, entry);
-    }
-    const rawTags = typeof message.mes === 'string' ? parseImageTags(message.mes) : [];
-    if (rawTags.length) {
-      const parsedImages = rawTags.map((raw) => parseImageTagContent(raw));
-      merged = nextOutfitState(merged, parsedImages);
-    }
-  }
-  return merged;
-}
-
-/** 从本次生成的画面里抽取新状态。已有的角色没出现在画面里时沿用旧值。 */
-export function nextOutfitState(
-  previous: Map<string, OutfitStateEntry>,
-  images: Array<{ characters?: Array<{ name: string; tag: string }>; tag?: string }>,
-): Map<string, OutfitStateEntry> {
-  const next = new Map(previous);
-  for (const image of images) {
-    const cast = image.characters ?? [];
-    if (cast.length) {
-      for (const character of cast) {
-        const garment = extractGarment(character.tag);
-        const { wear, state } = readWear(character.tag);
-        const prior = next.get(character.name);
-        next.set(character.name, {
-          name: character.name,
-          // 镜头里没写衣着但状态没变时,沿用旧指纹;写了就看写的
-          garment: garment || prior?.garment || '',
-          wear: wear === 'worn' && !garment ? (prior?.wear ?? 'worn') : wear,
-          state,
-        });
-      }
-      continue;
-    }
-    // 单串后端没有角色块,一整串 tag 说的是所有人。此时只能按「名字在这一串里出现过」
-    // 认出在场的人,衣着词是共用的——粗一点,但总比一个字都不记、下一楼全忘强。
-    const tag = image.tag ?? '';
-    for (const [name, prior] of previous) {
-      if (!name || !tag.includes(name)) continue;
-      const garment = extractGarment(tag);
-      const { wear, state } = readWear(tag);
-      next.set(name, {
-        name,
-        garment: garment || prior.garment,
-        wear: wear === 'worn' && !garment ? prior.wear : wear,
-        state,
-      });
-    }
-  }
-  return next;
-}
-
-export function buildOutfitStatePayload(
-  states: Map<string, OutfitStateEntry>,
-  swipe: number,
-): OutfitFloorState | undefined {
-  const entries = [...states.values()].filter((entry) => entry.garment || entry.wear !== 'worn');
-  if (!entries.length) return undefined;
-  return { v: 1, swipe, entries: entries.slice(0, ENTRY_CAP) };
-}
-
-const WEAR_LABEL: Record<WearLevel, string> = {
-  worn: '穿着',
-  partial: '半脱',
-  off: '已脱',
-};
-
-/**
- * 用角色档案里的「固定着装」当账本的底。
- *
- * 账本只记**变化**,所以一个角色第一次出图时账本是空的,模型每层楼
- * 都可以重新挑一套衣服——这就是「前文没写换衣服,换一层楼衣服就变了」。
- * 档案里的固定着装是作者写死的,拿它做底,第一次出图就有东西可以照抄。
- *
- * 已经被账本记过的角色不覆盖:账本反映的是当下的实际状态。
- */
-export function seedOutfitStates(
-  states: Map<string, OutfitStateEntry>,
-  entries: Iterable<{ name: string; fields: { outfit?: string }; desc?: string }>,
-): Map<string, OutfitStateEntry> {
-  const entryList = [...entries] as CharTagEntry[];
-  const seeded = new Map<string, OutfitStateEntry>();
-  for (const [rawKey, state] of states) {
-    const canonical = entryList.length ? resolveCanonicalCharName(rawKey, entryList) : rawKey;
-    seeded.set(canonical, { ...state, name: canonical });
-  }
-  for (const entry of entryList) {
-    if (!entry?.name || seeded.has(entry.name)) continue;
-    const garment = (entry.fields?.outfit ?? '').trim();
-    if (!garment) continue;
-    seeded.set(entry.name, { name: entry.name, garment, wear: 'worn', state: '' });
-  }
-  return seeded;
-}
-
-/**
- * 渲染注入 prompt 的【服装现状】区块。
- *
- * 措辞要说明「这是事实、不是候选」:模型对候选会重新挑,对事实才照抄。
- */
-export function buildOutfitStateBlock(states: Map<string, OutfitStateEntry>): string {
-  const rows = [...states.values()].filter((entry) => entry.garment || entry.wear !== 'worn');
-  if (!rows.length) return '';
-  const lines = rows.map((entry) => {
-    const head = `- ${entry.name}:${WEAR_LABEL[entry.wear]}`;
-    const body = entry.garment ? `，${entry.garment}` : '';
-    const tail = entry.state ? `（${entry.state}）` : '';
-    return `${head}${body}${tail}`;
-  });
-  return [
-    '【服装现状】[已经发生的事实,不是候选;正文没有写明变化就照抄]',
-    '- 这份账本来自前面的楼层,也可能来自角色档案里的固定着装;两者都是本段剧情开场时每个人身上的实际状态。',
-    '- 写着「穿着」的,把她的衣服原样写进画面;正文没提衣着不是没穿。',
-    '- 整套换掉必须有正文里的换装动作;只是加了件外套、解了扣子还算同一套,不许换成另一种款式。',
-    '- 写着「半脱」的,衣服仍在身上,只移位或解开:该露的部位露、该留的布料必须留着,不许升级成全裸。',
-    '- 写着「已脱」的,不要再给她穿回去;要穿回必须有正文里的穿衣动作。',
-    '- 只有正文明确写了脱、穿、换、撕才会变;没写就延续下面这一行。',
-    ...lines,
-  ].join('\n');
-}
-
-export interface OutfitGap {
-  name: string;
-  kind: 'half-to-nude' | 'undressed-again' | 'garment-drift';
-  expected: string;
-  actual: string;
-}
-
-/**
- * 正文里「换衣服」的动作词。
- *
- * 命中就说明衣服本来就该变,这时换装不算漂移。
- * 只收明确的穿脱动作;「整了整衣领」「拉了拉裙摆」这种不动衣服的不算。
- */
-const CHANGE_VERB_RE =
-  /(?:换上|换下|换了一|换了|换成|更衣|穿上|穿回|重新穿|套上|披上|裹上|系上|扣上|脱下|脱掉|褪下|解下|扒下|扯下|撕开|撕掉|剥下|除去衣物|宽衣)/;
-
-/** 把 garment 串拆成词集合,用来判断「还是不是同一套」。 */
-function garmentWords(garment: string): Set<string> {
-  return new Set(
-    (garment ?? '')
-      .toLowerCase()
-      .split(',')
-      .map((word) => word.trim())
-      .filter(Boolean),
-  );
-}
-
-/**
- * 账本说穿着一套、画面换成另一套 —— 用户抱怨的「衣服自己变」。
- *
- * 与 diagnoseOutfit 分工不同:那条只看穿脱程度,这条看**是不是同一套衣服**。
- * 只有正文压根没写换装动作时才判,并且要求两边都有衣着词、词完全不重合。
- * 挑哪套衣服属于选衣规则,这条不管;它只管「已经定了的那套有没有被换掉」。
- *
- * @param image 单张图
- * @param states 进场时的服装账本
- * @param text 该图对应的那一句正文
- */
-export function diagnoseGarment(
-  image: { characters?: Array<{ name: string; tag: string }> },
-  states: Map<string, OutfitStateEntry>,
-  text: string,
-): OutfitGap[] {
-  if (CHANGE_VERB_RE.test(text ?? '')) return [];
-  const gaps: OutfitGap[] = [];
-  for (const character of image.characters ?? []) {
-    const prior = states.get(character.name);
-    if (!prior || prior.wear !== 'worn' || !prior.garment) continue;
-    const actual = extractGarment(character.tag);
-    if (!actual) continue;
-    const before = garmentWords(prior.garment);
-    const after = garmentWords(actual);
-    if (!before.size || !after.size) continue;
-    // 有任何一件重合就承认是同一套:加了围裙、脱了外套都还是这套衣服
-    const shared = [...after].some((word) => before.has(word));
-    if (shared) continue;
-    gaps.push({
-      name: character.name,
-      kind: 'garment-drift',
-      expected: prior.garment,
-      actual,
-    });
-  }
-  return gaps;
-}
-
-/**
- * 画面是否违反了服装账本。
- *
- * 只查两种**确定错**的情况,不做审美判断:
- * 1. 账本半脱,画面却写成全裸/全穿(用户最烦的那个);
- * 2. 账本已脱,画面又出现完整衣着。
- */
-export function diagnoseOutfit(
-  image: { characters?: Array<{ name: string; tag: string }> },
-  states: Map<string, OutfitStateEntry>,
-): OutfitGap[] {
-  const gaps: OutfitGap[] = [];
-  for (const character of image.characters ?? []) {
-    const prior = states.get(character.name);
-    if (!prior) continue;
-    const { wear } = readWear(character.tag);
-    const garment = extractGarment(character.tag);
-    if (
-      prior.wear === 'partial' &&
-      wear === 'off' &&
-      !/underwear|lingerie|panties|bra/i.test(character.tag)
-    ) {
-      gaps.push({ name: character.name, kind: 'half-to-nude', expected: '半脱', actual: '全裸' });
-      continue;
-    }
-    if (prior.wear === 'off' && wear === 'worn' && garment && character.tag.length > 0) {
-      // 已脱却写回完整衣着:只在没有任何解读线索时才判错
-      const hasOffWord = OFF_STATE_RE.test(character.tag);
-      if (!hasOffWord) {
-        gaps.push({ name: character.name, kind: 'undressed-again', expected: '已脱', actual: '又穿回' });
-      }
-    }
-  }
-  return gaps;
-}
-
-/** 违反账本时的重试话术。 */
-export function outfitRetryNote(gaps: OutfitGap[]): string {
-  const lines = gaps.map(
-    (gap) =>
-      `- ${gap.name}:账本里她是「${gap.expected}」,这张写成了「${gap.actual}」` +
-      (gap.kind === 'half-to-nude'
-        ? '——半脱要把留下的布料写出来(slipped down / pulled aside / unzipped / clothes around waist),不能直接 nude'
-        : gap.kind === 'garment-drift'
-          ? '——正文这一格没有写换衣服,衣服不能自己换掉;把衣着写回账本那一套,只改被换掉的部分'
-          : '——已经脱掉就别再穿回去,除非正文写了穿衣动作;若只是把衣服披回身上,写 hanging off shoulder 这类状态词'),
-  );
-  return `<outfit_state_retry>
-上一版和【服装现状】对不上:衣服明明没有变化,穿脱程度却跳了。
-${lines.join('\n')}
-改法:只改该角色的服装部分,人物、姿势、景别与其它图一律不动。
-直接从 <thinking> 开始,不要解释。
-</outfit_state_retry>`;
 }
