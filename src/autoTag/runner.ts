@@ -720,6 +720,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 上一次 attempt 是否被判为「被截断」:是则下一次重发时追加降载指令。
     // 不增加重试次数(那是用户的成本上限),只让重试打在正确的点上。
     let retryNote = '';
+    // 空计划只纠一次：这一楼有没有可画画面本质上是模型判断，硬纠 5 次换不来更好的结果，
+    // 只会把「这一段没画面」拖成 600 秒（第 1 楼实测 5 次 / 667 秒仍 0 张）。
+    let emptyPlanRetried = false;
     // 上一次 attempt 是否被判为「被截断」:是则后续重试改发降载版历史(精简思考清单 +
     // 略去长解释的契约)。降载必须换掉整份历史而不是只追加一句「写短点」——思考清单
     // 本身就是思考长度的来源,只在末尾恳求,模型照旧逐条自证。
@@ -960,13 +963,19 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 空 images:协议上算正常返回,旧版直接放行,于是模型一句「没有值得插图的画面」
           // 就能让整楼不生、阅读器干等超时。这里在还有重试次数时把它当可纠错误,
           // 换一套口径逼它落到具体画面上;changes 非空(有建档要落)时不算空。
+          // 只有当这一楼**确实有可画的画面**时，空 images 才算可纠错误。
+          // 反例是第 1 楼：整段是李斌一个人在心里幻想，正文里没有任何女性在画面里，
+          // 模型给空数组是对的；旧逻辑照样重试 5 次、耗掉 667 秒，最后还是 0 张。
           if (
             !slot &&
             attempt < retries &&
             !candidate.images.length &&
             !candidate.changes.length &&
-            !candidate.identities?.length
+            !candidate.identities?.length &&
+            !emptyPlanRetried &&
+            isDrawWorthy(source)
           ) {
+            emptyPlanRetried = true;
             retryNote = EMPTY_PLAN_RETRY_NOTE;
             throw new Error('返回了空 images');
           }
