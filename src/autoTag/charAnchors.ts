@@ -40,11 +40,19 @@ export function formatEntryForPrompt(entry: CharTagEntry, locked = false): strin
   const parts: string[] = [];
   for (const f of CHAR_TAG_FIELDS) {
     if (isManualFandom(entry) && !['fandom', 'sex', 'outfit'].includes(f)) continue;
+    // 标志特征（眼镜、耳饰、疤）只属于当楼画面：它们进库以后会被 enforceAppearance
+    // 每楼钉一遍，于是「他推了推眼镜」的那一楼过去之后，女主脸上还挂着男主的眼镜。
+    // 自动条目一律不渲染这个字段（旧档在 hydrateCharTags 里已被清空）。
+    if (f === 'extra' && entry.source !== 'manual') continue;
     const v = entry.fields[f]?.trim();
     if (v) parts.push(`${CHAR_TAG_FIELD_LABELS[f]}=${v}`);
   }
   if (!parts.length && entry.raw.trim()) parts.push(`tag=${entry.raw.trim()}`);
-  if (entry.nl.trim() && !isManualFandom(entry)) parts.push(`nl=${entry.nl.trim()}`);
+  // 旧版把建档时的 nl 也写进库块。那段句子是照着某一楼正文写的，常带着当时的
+  // 衣服与动作（实测：「Her tall, slender frame moves forward in a soft short
+  // sleeping garment…」），模型会把它当成这个角色的固定描述照抄，于是衣柜换了
+  // 她还穿着那件睡衣。库的职责是 tag；nl 每楼由模型现写。
+  // （同理见 appearanceLock.alignNaturalLanguage 的注释：别让模型学会 nl=复述 tag。）
   if (isManualFandom(entry)) parts.push('用户指定同人形象：保持同人身份，不按正文补写另一套脸/发色/瞳色，服装仍由剧情账本管理');
   return `- ${entry.name}${locked ? ' [locked]' : ''}: ${parts.join(', ') || '(未记录字段)'}`;
 }

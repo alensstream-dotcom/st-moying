@@ -273,7 +273,7 @@ const BAD_REQUEST_RE = /(?:\b400\b|Bad Request|invalid\s*request)/i;
  *   旧判据不含它,于是限流被当成「未知失败」直接失败掉,用户看到的就是「点就失败」。
  */
 const UPSTREAM_JITTER_RE =
-  /(?:\b50[234]\b|Bad Gateway|Unexpected end of JSON|Service Unavailable|网关|network_error|upstream_error|上游连接不稳定|Too Many Requests|\b429\b|rate.?limit)/i;
+  /(?:\b50[234]\b|Bad Gateway|Unexpected end of JSON|Service Unavailable|网关|network_error|upstream_error|上游连接不稳定|Too Many Requests|\b429\b|rate.?limit|Premature close|ERR_STREAM_PREMATURE_CLOSE|socket hang up|ECONNRESET|other side closed|\bterminated\b|fetch failed)/i;
 
 /**
  * 「这条渠道的上游号池没有可用凭据」—— 一次就停,不要重发、不要换级。

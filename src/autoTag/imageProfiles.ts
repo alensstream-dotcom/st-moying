@@ -168,6 +168,10 @@ export function ensureImageProfiles(
         // 档案先建、形象后补：只填空白字段，绝不覆盖已有值，也不动用户手锁的档案。
         if (!options.locked?.has(existing.name) && existing.source !== 'manual') {
           const filled = recoverProfileFields(character.tag);
+          // 饰物不进档案：出图恰好把别人的眼镜/耳机画到她身上时，`extra` 一旦落库
+          // 就被 enforceAppearance 永久钉在每一楼（实测第 0 楼把李斌的眼镜记成了温岚的）。
+          // 身份是发/眼/肤/体型/年龄；饰物与道具属于当楼画面，不进固定库。
+          filled.extra = '';
           // age 还要看正文：老档案普遍只建了头发眼睛，age 空着就永远没有体型锚。
           if (!filled.age?.trim()) {
             const guessed = ageNear(text, canonical);
@@ -203,6 +207,8 @@ export function ensureImageProfiles(
       if (options.locked?.has(canonical)) continue;
 
       const fields = recoverProfileFields(character.tag);
+      // 同上：饰物（眼镜/发夹/耳饰）只属于当楼画面，不进固定外貌库。
+      fields.extra = '';
       const sex = fields.sex;
       const female =
         (/girl|female|woman|女/i.test(sex) && !/boy|male|man|男/i.test(sex)) ||

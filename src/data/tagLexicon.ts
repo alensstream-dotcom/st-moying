@@ -53,14 +53,16 @@ const LIMITS: Record<keyof TagLexicon, number> = {
   // 不是正文里点了名的名词。所以这两类不截断，全量给模型当封闭池自选（91 + 108 条，成本可忽略）。
   camera: TAG_LEXICON.camera.length,
   light: TAG_LEXICON.light.length,
-  scene: 180,
-  clothing: 420,
-  appearance: 80,
-  body: 40,
-  expression: 110,
-  pose: 150,
-  interaction: 140,
-  prop: 30,
+  // 菜单每一条都要模型读一遍，实测 16K 字符的菜单把单次请求拖到 2–5 分钟。
+  // 截断留给「常见词」，具体款式/场景靠本楼检索补（见下），判断类不给上限。
+  scene: 70,
+  clothing: 150,
+  appearance: 40,
+  body: 24,
+  expression: 60,
+  pose: 80,
+  interaction: 50,
+  prop: 16,
 };
 
 

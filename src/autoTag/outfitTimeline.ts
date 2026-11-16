@@ -184,6 +184,36 @@ function legacyRecord(name: string, design: string, wear: string, state: string)
     pieces: splitPieces(design, wear, state),
   };
 }
+/**
+ * 用「动作必须落在本人身上」这把尺子复核一层历史账本。
+ *
+ * 只复核 removed 类的 pieces：init/add/change 是「穿上了什么」，收错的代价是多一件
+ * 衣服、画面偏保守；收错了 removed 的代价是这个人一路裸奔，两者不对等。
+ */
+function revalidateRemovals(
+  saved: ClothingFloor,
+  text: string,
+  state: ClothingState,
+  entries: CharTagEntry[],
+): void {
+  const body = String(text ?? '');
+  if (!body.trim() || !saved.changes.length) return;
+  for (const change of saved.changes) {
+    if (change.operation === 'init' || change.operation === 'add') continue;
+    const removed = (change.pieces ?? []).filter((piece) => piece.state?.location === 'removed');
+    if (!removed.length) continue;
+    const name = entries.length ? resolveCanonicalCharName(change.name, entries) : change.name;
+    const aliases = [...new Set([name, change.name, ...characterAliases(name)])].filter(Boolean);
+    if (ownerBoundAction(change.evidence ?? '', change.subjectEvidence ?? '', aliases)) continue;
+    const record = state.get(name);
+    if (!record) continue;
+    const ids = new Set(removed.map((piece) => piece.id));
+    for (const piece of record.pieces)
+      if (ids.has(piece.id) && piece.state?.location === 'removed')
+        piece.state = { ...piece.state, location: 'worn' };
+  }
+}
+
 export function clothingBefore(
   chat: STMessage[],
   beforeFloor: number,
@@ -248,6 +278,12 @@ export function clothingBefore(
           }
       }
     }
+    // 历史复核：旧版本收下过的脱衣事件里，有一批证据根本没落在她身上（典型：
+    // 「肉棒上挂着黏糊糊的小姨子的内裤和丝袜」——她只是被提到的领属定语）。
+    // 那时没有归属判据，账本把她记成脱光，于是一路裸到后面几十楼。判据加上以后，
+    // 新楼层不会再收这种证据，但已经落盘的历史楼层还在——读账本时用同一把尺子
+    // 再过一遍，把归属不明的 removed 还原成 worn。
+    if (saved) revalidateRemovals(saved, message.mes ?? '', state, entries);
     applyWardrobeChoices(state, message, saved?.manualChoiceRevision, entries);
     // 脱下来的衣服不能永久保持「脱掉」。账本里的 removed 是从头累积的，
     // 只要剧情不再提，隔一两楼就该当人已经穿回去了——否则前一天脱光，
@@ -492,6 +528,108 @@ export function unreportedClothingActions(
   }
   return [...new Set(missing)].slice(0, 8);
 }
+/**
+ * 只属于别人脸/头上的东西：眼镜、胡子、疤。模型读同一段正文时，只要楼里提过
+ * 一次「他推了推眼镜」，就会把 glasses 写进女主 tag——它没做「这件东西长在谁身上」
+ * 的归属判断。契约里已经写明不许，但契约是概率性的，所以在出口再判一次。
+ */
+const FOREIGN_WEAR =
+  /^(?:glasses|sunglasses|eyepatch|monocle|beard|mustache|moustache|stubble|goatee|sideburns)$/i;
+
+/** 英文 tag 在中文小说里怎么出现——归属判断必须做在正文那次出现上。 */
+const WEAR_PROSE: Array<[RegExp, RegExp]> = [
+  [/^glasses$/i, /眼镜|镜片|镜框|镜架/],
+  [/^sunglasses$/i, /墨镜|太阳镜/],
+  [/^eyepatch$/i, /眼罩|独眼/],
+  [/^monocle$/i, /单片眼镜/],
+  [/^beard$/i, /络腮胡|大胡子|胡须/],
+  [/^(?:mustache|moustache)$/i, /小胡子|胡子|胡须|髭/],
+  [/^stubble$/i, /胡茬|青色的胡|青青的胡/],
+  [/^goatee$/i, /山羊胡/],
+  [/^sideburns$/i, /鬓角/],
+];
+
+function escapeRe(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 这件东西在这一段里是不是长在她身上（领属或佩戴/摘取动作都算）。 */
+export function wearBelongsTo(token: string, text: string, aliases: readonly string[]): boolean {
+  const body = String(text ?? '');
+  if (!body.trim()) return false;
+  const prose = WEAR_PROSE.find(([tag]) => tag.test(token.trim()))?.[1];
+  if (!prose) return true;
+  const word = `(?:${prose.source})`;
+  const owners = [...new Set(aliases.map((a) => String(a ?? '').trim()).filter(Boolean))].map(escapeRe);
+  const own = owners.length
+    ? new RegExp(`(?:${owners.join('|')})的?[^。！？；\\n]{0,14}${word}`, 'i')
+    : null;
+  const herOwn = new RegExp(`她(?:的|戴着|戴着副|架着|挂着|摘下|取下|扶着|推起|推了推)[^。！？；\\n]{0,10}${word}`, 'i');
+  const wornOn = new RegExp(`${word}[^。！？；\\n]{0,8}(?:架在她|挂在她|戴在她|在她脸|在她鼻梁)`, 'i');
+  return Boolean(own?.test(body) || herOwn.test(body) || wornOn.test(body));
+}
+
+/** 把不属于她的脸/头饰物从她的 tag 里删掉。 */
+export function dropForeignWear(tag: string, text: string, aliases: readonly string[]): string {
+  if (!text.trim()) return tag;
+  return tag
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t && (!FOREIGN_WEAR.test(t) || wearBelongsTo(t, text, aliases)))
+    .join(', ');
+}
+
+/**
+ * 一句话里，这个穿脱动作是不是落在她们身上。判据只有两条，都要求同一分句：
+ * 她的名字/称呼在分句里且后面不是「的」「之」（`小姨子的内裤` 是领属，不算）；
+ * 出现「她」/she/her 且以「她」开头或紧贴动作。
+ */
+function ownerBoundAction(evidence: string, subjectEvidence: string, aliases: readonly string[]): boolean {
+  /**
+   * 一句话里，这个穿脱动作是不是落在她们身上。判据只有两条，都要求**同一分句**：
+   * - 她的名字/称呼出现在分句里，且后面不是「的」「之」（`小姨子的内裤` 是领属，不算）；
+   * - 「她」/she/her 以句首或紧贴动作的方式出现（`她褪下内裤` 算；`他把她按在…` 里她只是受事）。
+   */
+  const bound = (text: string): boolean =>
+    text
+      .split(/[，,。；;！!？?\n]/)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .some((clause) => {
+        if (!ACTION.test(clause)) return false;
+        const named = aliases.some((name) => {
+          const at = clause.indexOf(name);
+          if (at < 0) return false;
+          const after = clause.slice(at + name.length, at + name.length + 1);
+          return after !== '的' && after !== '之';
+        });
+        if (named) return true;
+        return /(?:^|[\s，,、])她(?!的)|\bshe\b|\bher\b/i.test(clause);
+      });
+
+  if (bound(evidence)) return true;
+  /**
+   * 走到这里只剩两种合法情形：动作句里没有主语（插件合成的场景推断句，
+   * 「浴室里很快响起水声。」）或用代词指代（「她一边走一边解开衬衫的扣子」），
+   * 主体都靠 subjectEvidence 那句点名来定。
+   *
+   * 但动作句里明写了「他」「自己」作主语时，这句写的是别人 —— 补强也不能翻案。
+   * 实测反例：「而自己，赤裸的身体上还残留着…肉棒上挂着黏糊糊的小姨子的内裤和丝袜」
+   * 配一句「李斌清楚的看到，小姨子温岚…脸上满是愤怒与错愕」，旧逻辑就把李斌的裸体
+   * 记到了她账上，随后一路裸到几十楼。
+   */
+  // 「他」「自己」当主语时这句写的是别人。注意不能只在词前找空白/逗号：
+  // 实测「而自己，赤裸的身体上还残留着…」里「自己」前面是「而」，旧正则漏判，
+  // 于是又靠 subjectEvidence 把李斌的裸体记到她账上。这里直接按主语词判。
+  if (/自己(?!的)/.test(evidence) || /(^|[^其])他(?!的)/.test(evidence)) return false;
+  return aliases.some((name) => {
+    const at = subjectEvidence.indexOf(name);
+    if (at < 0) return false;
+    const after = subjectEvidence.slice(at + name.length, at + name.length + 1);
+    return after !== '的' && after !== '之';
+  });
+}
+
 export function acceptClothingChanges(
   changes: ClothingChange[],
   source: string,
@@ -666,6 +804,9 @@ export function acceptClothingChanges(
     let reason = '';
     if (!entries.some((e) => e.name === c.name) && !aliases.some((name) => preceding.includes(name)))
       reason = '无法确认该服装记录对应的人物';
+    else if (c.evidence && !ownerBoundAction(c.evidence, subjectQuote, aliases)) {
+      reason = '证据句里的穿脱动作没有落在该人物身上（名字只是领属定语，或动作主语是别人）';
+    }
     else if (
       c.operation !== 'init' &&
       (!c.evidence || !preceding.includes(c.evidence) || !mentioned || !ACTION.test(c.evidence))
@@ -1883,6 +2024,25 @@ const OVER_CLOTHES =
  */
 const NUDITY_HINT =
   /(赤裸|全裸|裸体|一丝不挂|未着寸缕|赤身|光着(?:身子|身体)|毫无遮挡|毫无遮掩|一览无余|乳房|乳球|乳峰|乳尖|乳头|双乳|奶子|私处|下体|小穴|花穴|蜜穴|腿心|性交|做爱|交合|交欢|交媾|插入|抽插|内射|口交|自慰|手淫|高潮|射在(?:里|体)?|淫水|爱液)/;
+
+
+/**
+ * 这一段正文里的裸露/性描写，是不是写她本人。
+ *
+ * 旧判据只看「这段有没有裸露字样」。真实小说里男主洗澡、自慰、裸着走出浴室是常态，
+ * 这些句子一样带「赤裸」「精液」，于是女主的裸体 tag 被放行——第 7 节她只是上楼回家，
+ * 出图却是全身裸。归属判据：同一句里要有她的名字，或以「她」开头。
+ */
+function nudityBelongsTo(text: string, aliases: readonly string[]): boolean {
+  const body = String(text ?? '');
+  if (!body.trim()) return false;
+  for (const sentence of body.split(/[。！？；\n]/)) {
+    if (!NUDITY_HINT.test(sentence)) continue;
+    if (aliases.some((name) => name && sentence.includes(name))) return true;
+    if (/^\s*她/.test(sentence)) return true;
+  }
+  return false;
+}
 /**
  * 手或道具已经进到下半身里面了。
  *
@@ -2371,6 +2531,19 @@ const LOCKED_WEAR_STATE =
  * 现在的判据只有一条：这句点名的衣物是否**账本里已经脱下来**（removed/floor/chair/held）。
  * 账本说在穿的、或者只是描述在穿衣物怎么贴着的句子，一律留下。
  */
+// 与账本矛盾的裸体主张：账本说她穿着衣服，nl 里就不许出现「naked / 没穿」这类断言。
+// 实测第 8 楼：tag 写着白衬衫+牛仔短裤，Base nl 却写「lies back naked on the bed」，
+// 模型自己前后打架，NAI 会把两句话一起当指令。
+const NUDITY_CLAIM =
+  /\b(?:naked|nude|topless|undressed|fully bare|bare (?:chest|breasts?|body|skin)|nothing on|stripped|without (?:her|his|any) (?:clothes|shirt|top|bra|panties|clothing))\b/i;
+
+function dropNudityClaims(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s && !NUDITY_CLAIM.test(s));
+}
+
 function dropConflictingGarments(text: string, record?: ClothingRecord): string[] {
   const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
   if (!record) return sentences.map((s) => s.trim()).filter(Boolean);
@@ -2405,7 +2578,44 @@ export function enforceClothing(
     // state.get 落空 → 这张图的服装完全不锁（脸却因为 enforceAppearance 走了归一锁住了）。
     const canonical = entries.length ? resolveCanonicalCharName(c.name, entries) : c.name;
     const record = state.get(canonical) ?? state.get(c.name);
-    if (!record) continue;
+    if (!record) {
+      // 账本还空着（首次出场、或前几楼一次都没报 outfitChanges）时，模型写裸必须由本楼正文自己撑腰。
+      // 真实小说里常有「精液喷在小姨子的内裤上」这类句子，模型会把女主顺手画成没穿。
+      const near = source ? storyNearImage(source, image) : '';
+      const naked = /(?:completely nude|naked|nipples|no bra|no panties|topless|bottomless)/i;
+      const hers = nudityBelongsTo(near, [...new Set([canonical, c.name, ...characterAliases(canonical)])]);
+      if (near && !hers && naked.test(c.tag)) {
+        c.tag = c.tag
+          .split(',')
+          .map((t) => t.trim())
+          .filter((t) => t && !naked.test(t))
+          .join(', ');
+      }
+      continue;
+    }
+    // 饰物归属：眼镜这类东西在楼里属于别人时，先从她的 tag 里摘掉，再走服装合并。
+    const aliases = [...new Set([canonical, c.name, ...characterAliases(canonical)])];
+    c.tag = dropForeignWear(c.tag, source, aliases);
+    /**
+     * 账本说她脱光了，但这一楼正文的裸露根本不是她的 —— 那是账本被别人的裸体污染后的
+     * 残影（实测：李斌洗澡自慰，她只是上楼回家）。此时不能让她光着出图：
+     * 把账本里被误记成 removed 的部件穿回去，再照常合并。
+     */
+    if (source && ledgerShowsUndress(record) && !nudityBelongsTo(storyNearImage(source, image), aliases)) {
+      // 不只看 removed：模型常把脱下的衣服记成 floor / chair / held，
+      // 这些状态同样会让 caption 渲染成「没穿」。归属不对时一律穿回去。
+      for (const piece of record.pieces)
+        if (piece.state?.location && piece.state.location !== 'worn' && piece.state.location !== 'unknown')
+          piece.state = { ...piece.state, location: 'worn' };
+      // 模型是从账本那句「已脱下」推出来「没穿」的，账本改回穿着之后，这些裸体词
+      // 也得跟着走，否则合并时它们会作为「模型补充」留在画面里。
+      const nude = new Set(['completely nude', 'naked', 'nipples', 'no bra', 'no panties', 'topless', 'bottomless']);
+      c.tag = c.tag
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t && !nude.has(t.toLowerCase()))
+        .join(', ');
+    }
     const caption = clothingCaption(record);
     // 账本一套衣服都没记下来(旧版残档 design 为空)时，别把模型写的衣服也剥掉，
     // 否则人物会变成「没写任何衣物」→ 出图直接裸。整条跳过，连 Base 也不剥。
@@ -2417,7 +2627,12 @@ export function enforceClothing(
     // 旧版无条件用账本覆盖，于是账本一旦漏判，模型写对的裸露就被抹成一身衣服——
     // 用户看到的「NSFW 剧情出 SFW 图」就是这个。只在「账本没记任何脱除」时放行，
     // 反向不会成立：账本记了 removed 仍然压过模型。
-    if (caption.tag.trim() && source && NUDITY_HINT.test(storyNearImage(source, image)) && !ledgerShowsUndress(record)) {
+    if (
+      caption.tag.trim() &&
+      source &&
+      nudityBelongsTo(storyNearImage(source, image), aliases) &&
+      !ledgerShowsUndress(record)
+    ) {
       managed++;
       continue;
     }
@@ -2464,7 +2679,9 @@ export function enforceClothing(
       // 实测第 0 楼写回的 nl 只剩这两类机械句，模型的「ribbon hangs loose」整段消失。
       // 现在只删「与账本冲突的衣服句」（她说穿着的东西账本说没有），
       // 模型那句还剩就留着；一句不剩（整段都在写衣服）才退回账本渲染。
-      const kept = dropConflictingGarments(c.nl, record).join(' ').trim();
+      const dressed = record.pieces.some((p) => p.state.location === 'worn');
+      const cleaned = dropConflictingGarments(c.nl, record).join(' ').trim();
+      const kept = dressed ? dropNudityClaims(cleaned).join(' ').trim() : cleaned;
       c.nl = kept || caption.nl;
     }
   }
@@ -2478,7 +2695,9 @@ export function enforceClothing(
     if (nl) {
       // 同上：只删与账本冲突的衣物句。留空也接受 —— Base 的空间信息可以没有，
       // 服装的品类与状态已经在 Base tag 与角色 tag 里说死了。
-      image.nl = dropConflictingGarments(image.nl).join(' ').trim();
+      const anyDressed = [...state.values()].some((r) => r.pieces.some((p) => p.state.location === 'worn'));
+      const baseClean = dropConflictingGarments(image.nl).join(' ').trim();
+      image.nl = anyDressed ? dropNudityClaims(baseClean).join(' ').trim() : baseClean;
     }
     if (image.characters.length) image.tag = stripBasePersonal(image.tag);
   } else if (managed && image.characters.length === 1) {

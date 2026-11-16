@@ -97,15 +97,33 @@ describe('账本按档案主名记，模型写别名也不能记出第二条', (
 });
 
 describe('饰物归 appearance，服装层不许剥', () => {
-  it('发带/眼镜/项链在 enforceClothing 后仍然保留', () => {
+  it('她自己身上的发带与项链不被服装层剥掉', () => {
     const entries = [entry('林晚晴', 'white shirt')];
     const state = clothingAt(clothingBefore([], 0, entries), [], 's');
-    const target = image('林晚晴', '1girl, long black hair, hair ribbon, glasses, silver necklace');
+    const target = image('林晚晴', '1girl, long black hair, hair ribbon, silver necklace');
     enforceClothing(target, state, false, true, entries, '林晚晴站在门口。');
     const tag = target.characters[0].tag;
     expect(tag).toContain('hair ribbon');
-    expect(tag).toContain('glasses');
     expect(tag).toContain('silver necklace');
     expect(tag).toContain('white shirt');
+  });
+
+  it('眼镜在这段里没写在她脸上时，从她的 tag 里摘掉', () => {
+    // 契约要求「别人的特征不许写进她 tag」，但那是概率性的；出口再判一次。
+    // 实测：第 3 节李斌推了推眼镜，后面几十楼女主的脸上都有 glasses。
+    const entries = [entry('林晚晴', 'white shirt')];
+    const state = clothingAt(clothingBefore([], 0, entries), [], 's');
+    const target = image('林晚晴', '1girl, long black hair, glasses, white shirt');
+    enforceClothing(target, state, false, true, entries, '李斌推了推眼镜，看向林晚晴。');
+    expect(target.characters[0].tag).not.toContain('glasses');
+    expect(target.characters[0].tag).toContain('white shirt');
+  });
+
+  it('正文写了她自己戴着眼镜时保留', () => {
+    const entries = [entry('林晚晴', 'white shirt')];
+    const state = clothingAt(clothingBefore([], 0, entries), [], 's');
+    const target = image('林晚晴', '1girl, glasses, white shirt');
+    enforceClothing(target, state, false, true, entries, '林晚晴推了推自己的眼镜。');
+    expect(target.characters[0].tag).toContain('glasses');
   });
 });

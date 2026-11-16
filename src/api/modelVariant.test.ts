@@ -210,6 +210,11 @@ describe('识别「输出不是合规 JSON」', () => {
       true,
     );
     expect(looksLikeUpstreamJitter('ApiError: Bad Gateway')).toBe(true);
+    expect(
+      looksLikeUpstreamJitter('{"error":{"message":"Invalid response body while trying to fetch https://x/v1/chat/completions: Premature close","code":"ERR_STREAM_PREMATURE_CLOSE"}}'),
+    ).toBe(true);
+    expect(looksLikeUpstreamJitter('fetch failed: socket hang up')).toBe(true);
+    expect(looksLikeUpstreamJitter('ECONNRESET')).toBe(true);
     expect(looksLikeUpstreamJitter('副 API 请求失败 (503): Service Unavailable')).toBe(true);
     // 本地取消不是抖动:重发没有意义。
     expect(looksLikeUpstreamJitter('已取消')).toBe(false);

@@ -207,9 +207,21 @@ const CJK_CHAR = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
 function sanitizeNl(value: unknown, field: string, index: number): string {
   const text = sanitizeContent(value, field, index);
   if (!text) return '';
-  if (!CJK_CHAR.test(text)) return text;
-  console.warn(`[墨影] images[${index}].${field} 含中文/日文，整段丢弃（NAI 只吃英文 nl）`);
-  return '';
+  if (CJK_CHAR.test(text)) {
+    console.warn(`[墨影] images[${index}].${field} 含中文/日文，整段丢弃（NAI 只吃英文 nl）`);
+    return '';
+  }
+  // nl 是句子，不是第二个 tag 字段。实测模型偶尔把角色的 tag 又抄一遍进 nl
+  // （`1girl, black hair, long straight hair, ...`）——这种串进 NAI 只会稀释权重、
+  // 还会让「tag 管可枚举 / nl 管不可枚举」的分工彻底失效，直接丢。
+  const commas = (text.match(/,/g) ?? []).length;
+  const words = text.split(/\s+/).filter(Boolean).length;
+  const hasVerb = /\b(is|are|was|were|wears?|wearing|holds?|holding|stands?|standing|sits?|sitting|lies|lying|turns?|looks?|leans?|rests?|reaches|raises|pulls?|pushes?|tucks|resting|holding|facing|glancing|smiles?|says?|speaks?)\b/i.test(text);
+  if (commas >= 3 && !hasVerb && words <= 14) {
+    console.warn(`[墨影] images[${index}].${field} 是 tag 列表而不是句子，整段丢弃`);
+    return '';
+  }
+  return text;
 }
 
 /**

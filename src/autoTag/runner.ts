@@ -1184,6 +1184,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           jitterRetries += 1;
           granted += 1;
           console.info('[墨影] 上游网关抖动，原样重发同一级模型', { model: activeChannel?.model ?? channel?.model });
+          // 断流/502 往往发生在网关刚切换号的瞬间，立刻再撞大概率还是同一条坏连接。
+          // 退避 1.5s、3s 再发，实测能把「连撞三次全失败」变成「第二次就过」。
+          await new Promise((resolve) => setTimeout(resolve, 1500 * jitterRetries));
         }
         /**
          * 不在重试里换模型、也不换渠道。

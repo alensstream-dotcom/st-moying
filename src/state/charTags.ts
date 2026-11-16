@@ -382,6 +382,9 @@ function normalizeAutoOp(raw: unknown): CharTagAutoOp | null {
   if (!name) return null;
   if (value.kind === 'new') {
     const fields = normalizeFields(value.fields);
+    // extra（标志特征）不再进档案：眼镜、耳饰、伤疤这类东西只属于当楼画面。
+    // 旧楼层里模型写过的 `extra=glasses` 在这里失效，不再跨楼传播到女主脸上。
+    fields.extra = '';
     const rawTag = typeof value.raw === 'string' ? value.raw.trim() : '';
     if (!rawTag && charFieldsEmpty(fields)) return null;
     return {
@@ -390,7 +393,10 @@ function normalizeAutoOp(raw: unknown): CharTagAutoOp | null {
       fields,
       fieldEvidence: normalizeFields(value.fieldEvidence),
       raw: rawTag,
-      nl: typeof value.nl === 'string' ? value.nl.trim() : '',
+      // 建档时模型附带的 nl 是照着某一楼写的，常把当时的衣服与动作一起带进来
+      // （实测「in a soft short sleeping garment」），落库后再被库块照抄就成了
+      // “她的固定长相”。外貌库只记 tag 字段，nl 每楼由模型现写。
+      nl: '',
       source: value.source === 'book' ? 'book' : 'ai',
       desc: typeof value.desc === 'string' ? value.desc : '',
       reason: typeof value.reason === 'string' ? value.reason : '',
@@ -604,7 +610,13 @@ export function recomputeCharTags(): void {
 export function hydrateCharTags(): void {
   const raw = getContext()?.chatMetadata?.[META_KEY];
   // v2 的整库快照无法可靠反推来源楼层,迁移时作为基线保留,避免丢用户现有数据。
-  baseEntries = normalizeCharTagStore(raw);
+  baseEntries = normalizeCharTagStore(raw).map((entry) => {
+    // 旧档把眼镜这类饰物记进了 extra，又把某一楼的 nl 一起存了。前者会让饰物跨楼
+    // 传播（他戴眼镜，女主每张图都戴着），后者会把当时的衣服钉成「固定外貌」。
+    // 自动条目这两项都清掉；手动条目是用户自己写的，原样保留。
+    if (entry.source === 'manual') return entry;
+    return { ...entry, nl: '', fields: { ...entry.fields, extra: '' } };
+  });
   recomputeCharTags();
 }
 
