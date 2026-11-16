@@ -2534,8 +2534,24 @@ const LOCKED_WEAR_STATE =
 // 与账本矛盾的裸体主张：账本说她穿着衣服，nl 里就不许出现「naked / 没穿」这类断言。
 // 实测第 8 楼：tag 写着白衬衫+牛仔短裤，Base nl 却写「lies back naked on the bed」，
 // 模型自己前后打架，NAI 会把两句话一起当指令。
+// 裸体断言不能靠枚举几个词：模型会写 unclothed / disrobed / stripped / 没穿…，
+// 漏一个就从这里漏过去（第 8 楼：账本 shirt/bra/shorts 全 worn，nl 写 completely unclothed）。
+// 所以按「词族 + 否定式服装短语」两路一起判。
 const NUDITY_CLAIM =
-  /\b(?:naked|nude|topless|undressed|fully bare|bare (?:chest|breasts?|body|skin)|nothing on|stripped|without (?:her|his|any) (?:clothes|shirt|top|bra|panties|clothing))\b/i;
+  /\b(?:naked|nude|topless|bottomless|unclothed|disrobed|undressed|stripped|clothesless|nudity)\b|\b(?:no|without) (?:her |his )?(?:clothes|clothing|outfit|shirt|top|bra|panties|pants|shorts|skirt)\b|\bbare (?:chest|breasts?|body|skin|butt)\b|\bnothing on\b/i;
+
+const NUDE_TOKENS = new Set([
+  'completely nude', 'naked', 'nude', 'nipples', 'no bra', 'no panties', 'no pants', 'no shirt',
+  'topless', 'bottomless', 'undressed', 'unclothed', 'disrobed', 'completely unclothed',
+]);
+
+function stripNudeTokens(tag: string): string {
+  return tag
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t && !NUDE_TOKENS.has(t.toLowerCase()))
+    .join(', ');
+}
 
 function dropNudityClaims(text: string): string[] {
   return text
@@ -2680,6 +2696,10 @@ export function enforceClothing(
       // 现在只删「与账本冲突的衣服句」（她说穿着的东西账本说没有），
       // 模型那句还剩就留着；一句不剩（整段都在写衣服）才退回账本渲染。
       const dressed = record.pieces.some((p) => p.state.location === 'worn');
+      const hasOff = record.pieces.some((p) =>
+        ['removed', 'floor', 'chair', 'held'].includes(p.state.location),
+      );
+      if (dressed && !hasOff) c.tag = stripNudeTokens(c.tag);
       const cleaned = dropConflictingGarments(c.nl, record).join(' ').trim();
       const kept = dressed ? dropNudityClaims(cleaned).join(' ').trim() : cleaned;
       c.nl = kept || caption.nl;
