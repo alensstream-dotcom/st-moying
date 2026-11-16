@@ -107,6 +107,8 @@ import {
   adjacentPositions,
   duplicatePositionNote,
   duplicatePositions,
+  unanchoredAfters,
+  unanchoredQuoteNote,
 } from '@/autoTag/positionCheck';
 import { diagnoseTruncation, EMPTY_PLAN_RETRY_NOTE, truncationRetryNote } from '@/autoTag/truncation';
 import {
@@ -976,6 +978,16 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               candidate.images.push(fallback);
               console.warn(`[墨影] ${fallbackNote(source)}`);
               diagnostic('images:fallback', { floor, position: fallback.position });
+            }
+          }
+          // 引句锚定:after 必须是本楼正文里的原句。编出来的引句意味着画面也是编的
+          // (第 12 楼正文只有李斌在书房计划,模型却画了温岚坐沙发喝奶茶)。
+          // 只在还有重试次数时纠,重试到底仍不锚定就放行——不为了形式丢掉整张图。
+          if (!slot && attempt < retries) {
+            const loose = unanchoredAfters(candidate.images, preparedTarget.promptText);
+            if (loose.length) {
+              retryNote = unanchoredQuoteNote(loose);
+              throw new Error(`引句不在正文里(${loose.length})`);
             }
           }
           // 落位重复:两张图挤在同一段,画出来是同一瞬间拍两遍。仅当可选位置

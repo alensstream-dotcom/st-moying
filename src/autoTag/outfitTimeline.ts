@@ -2673,21 +2673,44 @@ export function enforceClothing(
       }
     }
     managed++;
+    // 模型已经自己写了衣物时，不要再把账本那一套并进来：
+    // 第 12 楼账本是白衬衫+牛仔短裤，模型按当时画面写了 t-shirt+skirt，
+    // 两份并进同一个 tag 就变成「她同时穿两套衣服」，NAI 只会画出混乱的中间态。
+    // 账本那套只有在「模型没写衣物」或「正文确实提到账本这套」时才补。
+    const modelGarments = c.tag
+      .split(',')
+      .map((t) => t.trim())
+      // 裸体词不算「她写的衣服」：否则模型写 nude 就会被当成已有一套穿搭，
+      // 账本里真实存在的 camisole 不再并进来，画面与剧情两头落空。
+      .filter((t) => t && isClothingDescription(t) && !NUDE_TOKENS.has(t.toLowerCase()));
+    const ledgerMentioned =
+      !source ||
+      caption.tag
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t && isClothingDescription(t))
+        .some((w) => source.includes(w));
     const dynamic = dropProps(
       c.tag
         .split(',')
         .map((t) => t.trim())
         .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t)),
     );
-    c.tag = [
-      ...new Set([
-        ...dynamic,
-        ...caption.tag
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean),
-      ]),
-    ].join(', ');
+    // 账本的「状态词」（no shirt / unfastened / on the floor…）永远要带上：
+    // 它说的是这一件现在什么状态，模型写的衣物词不能覆盖它。
+    // 只跳过账本的「品类词」——模型已经自己写了另一套衣服时不要再并一份。
+    const ledgerTokens = caption.tag
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const stateTokens = ledgerTokens.filter(
+      (t) => LOCKED_WEAR_STATE.test(t) || /^(?:no|un)\b|\bunfastened\b|\b(?:floor|chair|off)\b/i.test(t),
+    );
+    const ledgerTags =
+      modelGarments.length && !ledgerMentioned
+        ? stateTokens
+        : ledgerTokens;
+    c.tag = [...new Set([...dynamic, ...modelGarments, ...ledgerTags])].join(', ');
     if (nl) {
       // 双通道分工：服装的**品类与状态**归 tag（caption.tag 已并入），
       // 衣物与接触的**具体形态**归 nl（模型写的）。旧版无条件用 caption.nl 覆盖，
@@ -2699,7 +2722,9 @@ export function enforceClothing(
       const hasOff = record.pieces.some((p) =>
         ['removed', 'floor', 'chair', 'held'].includes(p.state.location),
       );
-      if (dressed && !hasOff) c.tag = stripNudeTokens(c.tag);
+      // 正文自己写了裸露（洗澡、上床）时，模型写的 nude 是对的，别剥；
+      // 只有账本说穿着、而这一楼正文没说裸露，才把裸体词当矛盾清掉。
+      if (dressed && !hasOff && !NUDITY_HINT.test(source || '')) c.tag = stripNudeTokens(c.tag);
       const cleaned = dropConflictingGarments(c.nl, record).join(' ').trim();
       const kept = dressed ? dropNudityClaims(cleaned).join(' ').trim() : cleaned;
       c.nl = kept || caption.nl;

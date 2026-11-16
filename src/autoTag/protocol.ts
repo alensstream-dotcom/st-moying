@@ -34,6 +34,11 @@ export interface ImageInsertion {
    * injectImageTags 用它把 tag 插到那句话后面,而不是整段后面(见 clean.ts 的 TargetSegment)。
    */
   charOffset: number;
+  /**
+   * 模型给的 after 引句原文(可能定位不到)。只用于「引句是否真的在正文里」的
+   * 事后核查：present 时说明模型确实引用过正文,absent 时画面多半是自己编的。
+   */
+  afterQuote?: string;
   /** danbooru 短 tag 部分(必填)。 */
   tag: string;
   /** 自然语言部分(可空;ComfyUI「生成自然语言」开启时由模型一并输出)。 */
@@ -401,6 +406,7 @@ export function parseImagePlan(
         negative,
         characters,
         size,
+        ...(after ? { afterQuote: after } : {}),
         // 缺省不写键:老楼层里存过的 <bbi_image> 也不带这两个字段,序列化保持稳定。
         ...(act ? { act } : {}),
         ...(by ? { by } : {}),

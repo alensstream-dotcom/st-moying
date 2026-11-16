@@ -93,3 +93,38 @@ export function adjacentPositionNote(pairs: Array<[string, string]>): string {
 直接从 <thinking> 开始，不要解释。
 </position_retry>`;
 }
+
+/**
+ * 「引句不在正文里」检查：`after` 必须是本楼正文的逐字引用。
+ *
+ * 为什么要单独查：`parseImagePlan` 定位不到时会给一个 position 兜底（这是为了让
+ * 标点/换行的细微差异不至于丢整张图），可副作用是「模型自己编了一个画面」也能混进来。
+ * 实测第 12 楼正文只有李斌一个人在书房计划，模型却给了「温岚坐在沙发上喝奶茶」——
+ * 引句是编的，位置兜底成 P 编号，图照样落库。这里把「引句找不到」当成可纠错误：
+ * 还有重试次数时让模型重挑真正写在正文里的那一句，重试到底再放行（不整张丢弃）。
+ */
+export function unanchoredAfters(
+  images: Array<{ afterQuote?: string }>,
+  targetText: string,
+): string[] {
+  const norm = (value: string) =>
+    value.replace(/\s+/g, '').replace(/["'“”‘’「」『』…—\-~、,，。.!！?？；;:：]/g, '');
+  const body = norm(targetText);
+  const bad: string[] = [];
+  for (const image of images) {
+    const quote = String(image.afterQuote ?? '').trim();
+    if (!quote) continue;
+    if (!body.includes(norm(quote))) bad.push(quote.slice(0, 24));
+  }
+  return bad;
+}
+
+export function unanchoredQuoteNote(quotes: string[]): string {
+  return `<quote_retry>
+上一版有 ${quotes.length} 张图的 after 引句在这楼正文里找不到（${quotes.join(' / ')}）。
+after 必须是**本楼正文里逐字存在**的一句话：那句话读完之后，画面里需要的事实刚好全部成立。
+- 不许自己造句、不许拿上一楼或前情里的句子顶替、不许把别处的描写拼过来。
+- 如果这一楼确实没有能支撑那张图的句子，就换一个正文里真实存在的瞬间；实在没有可画的，减少张数。
+直接从 <thinking> 开始，不要解释。
+</quote_retry>`;
+}
