@@ -485,12 +485,6 @@ export interface LoreSettings {
   maxNsfw: NsfwLevel;
   /** 服装候选条数(1–16)。越大越不容易雷同,但 eat 上下文。 */
   wardrobeLimit: number;
-  /** 姿势候选条数(0–12)。0 = 不注入姿势候选。 */
-  poseLimit: number;
-  /** 是否把「面相 / 体型 / 同人骨相」作为候选注入。默认开:关掉时角色只能靠模型现场编脸,必然大众脸。 */
-  faces: boolean;
-  /** 人物外貌候选条数(2–10)。同人条目自带权重语法,条数只影响可选范围。 */
-  faceLimit: number;
   /**
    * 素材预览图用哪个 NAI 模型。空串 = 跟随渠道当前模型。
    *
@@ -1007,6 +1001,7 @@ V5 的一张图 = 一个 Base 块 + 每个本图可见的个体角色各一块�
   场景：<地点 + 画面里实际可见的关键道具>
   环境光：<光源 + 时间 + 色调>
   size：<portrait / landscape>
+  Base NL：<一句中文点出这一格 Base tag 说不清的空间事实：谁在画面哪一侧、前景边缘是什么、她的肩挡住什么、光落在哪里；没有就写 "-">
 
 ■ P<编号>｜<角色名或正文指称>（每个本图可见的个体角色各写一块；【一次性】角色用正文的指称原词作块名）
   固定外貌：<【已建档】【本次建档】照抄库中/刚建档的字段（含 age 与骨架词）；【一次性】按世界观一次性补全，至少含性别、年龄档、发色发型、瞳色；玩家男主或仅露局部的男方写 boy, faceless male 加局部施力部位（pov hands / muscular arm / torso / lower body / penis），不编发色瞳色与正脸。1girl/1boy 一律转成 girl/boy>
@@ -1016,8 +1011,9 @@ V5 的一张图 = 一个 Base 块 + 每个本图可见的个体角色各一块�
   视线：<一个标准 danbooru 词>
   个人动作：<这个角色自己在做什么>
   相对位置：<画面左 / 中 / 右，供排序与站位用>
+  NL：<一句中文点出这一格 tag 表达不了的三件事之一：这个动作怎么完成（重心/哪只手/接触落在哪）、衣物与接触的具体形态、她身前与离镜头最近的是什么；没有就写 "-"。这里只写结论，不写成英文句子——最终 nl 在 JSON 里现写>
 
-槽位填写要求（槽位值直接写你最终要放进 tag 的英文词；确实不适用的槽位写 "-"，但概括、Base 的景别、场景、环境光、size 与每个角色块的年龄档、表情、视线永远不得为 "-"——核心互动只在单人画面写 "-"）：
+槽位填写要求（槽位值直接写你最终要放进 tag 的英文词；确实不适用的槽位写 "-"，但概括、Base 的景别、场景、环境光、size 与每个角色块的年龄档、表情、视线永远不得为 "-"——核心互动与 NL 槽只在没有可写内容时写 "-"）：
    - 概括先写，tag 后写（长段剧情先执行五刀剔除：砍台词声音、砍回忆心理与比喻、砍快门前已做完的铺垫过渡动作、砍抽象修辞、砍镜头外远景，只留峰值定格一帧）：概括句里点到的每一件事都必须落到后面的槽位与角色块里（人、道具、落点、方向、反应），落不下的回头补，别让 tag 只剩人和裸体。概括句写不出来的格子不许画。
    - 人数按身体数，不按有没有脸：省脸可以，省人不可以——双人戏少一个人就画成自慰，三人戏少一个男的就会画出一个人两根肉棒。人塞不下就退景别、把人降成局部身位，不许删人。
    - 动作与道具绑成词组一起落（brush on pussy、fingers inside her、hand pressing her back），别让道具和部位各飘一个 tag——分开写，模型就只画一支飘着的毛笔和一个裸体。多人身体接触与物-人接触按「四元」写清：①Base 核心互动写空间站位与带介词的共享接触短语（如 calligraphy brush on pussy, hand spreading her thighs）；②施动方角色块写 holding <道具>；③受动方角色块写被接触部位与身体形变反应（arched back, trembling, curled toes）；④「这一格到底在做什么」由图片级的 act 字段回答（取值见 act 枚举规范）。**不要写 source# 或 target#**——那两个前缀是插件早期自创的，danbooru 与 NAI 都不认识，写上去等于没写。
@@ -1041,6 +1037,8 @@ V5 的一张图 = 一个 Base 块 + 每个本图可见的个体角色各一块�
    - 每张图的 Base tag 逐槽核对过：人数、景别、场景、环境光、多人画面的核心互动，每一项都能在 tag 里找到对应的词，环境光不许漏（光源/时间/色调至少落一个具体词）；{{#nl}}nl 与 tag 描述同一画面，且所有 nl（Base 与每个角色）一律用英文写——正文和上面的思考是中文也不例外，中文 nl 会被生图模型读得更差，还要多花几倍 token；角色名是唯一例外：每个角色的 name 与 nl 里出现的名字都逐字对应档案/正文原名（中文名写中文），没有任何音译或变体；每个角色块都变成了 characters[] 里的一项，name/tag/nl 都不为空。{{/nl}}{{^nl}}每个角色的 name 都逐字对应档案/正文原名（中文名写中文），没有任何音译或变体；每个角色块都变成了 characters[] 里的一项，name/tag 都不为空；本次只写 tag，Base 与各角色都不写 nl。{{/nl}}
    - 每个剧情 tag 都能追溯到正文/设定；地形、地面、道路、天气和环境状态 tag 没依据就删除。
    - Base 的 tag {{#nl}}和 nl 里都{{/nl}}{{^nl}}里{{/nl}}没有混进任何单个角色的外貌、服装或个人动作；每个角色的服装和个人动作都在他自己的 characters[].tag 里实际出现了，没有谁的服装或动作只写在槽位{{#nl}}或 nl {{/nl}}里却没进 tag，也没有 school uniform、pantyhose 这类被简写掉的笼统词；每个角色都各有一个表情词和一个视线词，没有谁只有动作没有表情。
+   {{#nl}}- 每张图的 nl 都做过一次分工检查：它写的必须是 tag 说不清的三类之一（动作怎么完成 / 衣物与接触的具体形态 / 空间层次与遮挡），没有就留空，不许为了「写点什么」而改写成 tag 的英文复述。{{/nl}}{{#nl}}所有 nl 里都没有重复 tag 已说过的名词（人数、发色、瞳色、服装品类、景别、光线、地点）；Base nl 没有写某个角色的外貌、服装与个人动作，各角色 nl 只在写她自己那一侧；没有凭空多出来的人、手、道具或事件；词数在预算内（Base ≤20 词，每角色 ≤26 词）。{{/nl}}{{#nl}}反过来也查过一遍：凡是 tag 里挑了个「差不多」的词来凑的描述，能改写成 nl 表达的都改写过了，没有留下 pov、against wall、hand on head 这种把画面拽向通用姿势的凑数 tag。{{/nl}}
+   {{#nl}}- 角色名的处理在 nl 里同样成立：nl 用明确的 she / he / the girl on the left 等指代与 tag 对应，中文名只出现在 characters[].name，不塞进英文句子。{{/nl}}
    - 人数对得上正文：正文里正在动作的人全在画面里，没有谁被景别挤掉，只被画了手或腰胯的人也占了人数。双人戏只剩一个女的、三人戏少一个男的，都算错。
    - 每个人恰好有自己的服装状态，且与上一楼接得上：本楼没有脱/穿动作的人，状态与上一楼完全一致；写了半脱的人没有同时写 nude，写了 nude 的人身上没剩 bra、panties 这类已脱部件。
    - 这一层只核对、不改决定：发现问题就在落 tag 时直接改对，不要在思考里写出「超限，需精简」「让位」「改为」这类修订过程。张数在 E 段就已经定死，这里不该再变。
@@ -1078,7 +1076,7 @@ Map every image to one Base Prompt plus zero or more native Character Prompts.
 
 Each image must contain:
 - tag: English comma-separated danbooru tags for the Base Prompt. Put global character counts, scene, composition, camera, lighting, atmosphere, and shared interactions here. Do not put one character's appearance, outfit, or individual action in Base.
-{{#nl}}- nl: a coherent English natural-language Base Prompt describing the whole scene, spatial relationships, camera, and overall event. Like the Base tag it stays global: never put one character's appearance, outfit, or individual action in the Base nl; those belong to that character's own nl.
+{{#nl}}- nl: one English sentence (at most 20 words) giving what the Base tag cannot: how the scene is spatially arranged around the subjects, where the frame's foreground and background edges sit, and what the overall event is doing at this instant. It stays global and it must not restate the Base tag — do not repeat the character count, shot distance, location, light, or any garment category already written there; never put one character's appearance, outfit, or individual action in the Base nl — least of all her expression; those belong to that character's own nl.
 {{/nl}}- characters: an array of the characters actually visible in this image, ordered left-to-right then top-to-bottom. Every item is {{#nl}}{"name":"...","tag":"...","nl":"..."}{{/nl}}{{^nl}}{"name":"...","tag":"..."}{{/nl}}. Membership is decided by the frame, not by the library: a character who is visible but has no library profile still gets an entry (see rule 9). Names of library characters must follow the Name consistency rules below.
 
 Character Prompt rules:
@@ -1087,7 +1085,12 @@ Character Prompt rules:
 3. For every fandom character, the model-recognized English Danbooru identity tag, formatted exactly as character name (copyright name), must be the first tag in that character's tag. The identity tag is stored in the fixed appearance library: when creating the entry (changes field:"new"), register it as the fields.fandom of that entry; when an existing entry lacks it and the character is fandom, add it via a changes item with field:"fandom"; then copy it verbatim every time. Do not escape the parentheses for NovelAI, do not translate the names literally, do not abbreviate the copyright, and do not put this per-character identity tag in Base. Original characters receive no copyright identity tag and no fandom field.
 4. For an explicit NSFW scene. Do not rely on vague tags such as nsfw, nude, or sex: name each actually visible, action-relevant anatomical feature or genital in the owning character's tag, such as breasts, nipples, penis, pussy, anus, or testicles. Do not claim fully covered or out-of-frame anatomy is visible.
 5. Put the shared sexual act, relative spatial position, and bound prop-to-body contact phrase (e.g. calligraphy brush on pussy, ice cube against nipple, rope around wrists, hand spreading thighs) in Base. The act itself is answered once per image by the top-level act field (see the act enum spec): the initiator carries holding <prop>, while the heroine/receiver carries the contacted anatomical part and the visible physical response (e.g. arched back, trembling, curled toes). Never write source# or target# — those prefixes are not danbooru tags and NovelAI does not recognise them, so they add nothing while making you think the direction is already stated. The tags must describe the exact visible contact rather than euphemize it.
-{{#nl}}6. nl uses English natural language for the same character's appearance, outfit, action, facing, interaction, visible anatomy, and approximate position. It may add relationship or spatial detail but must not conflict with tag.{{/nl}}{{^nl}}6. This output is tag-only: write no nl key anywhere, neither in Base nor in any Character Prompt. Everything rule 1 lists for a character — including facing, interaction, and necessary relative position — must be carried by that character's own tag; who acts on whom is stated once by the image-level act field, not by source# / target# tags.{{/nl}}
+{{#nl}}6. nl exists for what a tag cannot say. It is not an English restatement of the tag: everything the tag already names — count, hair, eyes, garment category, shot distance, location, light — is finished and must not appear again in nl. Write one sentence per character (at most 26 words). Put in that sentence only these three kinds of information:
+   (a) how an action is performed: where her weight sits, which hand does it, the direction of a turn, the exact point where contact lands, what the body is doing under the action;
+   (b) the concrete form of clothing or contact that a tag can only name: the shirt buttoned to the second button, the tie knocked sideways, the strap slipped to the upper arm, the hem pinched between two fingertips, his palm pressing the back of her knee;
+   (c) spatial layering inside the character's own area: what stands in front of her, what her shoulder hides, which part of her is nearest the camera, where the light lands on her.
+   Never narrate a sequence of actions, a cause, an inner thought, a metaphor, or a judgement of the scene. Never add a person, prop, or event the story text does not contain — an unseen hand or an invented partner is a lie about the scene. If Base nl and a character nl touch the same contact, Base carries the shared spatial fact and the character nl carries only her own side of it. nl must not contradict tag: the shot distance, the visible body parts, and the garment states in tag are already decided, so write within them rather than widening the frame.
+   The reverse duty is just as strict: when no danbooru tag names a detail accurately, do not pick an approximate tag to compensate — leave that detail to nl. An invented tag such as pov, against wall, or hand on head drags the whole image toward a stock pose and loses the actual event; a sentence keeps it.{{/nl}}{{^nl}}6. This output is tag-only: write no nl key anywhere, neither in Base nor in any Character Prompt. Everything rule 1 lists for a character — including facing, interaction, and necessary relative position — must be carried by that character's own tag; who acts on whom is stated once by the image-level act field, not by source# / target# tags.{{/nl}}
 7. For characters in the fixed appearance library, copy the library Tag fields into that character's tag, keeping the fandom identity tag (fields.fandom) first. Keep appearance wording verbatim, but convert the library sex count tag 1girl/1boy to girl/boy.{{#nl}} Library natural-language notes may inform that character's nl.{{/nl}} Tag fields remain canonical.
 8. For other multi-character interactions, use real danbooru compound tags (e.g. hand on another's cheek, head between legs, hand between legs) to state the physical relationship. Never use source# / target# / mutual# — they are not danbooru tags and the renderer ignores them. Do not use ComfyUI's multi-person segmentation convention.
 9. Character Prompts are keyed to the frame, not to the library. Do not create Character Prompts for characters absent from this image. A visible character who has no library profile still belongs in characters[]: when the story treats someone as a single identifiable person — an opponent, a shopkeeper, a passer-by carrying a child — give them their own Character Prompt even though they will never be registered. Use the term the story uses for them as the name (三年级队长, 店主), and complete their appearance once, for this image only. Such an entry is valid for this image alone: never report it in changes, never add it to the library, and never carry it into a later floor. Never invent a personal name for them — a made-up name is indistinguishable from a real profile when this image tag is later read back as context.
@@ -1098,7 +1101,7 @@ Name consistency (critical — the plugin matches names verbatim):
 - First-time registration: when you register a character via changes field:"new", the name must be exactly the name used for that character in the character card, lorebook, book memory, or story text — a Chinese name stays Chinese (小雪, never Xiaoxue or Snow). Never transliterate, translate, or pinyin-ize a name.
 - Existing profiles: when a character already has a library entry (or was just registered above), every reference to that character — characters[].name and any name appearing inside a tag{{#nl}} or nl{{/nl}} — must match the library entry name verbatim. A library entry written 小雪 must be referenced as 小雪, not as Xiaoxue or any other variant; likewise, when the story refers to a profiled character by an honorific, surname+title, or given-name nickname (e.g. calling 风千华 as 风阿姨 or 千华), never treat them as a rule-9 one-off character and never write 风阿姨 in characters[].name — always resolve them to the library entry name 风千华 and copy their fixed appearance and outfit state. A mismatched name can never be matched or replaced by the plugin, and the character loses its fixed appearance.
 
-{{#nl}}Both Base and Character Prompts must use Tag + English natural language. Write nl in English even when the story text and your own thinking are in another language: the image model reads English natural language far more reliably, and non-English sentences also cost several times more tokens against the shared prompt budget.{{/nl}}{{^nl}}Both Base and Character Prompts are tag-only: write English danbooru tags even when the story text and your own thinking are in another language.{{/nl}} Character names are the only exception: they must stay in their original language and spelling (see Name consistency above).{{#nl}} Tags stabilize identity and attributes; natural language supplies complex relations and spatial semantics.{{/nl}} Do not output quality tags, generic negative tags, artist presets, or XML. The backend adds artist and quality tags.
+{{#nl}}Both Base and Character Prompts must use Tag + English natural language. Write nl in English even when the story text and your own thinking are in another language: the image model reads English natural language far more reliably, and non-English sentences also cost several times more tokens against the shared prompt budget.{{/nl}}{{^nl}}Both Base and Character Prompts are tag-only: write English danbooru tags even when the story text and your own thinking are in another language.{{/nl}} Character names are the only exception: they must stay in their original language and spelling (see Name consistency above).{{#nl}} Tags stabilize identity and attributes; natural language supplies complex relations and spatial semantics. The division is fixed: tag carries only what can be enumerated (count, identity, fixed appearance, garment category and visible state, shot distance and camera side, common pose and expression, location and light); nl carries what cannot be enumerated (how the action is performed, the concrete form of clothing and contact, spatial layering and occlusion). Neither side repeats the other. Total nl is capped at 20 words for Base and 26 words per character, because the model shares one prompt budget across every block.{{/nl}} Do not output quality tags, generic negative tags, artist presets, or XML. The backend adds artist and quality tags.
 
 Visual completion (important):
 The story text is prose, not a shot list. It will never state camera, lighting, or period costume — the things that only exist once something is drawn. Your job is not to transcribe the text but to complete it into a finished picture. Handle these four classes differently.
@@ -1480,9 +1483,6 @@ function defaults(): ImageSettings {
         enabled: true,
         maxNsfw: 3,
         wardrobeLimit: 8,
-        poseLimit: 6,
-        faces: true,
-        faceLimit: 8,
         // 留空 = 用「素材库配图」那套预设的模型;填了就是硬覆盖。
     thumbModel: '',
         thumbIntervalMs: 10000,
@@ -2117,13 +2117,6 @@ function normalize(raw: unknown): ImageSettings {
         enabled: typeof rl.enabled === 'boolean' ? rl.enabled : d.autoTag.lore.enabled,
         maxNsfw: num(rl.maxNsfw, d.autoTag.lore.maxNsfw, 0, 3) as NsfwLevel,
         wardrobeLimit: num(rl.wardrobeLimit, d.autoTag.lore.wardrobeLimit, 1, 16),
-        poseLimit: num(rl.poseLimit, d.autoTag.lore.poseLimit, 0, 12),
-        // faces 升级迁移:旧配置里 faces 默认关,存过 false 的用户光改默认值还是看不到任何变化
-        // (同人骨相一次都抽不到)。所以「没有 faceLimit」= 升级前的配置,一律开一次;
-        // 之后用户在设置页手动关掉会同时带上 faceLimit,不再被顶回来。
-        faces:
-          typeof rl.faces === 'boolean' && rl.faceLimit !== undefined ? rl.faces : true,
-        faceLimit: num(rl.faceLimit, d.autoTag.lore.faceLimit, 2, 10),
         thumbModel: typeof rl.thumbModel === 'string' ? rl.thumbModel : d.autoTag.lore.thumbModel,
         thumbIntervalMs: num(rl.thumbIntervalMs, d.autoTag.lore.thumbIntervalMs, 3000, 120000),
       };

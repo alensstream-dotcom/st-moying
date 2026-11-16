@@ -51,22 +51,9 @@ tag 与 characters[].tag 只写镜头能拍到的东西，从这里挑，逗号�
 
 /** 紧缩契约共用的 act 字段说明（中性码，不触发输出侧过滤）。 */
 const ACT_FIELD_SPEC = `【act：这一格在做什么（必填一个值，没有性内容写 none）】
-可选值（只能挑一个，不能自创）：
-  · kiss = 接吻
-  · chest = 揉胸或吸乳（手/嘴在女方胸上）
-  · digit = 手指抚弄或进入女方下体（抚阴蒂、指交）
-  · mouth-on-her = 男方的嘴在女方下体（舔阴）
-  · mouth-on-him = 女方的嘴在男根（口交）
-  · hand-on-him = 女方用手撸动男根
-  · chest-on-him = 女方用乳夹住男根（乳交）
-  · front = 男女正面插入
-  · rear = 从后方插入（后入、狗爬式、趴伏）
-  · self = 女方自慰（只有她自己）
-  · toy = 女方用道具自慰
-  · undress = 正在被脱衣，性行为还没开始
-  · none = 没有性内容（日常、单纯神态、拥抱以外的无接触）
-判断依据只看这一格所在的那一句：谁的身体在承受动作就选对应值，方向由枚举值本身固定，不需要另写施动方。
-器官、体位、体液、反应这些 tag 由插件按 act 补齐，你不要写。`;
+可选值只有这 13 个，不能自创：kiss / chest / digit / mouth-on-her / mouth-on-him / hand-on-him / chest-on-him / front / rear / self / toy / undress / none。
+取值的口径是「这一格里谁的身体在承受什么」：kiss 是接吻；chest 是手或嘴落在她胸口；digit 是手指落在她下半身；mouth-on-her 与 mouth-on-him 是嘴在对方身上（前者对她、后者对他）；hand-on-him 与 chest-on-him 是她的手或胸口在他身上；front 与 rear 是正面与背面贴合；self 与 toy 是她独自或借物；undress 是正在被脱衣而还没开始；none 是没有任何亲密接触。
+方向由枚举值本身固定，不需要另写施动方。器官、体位、体液、反应这些 tag 由插件按 act 在本地补齐 —— 你不要写。`;
 
 /**
  * 紧缩契约的完整文本（3.x 系 Gemini 专用：连解剖词都不许写）。
@@ -77,9 +64,8 @@ const ACT_FIELD_SPEC = `【act：这一格在做什么（必填一个值，没�
  */
 export const COMPACT_PLAN_CONTRACT = `【本轮输出格式（唯一的一种）】
 只输出这一个对象，不要有任何其他键：
-{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag"}]}]}
-不要输出 nl、identities、outfitChanges、costumeContexts —— 程序会按档案与服装账本在本地补齐这些字段，画面不会因此缺任何东西。
-不要写任何自然语言句子。
+{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","nl":"一句英文自然语言","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag","nl":"一句英文自然语言"}]}],"changes":[],"outfitChanges":[],"costumeContexts":[],"identities":[]}
+nl 写进 JSON，不要写成长段散文：它只补 tag 说不清的那一件事。
 ${ACT_FIELD_SPEC}
 ${TAG_WHITELIST}`;
 
@@ -91,22 +77,24 @@ ${TAG_WHITELIST}`;
  * 而把它按 3.8 那套「连器官名都不许写」去压,画面会变得明显更保守——
  * 用户抱怨的「NSFW 剧情出 SFW 图」有一半就是这条造成的。
  *
- * 仍然禁的:成段的自然语言描写(`nl`)、体液长句。那些才是真正被斩断的东西。
+ * 仍然禁的:器官名与行为词的**逐项枚举**、体液长句。器官与体位交给 `act` 单值枚举,
+ * 由插件侧 `explicitTags` 按正文补齐 —— 模型写不出整段枚举,上游也就没有拦截素材。
+ *
+ * `nl` 不在禁止之列:0.2.x 的双通道设计里 nl 是模型的产物(tag 管可枚举项、nl 管不可枚举项),
+ * 旧文本那句「不要写任何自然语言句子」与规范正面冲突,已删。
  */
 export const COMPACT_PLAN_CONTRACT_LOOSE = `【本轮输出格式（唯一的一种）】
-只输出这一个对象，不要有任何其他键：
-{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag"}]}]}
-不要输出 nl、identities、outfitChanges、costumeContexts —— 程序会按档案与服装账本在本地补齐这些字段。
-不要写任何自然语言句子。
+只输出这一个对象，键固定为 images / changes / outfitChanges / costumeContexts / identities：
+{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","nl":"一句英文自然语言","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag","nl":"一句英文自然语言"}]}],"changes":[],"outfitChanges":[],"costumeContexts":[],"identities":[]}
+nl 写在 JSON 里，与 tag 分工：tag 管可枚举项，nl 管这个动作怎么完成、衣物与接触的具体形态、画面里的空间层次。一句写完，不要写成段。
 ${ACT_FIELD_SPEC}
 
 【tag 写法】
 tag 与 characters[].tag 用英文短词、逗号连接，每张图 18~30 个。
-按正文如实写：人数（1girl / 1boy / 2girls）、景别与机位、姿态、场景、光线、表情、
-头发，以及正文里确实发生的身体状态与衣物状态（nude / topless / breasts out /
-panties aside / open shirt / skirt lift）。
-写成 danbooru 风格的短词，不要写成句子，不要写体液与器官的成段描写 ——
-器官与体位由 act 枚举决定，不靠 tag 里的散文。`;
+按正文如实写：人数（1girl / 1boy / 2girls）、景别与机位、姿态、场景、光线、表情、头发，
+以及正文里确实发生的衣物状态。
+写成 danbooru 风格的短词：不要写器官名、体液、行为词，也不要写成句子 ——
+器官与体位由 act 枚举在插件侧补齐，写进 tag 反而会让整份 JSON 被判违规截断。`;
 
 /**
  * 按档位 + 模型挑契约文本。

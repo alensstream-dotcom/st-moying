@@ -39,7 +39,9 @@ describe('buildSlotTaskNote', () => {
   });
 
   it('把目标槽位当前的提示词原样喂回去当锚点(不截断)', () => {
-    const long = `1girl, ${'detail, '.repeat(60)}classroom`;
+    // 用互不重复的长串：序列化出口会去重（同词两遍在 NAI 里权重叠加），
+    // 这条用例要验的是「不截断」，所以锚点必须是唯一词构成的长串。
+    const long = `1girl, ${Array.from({ length: 60 }, (_, i) => `detail${i}`).join(', ')}, classroom`;
     const note = buildSlotTaskNote([tag(long), tag('cat')].join('\n'), 0);
     expect(note).toContain('这一张当前的提示词');
     // 锚点是要模型逐字对照的,必须全文带上——被截断就等于让它猜画面

@@ -138,19 +138,10 @@ function normalizeAutoTagNumbers(changed?: 'minImages' | 'maxImages' | Event) {
   settings.autoTag.minImages = minImages;
   settings.autoTag.maxImages = maxImages;
   settings.autoTag.retryCount = Math.min(5, Math.max(0, Math.floor(Number(settings.autoTag.retryCount) || 0)));
-  // 素材库条数:夹在硬上限内,手填 999 会把副 API 上下文挤爆(服装 1~16、姿势 0~12)
+  // 素材库条数:夹在硬上限内,手填 999 会把副 API 上下文挤爆(服装 1~16)
   settings.autoTag.lore.wardrobeLimit = Math.min(
     16,
     Math.max(1, Math.floor(Number(settings.autoTag.lore.wardrobeLimit) || 1)),
-  );
-  settings.autoTag.lore.poseLimit = Math.min(
-    12,
-    Math.max(0, Math.floor(Number(settings.autoTag.lore.poseLimit) || 0)),
-  );
-  // 人物外貌条数:2~10。低于 2 时同人条目和脸型体型没法同时进候选。
-  settings.autoTag.lore.faceLimit = Math.min(
-    10,
-    Math.max(2, Math.floor(Number(settings.autoTag.lore.faceLimit) || 8)),
   );
 }
 

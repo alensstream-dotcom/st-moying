@@ -243,14 +243,16 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
   }
   if (!locked && entry.fields.hair) {
     // 剩下没被上面吃掉、单独出现的发型词（black ponytail 这种不带 hair 的写法）也归成
-    // 泛称。
+    // 泛称：nl 只留「她这里有一头头发」，具体发色发长由 tag 里的档案串说死。
     result = result.replace(
       /\b(?:(?:short|long|straight|curly|wavy|high|low|single|twin|side|black|blonde?|brown|silver|white|red|blue|pink)\s+){0,5}(?:ponytails?|twintails|twin tails|braids?|bob(?: cut)?|pixie cut|updo|hair buns?)\b/gi,
       'hairstyle',
     );
-    // 原句没写过头发时才在末尾补一句：写过就已经在上面替换掉了，重复追加会变成
-    // 「Fixed hairstyle: hairstyle, dark brown hair, hairstyle」。
-    if (!hadHair) result += ` Fixed hairstyle: ${entry.fields.hair}.`;
+    // 旧版在这里补一句 `Fixed hairstyle: …`（把档案串直接倒进 nl）。那是「模型只写 tag」时代
+    // 的兜底：nl 空着，外貌只能靠这句塞进提示词。现在外貌由 tag 承担
+    // （见 enforceAppearance 里 prompt.tag = unique([...canonical, ...dynamic])），
+    // 再往 nl 里倒档案串等于让同一份外貌在 tag 与 nl 里各说一遍，
+    // 模型也跟着学会「nl 就是复述 tag」——这正是双通道要治的病。
   }
   // Tags carry every fixed field. Keep the scene/action prose rather than replacing it with a profile dump.
   return result.replace(/\.{2,}/g, '.').replace(/\s+([.,])/g, '$1').replace(/\s{2,}/g, ' ').trim();

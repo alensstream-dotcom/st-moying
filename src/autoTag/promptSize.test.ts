@@ -45,9 +45,6 @@ const options: AutoTagSettings = {
     enabled: false,
     maxNsfw: 3,
     wardrobeLimit: 0,
-    poseLimit: 0,
-    faces: false,
-    faceLimit: 0,
     thumbModel: '',
     thumbIntervalMs: 10000,
   },
@@ -75,8 +72,12 @@ describe('输出预算护栏', () => {
     expect(text).not.toContain('⟪');
   });
 
-  it('完整版整体仍压得住(超过 45000 字符就该考虑再裁)', async () => {
+  // 上限从 45,000 提到 45,500(0.2.2):正文改为整块下发后多出一条「位置索引」表
+  // (每个可选位置一行 `P1 · 首句`),实测占约 100 字符。换来的是正文里不再插 ⟦P#⟧
+  // 折断对白;而 gemini 档同时从 30K 契约换成 4K 精简版,整体预算反而大降。
+  // 这里只钉「非 gemini 档的完整版别继续膨胀」,余量留 500 字符。
+  it('完整版整体仍压得住(超过 45500 字符就该考虑再裁)', async () => {
     const full = await buildAutoTagMessages(context(), 1, options, null);
-    expect(total(full)).toBeLessThan(45000);
+    expect(total(full)).toBeLessThan(45500);
   });
 });

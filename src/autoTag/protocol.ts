@@ -1,4 +1,5 @@
 import { normalizeOrientation, type Orientation } from '@/backends/size';
+import { normaliseLexiconTag } from '@/data/tagLexicon';
 import type { TargetSegment } from '@/autoTag/clean';
 import { normalizeAct, normalizeGiver, type ActGiver, type SexAct } from '@/autoTag/actTags';
 import { parseClothingChanges, type ClothingChange } from './outfitTimeline';
@@ -175,6 +176,43 @@ function sanitizeContent(value: unknown, field: string, index: number): string {
 }
 
 /**
+ * tag 去重：模型常把同一个词写两遍（`arched back` 出现两次、`blush` 又一遍），
+ * 重复项的权重在 NAI 里是叠加的，画面会被那一个概念拖走。只做「同词去重」，
+ * 不改词形、不排序——顺序是模型表达重点的手段。
+ */
+function dedupeTagText(value: string): string {
+  if (!value) return value;
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const piece of value.split(',')) {
+    const tag = piece.trim().replace(/\s+/g, ' ');
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(tag);
+  }
+  return normaliseLexiconTag(kept.join(', '));
+}
+
+/** CJK 字面量：nl 只吃英文，中文/日文会让 T5 退化成字节级 token（>3 倍开销且读不懂）。 */
+const CJK_CHAR = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+/**
+ * nl 专用清洗：规范要求 nl 一律英文，模型偶尔整句写中文。
+ *
+ * 这里只清空该字段、不抛错——中文 nl 发出去是纯负收益（预算翻几倍、画面还读不准），
+ * 退回纯 tag 至少画面成立；而为了让这一楼的图还在，不能因为它丢图或丢角色。
+ */
+function sanitizeNl(value: unknown, field: string, index: number): string {
+  const text = sanitizeContent(value, field, index);
+  if (!text) return '';
+  if (!CJK_CHAR.test(text)) return text;
+  console.warn(`[墨影] images[${index}].${field} 含中文/日文，整段丢弃（NAI 只吃英文 nl）`);
+  return '';
+}
+
+/**
  * 画面落点：收 "A1".."E5" 网格、也收 {x,y}；越界夹到 0.1—0.9。
  * 解不出来返回 undefined（调用方保持旧行为，落在正中）。
  * 实现放在 imageTagRegex（存储格式那一侧），这里 re-export 给外部调用方。
@@ -190,8 +228,8 @@ function sanitizeCharacters(value: unknown, imageIndex: number): ImageCharacterP
     const item = raw as Record<string, unknown>;
     try {
       const name = sanitizeContent(item.name, `characters[${index}].name`, imageIndex);
-      const tag = sanitizeContent(item.tag ?? item.prompt, `characters[${index}].tag`, imageIndex);
-      const nl = sanitizeContent(item.nl, `characters[${index}].nl`, imageIndex);
+      const tag = dedupeTagText(sanitizeContent(item.tag ?? item.prompt, `characters[${index}].tag`, imageIndex));
+      const nl = sanitizeNl(item.nl, `characters[${index}].nl`, imageIndex);
       if (name && tag) {
         const center = readCenter(item.center ?? item.position_in_frame ?? item.at);
         characters.push(center ? { name, tag, nl, center } : { name, tag, nl });
@@ -332,9 +370,9 @@ export function parseImagePlan(
       }
       const sourceLine = segment.sourceLine;
       // 兼容模型按旧协议/习惯返回 prompt 键的情况
-      const tag = sanitizeContent(entry.tag ?? entry.prompt, 'tag', index);
+      const tag = dedupeTagText(sanitizeContent(entry.tag ?? entry.prompt, 'tag', index));
       if (!tag) throw new Error('tag 为空');
-      const nl = sanitizeContent(entry.nl, 'nl', index);
+      const nl = sanitizeNl(entry.nl, 'nl', index);
       const negative = sanitizeContent(entry.negative ?? entry.negative_prompt, 'negative', index);
       const characters = sanitizeCharacters(entry.characters, index);
       // 兼容模型按习惯返回 orientation / aspect 键

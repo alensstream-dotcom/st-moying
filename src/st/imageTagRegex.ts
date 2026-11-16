@@ -1,3 +1,4 @@
+import { normaliseLexiconTag, stripBaseEcho } from '@/data/tagLexicon';
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import { getContext } from '@/st/context';
@@ -279,12 +280,27 @@ export function parseImageTagContent(raw: string): ImageTagContent {
  * size **恒写出**：生成是延后的(点卡片才出图)，方向必须随 tag 持久化在正文里。
  */
 export function serializeImageTag(content: ImageTagContent): string {
+  // 序列化是**唯一出口**：模型的原句在这里落成正文原文，所以规范化也放在这里，
+  // 而不是分散在解析、服装执行、外貌执行几处——那几处都会往 tag 里追加词
+  // （act 扩展、账本、外貌库），任何一处漏掉就会把 `long straight hair`、
+  // 重复的 `blush`、`upper body + full body` 写回楼层。
+  const characters = content.characters.map((character) => ({
+    ...character,
+    tag: normaliseLexiconTag(character.tag),
+  }));
+  // 单人图：Base 只留场景/机位/光线/人数，角色块已经写过的姿势与身体从 Base 剥掉。
+  const tag = normaliseLexiconTag(
+    stripBaseEcho(
+      content.tag,
+      characters.map((character) => character.tag),
+    ),
+  );
   const nl = content.nl ? `<nl>${content.nl}</nl>` : '';
   const negative = content.negative ? `<negative>${content.negative}</negative>` : '';
-  const characters = content.characters.length
-    ? `<characters>${JSON.stringify(content.characters)}</characters>`
+  const charactersBlock = characters.length
+    ? `<characters>${JSON.stringify(characters)}</characters>`
     : '';
-  return `<bbi_image>${content.tag}${nl}${negative}${characters}<size>${content.size}</size></bbi_image>`;
+  return `<bbi_image>${tag}${nl}${negative}${charactersBlock}<size>${content.size}</size></bbi_image>`;
 }
 
 /**

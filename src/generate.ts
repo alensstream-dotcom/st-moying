@@ -54,6 +54,7 @@ import {
   naiQualityTags,
   fullNegativePrompt,
 } from '@/backends/nai';
+import { warnIfOverBudget } from '@/backends/naiBudget';
 import { effectiveOrientation, parseSize, pickSize, type Orientation } from '@/backends/size';
 import { acquireNaiSlot } from '@/floor/genQueue';
 import type { GenerationMeta } from '@/generationMeta';
@@ -564,6 +565,9 @@ export async function generateImage(
       }
       if (subjectCount > 1 && referenceSet.length)
         appearanceNotes.push('多人画面：人物骨架仍以文字 tag 为准，参考图只做脸与发型锚定');
+      // 4.5 的 512 token 是 base + 全部 char_captions 共享的，超了静默截尾。
+      // 只量不改：内容纪律在规范与 clampNlWords，这里留下现场供排查缺角色/丢句。
+      warnIfOverBudget(naiConn, input.prompt, input.nl ?? '', characters);
       const output = await generateNaiImage(
         naiConn,
         // characters 原样透传:不支持的模型由 buildNaiParameters 自己滤掉(同一口径

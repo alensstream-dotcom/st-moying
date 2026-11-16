@@ -68,7 +68,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts({ jailbreak: '被忽略的旧附加词' }),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -108,7 +108,9 @@ describe('auto tag prompt', () => {
     expect(user.content).toContain('【角色固定外貌库】[system-maintained; currently empty]');
     expect(user.content).toContain('当前为空，没有任何角色已建档');
     expect(user.content).not.toContain('上一层');
-    expect(user.content).toContain('目标第一行 ⟦P1⟧\n\n目标第三行 ⟦P2⟧');
+    expect(user.content).toContain('目标第一行\r\n\r\n目标第三行');
+    expect(user.content).toContain('P1 · 目标第一行');
+    expect(user.content).toContain('P2 · 目标第三行');
     expect(user.content).not.toContain('[L0001]');
     expect(messages.some(message => message.content.includes('"position"'))).toBe(true);
   });
@@ -122,7 +124,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -141,7 +143,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(
@@ -150,14 +152,15 @@ describe('auto tag prompt', () => {
       options,
       null,
       {
-        promptText: '请求开始时的正文快照 ⟦P9⟧',
+        promptText: '请求开始时的正文快照',
+        anchorIndex: 'P9 · 请求开始时的正文快照',
         segments: [{ id: 'P9', sourceLine: 7, charOffset: 0, text: '请求开始时的正文快照' }],
       },
     );
     const user = messages[messages.length - 1];
 
-    expect(user.content).toContain('请求开始时的正文快照 ⟦P9⟧');
-    expect(user.content).not.toContain('目标第一行 ⟦P1⟧');
+    expect(user.content).toContain('请求开始时的正文快照');
+    expect(user.content).not.toContain('目标第一行');
   });
 
   it('counts context by AI floors, keeps interleaved user floors, and preserves prior image tags', async () => {
@@ -187,7 +190,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
 
@@ -209,7 +212,7 @@ describe('auto tag prompt', () => {
     expect(user.content).not.toContain('状态栏');
     expect(user.content).not.toContain('尾部状态');
     expect(user.content).not.toContain('上下文楼层');
-    expect(user.content).toContain('当前目标楼 ⟦P1⟧');
+    expect(user.content).toContain('当前目标楼');
     expect(user.content).not.toContain('上一个 AI 楼 ⟦P');
   });
 
@@ -222,7 +225,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -327,7 +330,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts({ comfyThinking: '自定义清单' }),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -349,7 +352,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts({
         comfyThinking: 'COMFY-CHECKLIST',
         naiThinking: 'NAI-CHECKLIST',
@@ -401,7 +404,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -475,7 +478,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -539,7 +542,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -610,7 +613,7 @@ describe('auto tag prompt', () => {
         retryCount: 1,
         autoGenerate: true,
         jailbreakTier: 'strong',
-        lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+        lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
         prompts: prompts(),
       };
       const oldBackend = settings.defaultBackend;
@@ -663,7 +666,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -705,7 +708,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -748,7 +751,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const library = '【角色固定外貌库(系统维护)】\n小雪: 1girl, long silver hair';
@@ -774,7 +777,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -793,7 +796,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(
@@ -820,7 +823,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -857,7 +860,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -894,7 +897,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -934,7 +937,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
@@ -970,7 +973,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -1014,7 +1017,7 @@ describe('auto tag prompt', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(),
     };
     const oldBackend = settings.defaultBackend;
@@ -1079,7 +1082,7 @@ describe('NAI「生成自然语言」开关与渠道画幅锁', () => {
       retryCount: 1,
       autoGenerate: true,
       jailbreakTier: 'strong',
-      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, poseLimit: 6, faces: true, faceLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
+      lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts(overrides),
     };
   }
@@ -1292,9 +1295,6 @@ describe('素材候选摇号与同职业区分', () => {
         enabled: true,
         maxNsfw: 3,
         wardrobeLimit: 8,
-        poseLimit: 6,
-        faces: true,
-        faceLimit: 8,
         thumbModel: '',
         thumbIntervalMs: 10000,
       },
@@ -1457,9 +1457,6 @@ describe('思考块预算上限', () => {
         enabled: false,
         maxNsfw: 3,
         wardrobeLimit: 0,
-        poseLimit: 0,
-        faces: false,
-        faceLimit: 0,
         thumbModel: '',
         thumbIntervalMs: 10000,
       },
@@ -1541,9 +1538,6 @@ describe('gemini 档把正文与账本挪进 system', () => {
         enabled: true,
         maxNsfw: 3,
         wardrobeLimit: 8,
-        poseLimit: 6,
-        faces: true,
-        faceLimit: 8,
         thumbModel: '',
         thumbIntervalMs: 10000,
       },

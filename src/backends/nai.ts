@@ -5,6 +5,7 @@ import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import type { ComfyImageResult } from '@/backends/comfyui';
 import { parseRetryAfter, runNaiWithRetry, type NaiRetryInfo } from '@/backends/naiRateLimit';
 import { parseSize, pickSize, type Orientation } from '@/backends/size';
+import { normaliseLexiconTag } from '@/data/tagLexicon';
 import { clampVibeStrength, loadVibeData } from '@/backends/vibeStore';
 import type { GenerationArtist, GenerationMeta, GenerationParams, GenerationVibe } from '@/generationMeta';
 import type { NaiArtistPreset, NaiSettings, NaiVibe, NaiVibeData, NaiVibeEncodings } from '@/state/settings';
@@ -394,12 +395,61 @@ export function naiUndesiredContent(nai: NaiSettings): string {
  * 顺序固定为 画师串 → 画面 → 质量词 → 画风锚:锚是最后一道保险,分量排在质量词之后,
  * 同时又在 nl 之前(它属于 tag 段)。
  */
+/**
+ * tag 段去重：模型与后处理都会重复追加同一个词（`arched back` 两次、`blush` 又一遍），
+ * NAI 会把重复项的权重叠上去，画面被那一个概念拖走。这里做最后一道同词去重，
+ * 不改词形、不排序——顺序仍是模型表达重点的手段。
+ */
+function dedupeTags(text: string): string {
+  if (!text) return text;
+  // 发送前的最后一道：拆合成词（long straight hair → long hair, straight hair）、
+  // 景别只留一个、同词去重。老楼层里存下来的 tag 也会在这里被纠正。
+  return normaliseLexiconTag(text);
+}
+
+
 export function fullPositivePrompt(nai: NaiSettings, prompt: string, nl = ''): string {
   const artist = naiArtistPrompt(nai);
   const quality = naiQualityTags(nai);
   const style = naiStyleAnchor(nai);
-  const tags = [artist, prompt.trim(), quality, style].filter(Boolean).join(', ');
-  return naiSupportsCharacterPrompts(nai.model) && nl.trim() ? `${tags}. ${nl.trim()}` : tags;
+  const tags = [artist, dedupeTags(prompt.trim()), quality, style].filter(Boolean).join(', ');
+  const baseNl = clampNlWords(nl, BASE_NL_MAX_WORDS);
+  return naiSupportsCharacterPrompts(nai.model) && baseNl ? `${tags}. ${baseNl}` : tags;
+}
+
+/**
+ * nl 词数上限。规范（DEFAULT_NAI_V5_SPEC 第 6 条）写的是 Base ≤20 词、角色 ≤26 词，
+ * 这里各留一点余量：截断只该发生在模型失控时，不该把合规的句子削掉。
+ *
+ * 4.5 的提示词预算是 base + 全部 char_captions 共享的 ~512 T5 tokens，超了 NAI
+ * 不报错、直接从尾部静默丢弃——多写一句就少一个角色块。所以长度是硬约束，
+ * 与「写得好不好」分开管：规范负责让它写对，这里负责让它写不超。
+ */
+const BASE_NL_MAX_WORDS = 24;
+const CHAR_NL_MAX_WORDS = 30;
+
+/**
+ * 把 nl 截到词数上限以内：优先整句保留，一句本身超限才按词硬截。
+ * 只在超限时动手，合规的句子原样返回。
+ */
+export function clampNlWords(nl: string, maxWords: number): string {
+  const text = (nl ?? '').trim().replace(/\s+/g, ' ');
+  if (!text) return '';
+  if (text.split(' ').length <= maxWords) return text;
+  const sentences = text.match(/[^.!?]+[.!?]+/g) ?? [text];
+  const kept: string[] = [];
+  let words = 0;
+  for (const raw of sentences) {
+    const sentence = raw.trim();
+    const count = sentence.split(' ').filter(Boolean).length;
+    if (!count) continue;
+    if (words + count > maxWords) break;
+    kept.push(sentence);
+    words += count;
+  }
+  const result = kept.length ? kept.join(' ') : `${text.split(' ').slice(0, maxWords).join(' ')}.`;
+  console.warn(`[墨影] nl 超长已截断（上限 ${maxWords} 词）：${text.length} 字符 → ${result.length} 字符`);
+  return result;
 }
 
 /**
@@ -416,7 +466,7 @@ export function spreadCenters(characters: ReadonlyArray<ImageCharacterPrompt>): 
 
 function characterCaption(character: ImageCharacterPrompt): string {
   // Character Prompts identify one subject: library count tags (1girl/1boy) become girl/boy here.
-  const tag = character.tag
+  const tag = dedupeTags(character.tag)
     .split(',')
     .map((part) => {
       const value = part.trim();
@@ -426,7 +476,7 @@ function characterCaption(character: ImageCharacterPrompt): string {
     })
     .filter(Boolean)
     .join(', ');
-  return character.nl.trim() ? `${tag}. ${character.nl.trim()}` : tag;
+  return character.nl.trim() ? `${tag}. ${clampNlWords(character.nl, CHAR_NL_MAX_WORDS)}` : tag;
 }
 
 /**

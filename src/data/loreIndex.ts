@@ -5,7 +5,7 @@ import { compatibleCostumeMaterial, type CostumeContext } from '@/autoTag/costum
  * 素材库召回层(loreIndex):把「正文 + 设置」压成一段能直接塞进 prompt 的候选清单。
  *
  * 分层:
- * - wardrobe.ts / poseBank.ts / faceBank.ts 只存数据(款式指纹);
+ * - wardrobe.ts / poseBank.ts 只存数据(款式指纹);
  * - loreMatch.ts 只做打分排序;
  * - 本文件负责「召回策略 + 渲染成给模型看的文字」,是唯一被 autoTag 调用的入口。
  *
@@ -22,16 +22,11 @@ import { compatibleCostumeMaterial, type CostumeContext } from '@/autoTag/costum
  */
 
 import { WARDROBE_CATEGORIES, WARDROBE_ITEMS } from '@/data/wardrobe';
-import { POSE_CATEGORIES, POSE_ITEMS } from '@/data/poseBank';
-import { BODY_PRESETS, FACE_PRESETS, FANDOM_PRESETS } from '@/data/faceBank';
-import { BODY_EXTRA, FACE_EXTRA, FANDOM_EXTRA } from '@/data/faceExtra';
-import { FANDOM_EXTRA_2 } from '@/data/fandomExtra2';
+import { POSE_ITEMS } from '@/data/poseBank';
+
 import { scoreLore } from '@/data/loreMatch';
-import { LOOK_DIMENSION_LABEL, compareLook, isLookPin, lookTextOf, scanLook } from '@/data/lookMatch';
 import { customFandom, customPoses, customWardrobe } from '@/data/customLore';
 import type {
-  BodyPreset,
-  FacePreset,
   FandomPreset,
   LoreItemBase,
   NsfwLevel,
@@ -45,12 +40,6 @@ export interface LoreOptions {
   maxNsfw?: NsfwLevel;
   /** 服装候选条数上限,默认 8。 */
   wardrobeLimit?: number;
-  /** 姿势候选条数上限,默认 6。 */
-  poseLimit?: number;
-  /** 是否召回人物外貌指纹;默认开(含同人骨相)。 */
-  faces?: boolean;
-  /** 人物外貌候选条数上限,默认 8。 */
-  faceLimit?: number;
   /** 角色气质词,用于给对味条目加权。 */
   vibes?: string[];
   /**
@@ -83,43 +72,9 @@ export interface LoreHit<T extends LoreItemBase> {
 
 export interface LoreCandidates {
   wardrobe: LoreHit<WardrobeItem>[];
-  poses: LoreHit<PoseEntry>[];
-  faces: LoreHit<FaceCard>[];
-}
-
-/** 人物指纹的三种来源:脸型 / 体型 / 同人角色。 */
-export type FaceCardKind = 'face' | 'body' | 'fandom';
-export type FaceCard = (FacePreset | BodyPreset | FandomPreset) & {
-  kind: FaceCardKind;
-};
-
-/**
- * 三类人物预设拼成一张表。
- *
- * 为什么不直接把 three tables 塞进 pickDiverse:命中词不同来源不同(「清冷」是脸型词,
- * 「精灵」是同人词),拼在一起后 categoryOf 用 kind 区分,配额就自然按三类分。
- */
-export const FACE_CARDS: FaceCard[] = [
-  ...[...FACE_PRESETS, ...FACE_EXTRA].map((preset) => ({
-    ...preset,
-    kind: 'face' as const,
-  })),
-  ...[...BODY_PRESETS, ...BODY_EXTRA].map((preset) => ({
-    ...preset,
-    kind: 'body' as const,
-  })),
-  ...[...FANDOM_PRESETS, ...FANDOM_EXTRA, ...FANDOM_EXTRA_2].map((preset) => ({
-    ...preset,
-    kind: 'fandom' as const,
-  })),
-];
-
-export function allFaceCards(): FaceCard[] {
-  return [...FACE_CARDS, ...customFandom().map((m) => ({ ...m, kind: 'fandom' as const }))];
 }
 
 const WARDROBE_CATEGORY_LABEL = new Map<string, string>(WARDROBE_CATEGORIES.map((c) => [c.id, c.label]));
-const POSE_CATEGORY_LABEL = new Map<string, string>(POSE_CATEGORIES.map((c) => [c.id, c.label]));
 
 /**
  * 按「命中类别数」自适应配额挑选:分数降序,同类别累计不超过 perCat。
@@ -194,212 +149,10 @@ function tieBreaker(seed: number): (id: string) => number {
   };
 }
 
-/**
- * 人物外貌召回。
- *
- * 与服装/姿势的三点不同,每一点都对着「同人角色从来没被抽到过」这个现象:
- *
- * 1. **三类各给配额,不再共用 pickDiverse。** 原先 face/body/fandom 三类塞进同一个
- *    pickDiverse,categoryOf 返回 kind,≥3 类时 perCat 被压到 2,faces 的 limit 又只有 4
- *    —— 脸型、体型、同人互相挤,同人几乎排不进来(它分数还常常最低)。
- *    现在脸型/体型各 2~3 条,同人单独给 3~4 条。
- * 2. **同人不必等正文点名作品。** 原先块头写「同人角色只在正文明确指向该作品的该角色时使用」,
- *    而正文几乎从不写作品名,模型当然一次都不选。现在同人条目靠三类线索召回:
- *    点名(aliases 里的角色名/作品名,最高分)、气质词(vibe)、外形容貌词(hair/eyes 词对得上
- *    正文写的发色瞳色),并在渲染时按命中类型分开写用法。
- * 3. **同人条目的 tags 自带权重语法 `0.6::xxx::`。** 命中时原样照抄即可,权重由库里定,
- *    不靠模型自己拿捏「像到什么程度」。
- */
-function collectFaceCandidates(body: string, options: LoreOptions): LoreHit<FaceCard>[] {
-  const limit = Math.max(0, options.faceLimit ?? 8);
-  if (!limit) return [];
-  const maxNsfw = options.maxNsfw ?? 3;
-  const vibes = options.vibes ?? [];
-  const picked: LoreHit<FaceCard>[] = [];
-  // 同分次序:有种子时按种子摇号,没种子(0)时退回 id 字典序(与 pickDiverse 同口径)
-  const rollSeed = options.rollSeed ?? 0;
-  const tieOrder = tieBreaker(rollSeed);
-  const tie = (a: string, b: string): number => (rollSeed ? tieOrder(a) - tieOrder(b) : a.localeCompare(b));
-
-  // 同人:外形重合 > 点名 > 气质 > 外形词。
-  //
-  // 外形重合排在最前是刻意的:正文把角色写成「银白长发、紫瞳、尖耳精灵」时,库里有条一模一样的
-  // 骨相,那就不该让模型再凭空编一张脸——命中维度够多且无冲突时打 pinned,顶到第一位。
-  // 点名其次:只写了名字没写外形时,同人条目照样是这张脸的底子。
-  const fandom: LoreHit<FaceCard>[] = [];
-  const hay = body.toLowerCase();
-  const bodyLook = scanLook(body);
-  for (const card of allFaceCards()) {
-    if (card.kind !== 'fandom' || card.nsfw > maxNsfw) continue;
-    const preset = card as FandomPreset;
-    const franchise = (preset.franchise ?? '').trim();
-    // 只有「不是泛词」的命中才算点名:同人表里也有 长发 / 精灵 / 人妻 这类泛词,
-    // 把它们当点名会让 direct 永远成立,「正文点名」与「只是外形撞上」就分不开了。
-    const named = preset.aliases.filter(
-      (alias) => alias.length >= 2 && body.includes(alias) && !GENERIC_ALIASES.has(alias),
-    );
-    const direct = named.length > 0 || (franchise.length >= 2 && hay.includes(franchise.toLowerCase()));
-    const { score, hits } = scoreLore(card, body, vibes);
-    // 没有点名时,正文的发色/瞳色与条目的 hair/eyes 对得上也算线索:
-    // 「白色长发」这种写法在正文里很常见,而 aliases 里只有人名和作品名,永远撞不上。
-    // 这一类只给弱分(3/词),保证它排在任何真人名命中之后,但足以让同人条目进候选。
-    const looks = looksLike(card, hay);
-    // 外形多维重合:与「对上一两个色词」是两件事,单独算一份并压过一切。
-    const look = compareLook(bodyLook, scanLook(lookTextOf(card)));
-    const pinned = isLookPin(look);
-    // 注意用 looks.length:空数组是 truthy,写 !looks 会让零线索的条目混进来(分数还是 0)。
-    if (!score && !looks.length && !pinned) continue;
-    // 点名命中直接抬到最高档:正文写了「碧蓝档案」就该优先给它的人,而不是同分的路人骨相。
-    // 只对上报色瞳色的给弱分(每词 3 分),够进候选但排在点名之后。
-    // pinned 再压一层(命中维度越多越高),外形写得越具体越该照抄库里的,而不是自己编。
-    const base = direct ? score + 100 : score || looks.length * 3;
-    const finalScore = pinned ? base + 200 + look.matched * 10 : base;
-    fandom.push({
-      item: card,
-      score: finalScore,
-      hits: looks ? [...hits, ...looks] : hits,
-      category: 'fandom',
-      direct,
-      pinned,
-      lookNote: pinned
-        ? look.dimensions.map((dimension) => LOOK_DIMENSION_LABEL[dimension]).join('、')
-        : undefined,
-    });
-  }
-  fandom.sort(
-    (a, b) => b.score - a.score || (a.direct === b.direct ? tie(a.item.id, b.item.id) : a.direct ? -1 : 1),
-  );
-
-  // 脸型与体型:正文写了气质/外形词才召回,与原先口径一致。
-  const byKind = (kind: FaceCardKind): LoreHit<FaceCard>[] => {
-    const scored: LoreHit<FaceCard>[] = [];
-    for (const card of allFaceCards()) {
-      if (card.kind !== kind || card.nsfw > maxNsfw) continue;
-      const { score, hits } = scoreLore(card, body, vibes);
-      if (score > 0) scored.push({ item: card, score, hits, category: kind });
-    }
-    // 同分摇号同样要作用在这里:脸型/体型的库大、同分极多,不摇号的话
-    // 「清冷」永远只出同一张脸,用户看到的是每个新角色长一个样。
-    scored.sort((a, b) => b.score - a.score || tie(a.item.id, b.item.id));
-    return scored;
-  };
-
-  // 同人先占位:有 pinned / direct 命中时给 4 条(多个同人同框的场合够用),
-  // 只有气质/外形擦边时给 2 条,把位置让给脸型体型。
-  const directHit = fandom.some((hit) => hit.direct || hit.pinned);
-  const fandomLimit = directHit ? Math.min(4, limit) : Math.min(2, limit);
-  picked.push(...fandom.slice(0, fandomLimit));
-
-  const rest = limit - picked.length;
-  if (rest > 0) {
-    // 没有同人命中时,脸型 + 体型才能补满;有同人时每类各留 1~2 条做底。
-    const perKind = directHit ? Math.max(1, Math.floor(rest / 2)) : Math.ceil(rest / 2);
-    picked.push(...byKind('face').slice(0, perKind));
-    picked.push(...byKind('body').slice(0, limit - picked.length));
-  }
-
-  // 兜底:一条都没召回时不能给空块。
-  //
-  // 正文只写「蓝发黄瞳」这种纯色描述时,气质词一个都没有,而同人表里又恰好没有
-  // 蓝发黄瞳的组合,上面两步就全军覆没——模型拿到的是空候选,只能自己编。
-  // 此时按摇号顺序塞几条脸型/体型当底子,总比空块强;它们没命中词,渲染时也不会
-  // 被说成「正文点名」,只是「挑一条最近的」。
-
-  return picked.slice(0, limit);
-}
-
-/**
- * 正文的发色/瞳色是否与条目的 hair/eyes 对得上。
- *
- * 只在正文里**同时**出现那份发色和瞳色时才给分(两条都要,只对上一条太容易),
- * 每条按 3 分计——低于任何一个真人名命中的长度分,所以它永远排在点名之后,
- * 只用来「填满候选」,不会把正文点名的角色顶掉。
- *
- * 正文通常是中文(「白色长发」「紫瞳」),所以颜色要按中文词表比对英文词;
- * 只认颜色名,不认长度与发质,避免 long hair 撞上「长」这种满篇都有的字。
- */
-function looksLike(card: FaceCard, hay: string): string[] {
-  if (card.kind !== 'fandom') return [];
-  const preset = card as FandomPreset;
-  const colors = (text: string): string[] =>
-    text
-      .toLowerCase()
-      .split(/[,，]/)
-      .flatMap((part) => part.replace(/\b(hair|eyes)\b/g, ' ').split(/\s+/))
-      .map((color) => COLOR_ALIASES[color] ?? color)
-      .filter((color) => color && color.length >= 2);
-  const hair = colors(preset.hair ?? '');
-  const eyes = colors(preset.eyes ?? '');
-  if (!hair.length || !eyes.length) return [];
-  // 发色与瞳色必须各自命中,而且不能是同一个色(白毛紫瞳对得上,白毛蓝瞳也对不上)。
-  const hairHit = hair.find((color) => hay.includes(color));
-  const eyeHit = eyes.find((color) => hay.includes(color));
-  if (!hairHit || !eyeHit) return [];
-  return [hairHit, eyeHit];
-}
-
-/**
- * 泛词:同人表里也收了一堆这类别名,不能当「正文点名了这个人」的证据。
- * 判据是「这个词套在任何角色身上都成立」——长发、精灵、人妻、弟子都是。
- */
-const GENERIC_ALIASES = new Set([
-  '长发',
-  '短发',
-  '银发',
-  '金发',
-  '黑发',
-  '白发',
-  '精灵',
-  '人妻',
-  '弟子',
-  '大魔法使',
-  '学生',
-  '少女',
-  '姐姐',
-  '恶魔',
-  '天使',
-  '女仆',
-  '骑士',
-  '巫女',
-  '修女',
-  '会长',
-  '社长',
-]);
-
-/**
- * 颜色词的英文 → 中文近似写法。只为比对正文用,不影响写进 tag 的词。
- * 收常见发色瞳色;另外把相近色并到同一组,免得「白发」对不上 white 之外的 silver。
- */
-const COLOR_ALIASES: Record<string, string> = {
-  white: '白',
-  silver: '银',
-  blonde: '金',
-  golden: '金',
-  black: '黑',
-  brown: '棕',
-  red: '红',
-  pink: '粉',
-  purple: '紫',
-  violet: '紫',
-  lilac: '紫',
-  lavender: '紫',
-  blue: '蓝',
-  azure: '蓝',
-  green: '绿',
-  orange: '橙',
-  grey: '灰',
-  gray: '灰',
-  cyan: '青',
-  turquoise: '青',
-  teal: '青',
-  multicolored: '挑染',
-  streaked: '挑染',
-};
-
-/** 服装 + 姿势 + 人物外貌一次召回。正文为空/无命中时对应数组为空。 */
+/** 衣橱候选召回。正文为空/无命中时返回空数组。 */
 export function collectLoreCandidates(text: string, options: LoreOptions = {}): LoreCandidates {
   const body = (text ?? '').trim();
-  if (!body) return { wardrobe: [], poses: [], faces: [] };
+  if (!body) return { wardrobe: [] };
   return {
     wardrobe: pickDiverse(
       suitLibrary().filter(
@@ -418,8 +171,6 @@ export function collectLoreCandidates(text: string, options: LoreOptions = {}): 
         rollSeed: options.rollSeed,
       },
     ),
-    poses: [],
-    faces: [],
   };
 }
 

@@ -145,10 +145,19 @@ export interface TargetSegment {
 }
 
 export interface PreparedTargetText {
-  /** 带段尾位置 ID 的目标正文。 */
+  /** 目标正文原文(整块下发,不插任何标记)。 */
   promptText: string;
   /** 位置 ID 到原始物理行的稳定映射。 */
   segments: TargetSegment[];
+  /**
+   * 独立定位表:每个位置 ID 对应的原文片段(用于 after 引用与落位)。
+   *
+   * 正文里不再插 ⟦P#⟧ 标记。原因:标记按物理行尾追加,一句跨行的对白会被
+   * 从中间折断(实机抓包里出现过 `“林夏，这道题你在黑板上写一遍。 ⟦P4⟧`),
+   * 模型读到的不是原文。定位表把「哪一段」与「正文长什么样」拆开,
+   * 正文保持原样,模型照抄 after 时也不会把标记抄进字段值。
+   */
+  anchorIndex: string;
 }
 
 function rangesForRegex(source: string, pattern: RegExp): RemovalRange[] {
@@ -349,9 +358,57 @@ export function prepareTargetText(mes: string, tags: string[]): PreparedTargetTe
     .filter((segment) => !!segment.text)
     .map((segment, index) => ({ id: `P${index + 1}`, ...segment }));
   return {
-    promptText: segments.map((segment) => `${segment.text} ⟦${segment.id}⟧`).join('\n\n'),
+    // 整块下发:同一物理行内的片段直接拼回该行(原文一字不改),行与行之间空一行。
+    promptText: assembleTargetText(segments),
     segments,
+    anchorIndex: anchorIndexText(segments),
   };
+}
+
+/**
+ * 把句子级片段拼回原文段落。
+ *
+ * 片段是「行内一句话」粒度(落位需要这么细),但下发给模型的正文必须是**原样段落**:
+ * 一句一段地发,模型读到的是被切碎的残句(实机里它对着一堆独立短句开始编动作)。
+ * 同一物理行的片段直接拼回该行,行与行之间空一行,与原文排版一致。
+ */
+function assembleTargetText(segments: readonly TargetSegment[]): string {
+  const lines: string[] = [];
+  let currentLine = -1;
+  for (const segment of segments) {
+    if (segment.sourceLine === currentLine) lines[lines.length - 1] += segment.text;
+    else {
+      lines.push(segment.text);
+      currentLine = segment.sourceLine;
+    }
+  }
+  return lines.join('\n\n');
+}
+
+/**
+ * 独立定位表。每行给出「位置 ID · 首句摘要」,上限 {@link ANCHOR_INDEX_ROWS} 行。
+ *
+ * 摘要取该段开头到第一个句读为止,超过 24 字截断——模型只要认出「after 该抄哪一句」,
+ * 不需要读全段(全段就在它正上方的正文里)。行数有上限是因为长楼可能有上百个片段,
+ * 表一长就挤掉正文,反而回到「模型只看表不看故事」。
+ */
+const ANCHOR_INDEX_ROWS = 60;
+
+export function anchorIndexText(segments: readonly TargetSegment[]): string {
+  if (!segments.length) return '';
+  const rows = segments.slice(0, ANCHOR_INDEX_ROWS).map((segment) => {
+    const head = String(segment.text)
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(/[。！？；…!?;]/)[0]
+      .slice(0, 24);
+    return `${segment.id} · ${head}`;
+  });
+  const more =
+    segments.length > ANCHOR_INDEX_ROWS
+      ? `\n（只列前 ${ANCHOR_INDEX_ROWS} 个位置；更后面的位置照同一规则顺延编号，不必强行引用）`
+      : '';
+  return rows.join('\n') + more;
 }
 
 /** 不带位置标记的目标清洗结果，供调试/测试查看。 */

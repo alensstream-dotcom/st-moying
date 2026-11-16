@@ -22,13 +22,25 @@ describe('紧缩契约只在 gemini 档启用', () => {
   });
 });
 
-describe('紧缩契约砍掉的字段与保留的结构', () => {
-  it.each(['nl', 'identities', 'outfitChanges', 'costumeContexts'])('禁止输出 %s', (key) => {
+describe('紧缩契约与双通道设计一致（nl 必须由模型写）', () => {
+  it.each(['nl', 'identities', 'outfitChanges', 'costumeContexts'])('输出结构里出现 %s', (key) => {
     expect(COMPACT_PLAN_CONTRACT).toContain(key);
+    expect(COMPACT_PLAN_CONTRACT_LOOSE).toContain(key);
   });
 
-  it('明确写出「不要输出」', () => {
-    expect(COMPACT_PLAN_CONTRACT).toContain('不要输出');
+  // 旧版紧缩契约写着「不要输出 nl、不要写任何自然语言句子」，与新设计的
+  // 「tag 管可枚举项、nl 管不可枚举项」正面打架：同一份请求里两套契约互斥，
+  // 模型只能二选一，实测表现为画面回到纯 tag 的模板照。
+  it('不再禁止模型写 nl', () => {
+    expect(COMPACT_PLAN_CONTRACT).not.toContain('不要输出 nl');
+    expect(COMPACT_PLAN_CONTRACT).not.toContain('不要写任何自然语言句子');
+    expect(COMPACT_PLAN_CONTRACT_LOOSE).not.toContain('不要输出 nl');
+    expect(COMPACT_PLAN_CONTRACT_LOOSE).not.toContain('不要写任何自然语言句子');
+  });
+
+  it('两份契约都要求 nl 只写一句', () => {
+    expect(COMPACT_PLAN_CONTRACT).toContain('一句英文自然语言');
+    expect(COMPACT_PLAN_CONTRACT_LOOSE).toContain('一句英文自然语言');
   });
 });
 
@@ -106,9 +118,10 @@ describe('按模型拆档（3.x 严 / 4 系松）', () => {
     expect(bansExplicitWords('gemini', 'gemini-4-hydrogen-原生1M防外审注入不支持工具')).toBe(false);
   });
 
-  it('宽松版允许写身体状态词（否则 NSFW 剧情会被压成 SFW 图）', () => {
-    expect(COMPACT_PLAN_CONTRACT_LOOSE).toContain('nude');
-    expect(COMPACT_PLAN_CONTRACT_LOOSE).toContain('breasts out');
+  // 宽松版不摆「禁止写」清单（严格版那种清单本身就是上游的拦截素材），
+  // 但它仍允许写「正文里确实发生的衣物状态」，只是把器官名与行为词交给 act 补齐。
+  it('宽松版不设禁止写清单，但保留衣物状态口径', () => {
     expect(COMPACT_PLAN_CONTRACT_LOOSE).not.toContain('禁止写');
+    expect(COMPACT_PLAN_CONTRACT_LOOSE).toContain('衣物状态');
   });
 });

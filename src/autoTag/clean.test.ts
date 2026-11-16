@@ -82,11 +82,12 @@ describe('prompt body cleaning', () => {
 
   it('builds stable position IDs mapped to original physical lines', () => {
     expect(prepareTargetText(source, ['snow'])).toEqual({
-      promptText: `第一段正文 ⟦P1⟧
+      anchorIndex: expect.any(String),
+      promptText: `第一段正文
 
-<bbi_image>1girl, silver hair<size>portrait</size></bbi_image> ⟦P2⟧
+<bbi_image>1girl, silver hair<size>portrait</size></bbi_image>
 
-第二段正文 ⟦P3⟧`,
+第二段正文`,
       segments: [
         { id: 'P1', sourceLine: 3, charOffset: 5, text: '第一段正文' },
         {
@@ -100,16 +101,31 @@ describe('prompt body cleaning', () => {
     });
   });
 
+  it('keeps the target text verbatim and publishes a separate position table', () => {
+    const prepared = prepareTargetText('第一句。第二句！\n\n第二段', []);
+    // 正文整块下发：不插任何位置标记，模型看到的是一字不改的原文
+    expect(prepared.promptText).toBe('第一句。第二句！\n\n第二段');
+    expect(prepared.promptText).not.toContain('⟦');
+    // 定位表按句读取首句摘要，行首是位置编号
+    const rows = prepared.anchorIndex.split('\n');
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toBe('P1 · 第一句');
+    expect(rows[1]).toBe('P2 · 第二句');
+    expect(rows[2]).toBe('P3 · 第二段');
+  });
+
   it('keeps inline prose on one mapped source line after removing a block', () => {
     expect(prepareTargetText('前文<snow>隐藏</snow>后文', ['snow'])).toEqual({
-      promptText: '前文 后文 ⟦P1⟧',
+      anchorIndex: expect.any(String),
+      promptText: '前文 后文',
       segments: [{ id: 'P1', sourceLine: 0, charOffset: 19, text: '前文 后文' }],
     });
   });
 
   it('removes a lone closing time tag from the target', () => {
     expect(prepareTargetText('正文\n</bbs_end>', [])).toEqual({
-      promptText: '正文 ⟦P1⟧',
+      anchorIndex: expect.any(String),
+      promptText: '正文',
       segments: [{ id: 'P1', sourceLine: 0, charOffset: 2, text: '正文' }],
     });
   });
@@ -125,9 +141,10 @@ second useful line
 <diary>tail content</diary>`;
 
     expect(prepareTargetText(text, [])).toEqual({
-      promptText: `first useful line \u27e6P1\u27e7
+      anchorIndex: expect.any(String),
+      promptText: `first useful line
 
-second useful line \u27e6P2\u27e7`,
+second useful line`,
       segments: [
         { id: 'P1', sourceLine: 4, charOffset: 17, text: 'first useful line' },
         { id: 'P2', sourceLine: 5, charOffset: 18, text: 'second useful line' },
@@ -142,7 +159,8 @@ second useful line \u27e6P2\u27e7`,
         ['snow'],
       ),
     ).toEqual({
-      promptText: '正文 ⟦P1⟧',
+      anchorIndex: expect.any(String),
+      promptText: '正文',
       segments: [{ id: 'P1', sourceLine: 2, charOffset: 2, text: '正文' }],
     });
   });

@@ -439,3 +439,13 @@ describe('JSON image-plan candidate selection', () => {
     expect(output).toBe('一句话。\n<bbi_image>fallback<size>portrait</size></bbi_image>');
   });
 });
+
+describe('tag dedupe', () => {
+  it('drops repeated tags while keeping order', () => {
+    const raw = JSON.stringify({
+      images: [{ position: 'P1', tag: '1girl, blush, arched back, blush, legs apart, Arched Back', nl: 'x' }],
+      changes: [],
+    });
+    expect(parseImagePlan(raw, segments, 1).images[0].tag).toBe('1girl, blush, arched back, legs apart');
+  });
+});

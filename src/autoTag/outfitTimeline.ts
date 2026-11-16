@@ -8,6 +8,7 @@ import { extractGarment, readOutfitState, readWear, BBI_OUTFIT_EXTRA_KEY } from 
 import { candidateAliasesForEntry, resolveCanonicalCharName } from './charReuse';
 import { isCollarToken, isPropToken, storyMentionsCollar, storyMentionsProp } from './props';
 import type { CharTagEntry } from '@/state/charTags';
+import { storyGarments } from './storyGarments';
 import type { STMessage } from '@/st/context';
 import { parseImageTagContent, parseImageTags, stripImageTags } from '@/st/imageTagRegex';
 
@@ -1113,12 +1114,26 @@ export function savedImageClothing(
   }
   return state;
 }
-const CLOTHING_WORD = /\b(?:dress|sundress|gown|wedding dress|evening gown|shirt|t-shirt|skirt|miniskirt|pleated skirt|pants|trousers|slacks|shorts|jeans|jacket|blazer|coat|raincoat|trench ?coat|windbreaker|overcoat|suit|tailcoat|armou?r|breastplate|chainmail|jersey|bra|bralette|sports bra|bustier|corset|panties|underwear|lingerie|babydoll|teddy|chemise|negligee|bodystocking|stockings|thighhighs|kneehighs|pantyhose|tights|fishnets|garter belt|garter straps?|harness|pasties|socks|shoes|boots|heels|sneakers|loafers|sandals|slippers|uniform|serafuku|sailor uniform|hanfu|hanbok|sari|kimono|yukata|robe|bathrobe|petticoat|crinoline|bustle|collar|sleeves?|clothes|clothing|outfit|sash|belt|cloak|cape|capelet|shawl|gloves|mittens|swimsuit|swimwear|bikini|monokini|tankini|apron|hoodie|sweater|pullover|cardigan|blouse|tunic|leotard|unitard|bodysuit|jumpsuit|playsuit|romper|overalls|dungarees|ruqun|hakama|yukata|obi|geta|miko|qipao|cheongsam|necktie|bow tie|bloomers|buruma|sarong|poncho|dudou|chest wrap|underpants|undergarment|pajamas|pyjamas|nightgown|nightdress|nightwear|sleepwear|housewear|thong|g-string|crotchless panties|crotchless bodysuit|boyshorts|boxers|trunks|tube top|camisole|tank top|crop top|halterneck|labcoat|maid outfit|maid uniform|nurse uniform|cheerleader outfit|bunny girl|nun habit|military uniform|catsuit|zentai|hosiery|mary janes|denim shorts|long jeans|wide-leg pants|cargo pants|pencil skirt|denim jacket|leather jacket|down jacket|bustier|teddy|lace lingerie)\b/i;
+const CLOTHING_WORD = /\b(?:dress|sundress|gown|wedding dress|evening gown|shirt|t-shirt|skirt|miniskirt|pleated skirt|pants|trousers|slacks|shorts|jeans|jacket|blazer|coat|raincoat|trench ?coat|windbreaker|overcoat|suit|tailcoat|armou?r|breastplate|chainmail|jersey|bra|bralette|sports bra|bustier|corset|panties|underwear|lingerie|babydoll|teddy|chemise|negligee|bodystocking|stockings|thighhighs|kneehighs|pantyhose|tights|fishnets|garter belt|garter straps?|harness|pasties|socks|shoes|boots|heels|sneakers|loafers|sandals|slippers|uniform|serafuku|sailor uniform|hanfu|hanbok|sari|kimono|yukata|robe|bathrobe|petticoat|crinoline|bustle|collar|sleeves?|clothes|clothing|outfit|sash|belt|cloak|cape|capelet|shawl|gloves|mittens|swimsuit|swimwear|bikini|monokini|tankini|apron|hoodie|sweater|pullover|cardigan|blouse|tunic|leotard|unitard|bodysuit|jumpsuit|playsuit|romper|overalls|dungarees|ruqun|hakama|yukata|obi|geta|miko|qipao|cheongsam|necktie|bow ?tie|neckerchief|sailor collar|neck ribbon|bloomers|buruma|sarong|poncho|dudou|chest wrap|underpants|undergarment|pajamas|pyjamas|nightgown|nightdress|nightwear|sleepwear|housewear|thong|g-string|crotchless panties|crotchless bodysuit|boyshorts|boxers|trunks|tube top|camisole|tank top|crop top|halterneck|labcoat|maid outfit|maid uniform|nurse uniform|cheerleader outfit|bunny girl|nun habit|military uniform|catsuit|zentai|hosiery|mary janes|denim shorts|long jeans|wide-leg pants|cargo pants|pencil skirt|denim jacket|leather jacket|down jacket|bustier|teddy|lace lingerie)\b/i;
 /** 戴在头上、脸上、脖子或腕上的饰物：归 appearance 的 extra，服装层不许把它当衣服剥掉。 */
 const BODY_ORNAMENT =
   /\b(?:hair ribbon|hair band|hairband|hairpin|hair clip|hair ornament|ribbon|\b(?:neck|choker|circlet|tiara|ankle|wrist) ?(?:lace|band|ribbon|chain|let|cuffs?)\b|glasses|mask|earrings?|earring|piercing|necklace|pendant|choker|bracelet|bangle|anklet|ring|beret|headband|veil|crown)/i;
 const WEAR_WORD = /\b(?:nude|naked|topless|bottomless|fully clothed|off shoulder|breasts out|undressed)\b/i;
 const CLOTHING_ACTION = /\b(?:holding|grabbing|pulling|lifting|tugging|unbuttoning|taking off|removing)\b/i;
+/**
+ * Base tag 只写「整幅画面共有」的东西。模型常把一个人的表情与视线塞进 Base
+ * （实测第 0 楼 Base 里同时出现 `looking down, closed mouth`，角色块里又写一遍），
+ * 同一个概念在 base_caption 与 char_caption 里各算一份权重，画面就被这一个概念拽走。
+ * 这里把表情、视线、口部状态从 Base 剥掉；`looking at another` 这类双人关系词保留。
+ */
+const BASE_PERSONAL =
+  /^(?:looking (?:away|down|up|to the side|back)|closed mouth|open mouth|parted lips|smile|light smile|sad smile|smirk|grin|frown|pout|blush|heavy blush|full-face blush|tears|streaming tears|sweat|sweatdrop|expressionless|emotionless|stare|blank stare|wide-eyed|half-closed eyes|closed eyes|one eye closed|wink|shy|embarrassed|nervous|worried|surprised|shocked|scared|angry|annoyed|disgust|sleepy|sigh|laughing|cheek bulge|clenched teeth|tongue out|licking lips|heart-shaped pupils|sparkling eyes|upturned eyes|seductive smile|naughty face|forced smile|evil smile|shivering|trembling|eye contact|ahegao)$/i;
+export function stripBasePersonal(tag: string): string {
+  const tokens = tag.split(',').map((t) => t.trim()).filter(Boolean);
+  if (!tokens.length) return tag;
+  return tokens.filter((t) => !BASE_PERSONAL.test(t)).join(', ');
+}
+
 export function isClothingDescription(value: string): boolean {
   // `hair ribbon` 命中 CLOTHING_WORD 里的 ribbon，但账本里没有它——早年就是这么被服装层
   // 剥掉的：档案 extra 写了发带，出图 prompt 里却没有。饰物归 appearance，服装层不碰。
@@ -2345,6 +2360,31 @@ export function adoptChangedClothing(
 }
 const LOCKED_WEAR_STATE =
   /\b(?:unbuttoned|unzipped|unfastened|undressing|disrobing|stripping|no panties|no bra|panties aside|pants down|skirt lift|breasts out|clothes down|clothes aside|clothes off|dress lift|shirt lift|slipped off|slipped down|taking off|removing clothes|lifting (?:dress|skirt|shirt)|pulling (?:dress|skirt|shirt|pants|panties))\b/i;
+/**
+ * 只删「与账本冲突」的衣物句，其余原句保留。
+ *
+ * 旧版用 `CLOTHING_WORD.test(s)` 过滤：只要句子提到任何衣物词就整句删掉，
+ * 于是模型写的「她指节把百褶裙压出折痕」这种**衣物具体形态**（正是 nl 该管的部分）
+ * 全军覆没，句子被删空后又退回 `Wearing white shirt, unfastened.` 这种账本 dump——
+ * 0.2.3 首楼写回的 nl 只剩机械句就是这个原因。
+ *
+ * 现在的判据只有一条：这句点名的衣物是否**账本里已经脱下来**（removed/floor/chair/held）。
+ * 账本说在穿的、或者只是描述在穿衣物怎么贴着的句子，一律留下。
+ */
+function dropConflictingGarments(text: string, record?: ClothingRecord): string[] {
+  const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (!record) return sentences.map((s) => s.trim()).filter(Boolean);
+  const offWords = record.pieces
+    .filter((p) => ['removed', 'floor', 'chair', 'held'].includes(p.state.location))
+    .flatMap((p) => p.design.split(',').map((t) => t.trim()))
+    .filter((w) => w.length > 2);
+  if (!offWords.length) return sentences.map((s) => s.trim()).filter(Boolean);
+  return sentences
+    .filter((sentence) => !offWords.some((w) => new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(sentence)))
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export function enforceClothing(
   image: ImageInsertion,
   state: ClothingState,
@@ -2381,6 +2421,26 @@ export function enforceClothing(
       managed++;
       continue;
     }
+    // 正文写的是另一身衣服，而账本那身在本楼一次都没提 —— 以正文为准。
+    //
+    // 为什么需要：账本只跟着「换装动作」走（换上/穿上/脱掉）。剧情从泳池直接切到
+    // 「第二天早上，教室的窗子刚被推开，林夏坐在靠窗的位置抄昨天的笔记，制服衬衫扣到
+    // 第二颗」这种**陈述式回到另一套衣服**的写法，没有任何换装动词，账本停在泳衣上，
+    // enforceClothing 就把 swimsuit 塞回角色 tag，于是「正文写校服、图里穿泳衣」。
+    // 判据很窄：模型写的衣物词在本楼正文里出现过，而账本那身一个词都没出现。
+    const near = source ? storyNearImage(source, image) : '';
+    if (near && storyGarments(near).length) {
+      const textGarments = new Set(storyGarments(near));
+      const ledgerGarments = caption.tag
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t && isClothingDescription(t));
+      const ledgerInText = ledgerGarments.some((w) => near.includes(w) || textGarments.has(w));
+      if (!ledgerInText) {
+        managed++;
+        continue;
+      }
+    }
     managed++;
     const dynamic = dropProps(
       c.tag
@@ -2397,16 +2457,16 @@ export function enforceClothing(
           .filter(Boolean),
       ]),
     ].join(', ');
-    if (nl)
-      c.nl = [
-        c.nl
-          .split(/(?<=[.!?])\s+/)
-          .filter((s) => !CLOTHING_WORD.test(s) && !WEAR_WORD.test(s))
-          .join(' '),
-        caption.nl,
-      ]
-        .filter(Boolean)
-        .join(' ');
+    if (nl) {
+      // 双通道分工：服装的**品类与状态**归 tag（caption.tag 已并入），
+      // 衣物与接触的**具体形态**归 nl（模型写的）。旧版无条件用 caption.nl 覆盖，
+      // 等于把模型那句全删了再换成「Wearing white shirt, unfastened.」这种账本 dump——
+      // 实测第 0 楼写回的 nl 只剩这两类机械句，模型的「ribbon hangs loose」整段消失。
+      // 现在只删「与账本冲突的衣服句」（她说穿着的东西账本说没有），
+      // 模型那句还剩就留着；一句不剩（整段都在写衣服）才退回账本渲染。
+      const kept = dropConflictingGarments(c.nl, record).join(' ').trim();
+      c.nl = kept || caption.nl;
+    }
   }
   if (managed && independent) {
     image.tag = dropProps(
@@ -2415,11 +2475,12 @@ export function enforceClothing(
         .map((t) => t.trim())
         .filter((t) => t && !isClothingDescription(t) && !LOCKED_WEAR_STATE.test(t)),
     ).join(', ');
-    if (nl)
-      image.nl = image.nl
-        .split(/(?<=[.!?])\s+/)
-        .filter((s) => !CLOTHING_WORD.test(s) && !WEAR_WORD.test(s))
-        .join(' ');
+    if (nl) {
+      // 同上：只删与账本冲突的衣物句。留空也接受 —— Base 的空间信息可以没有，
+      // 服装的品类与状态已经在 Base tag 与角色 tag 里说死了。
+      image.nl = dropConflictingGarments(image.nl).join(' ').trim();
+    }
+    if (image.characters.length) image.tag = stripBasePersonal(image.tag);
   } else if (managed && image.characters.length === 1) {
     image.tag = [
       ...new Set([
@@ -2433,6 +2494,7 @@ export function enforceClothing(
       ]),
     ].join(', ');
     if (nl) image.nl = image.characters[0].nl;
+    image.tag = stripBasePersonal(image.tag);
   }
 }
 
