@@ -208,6 +208,52 @@ function splitCompound(token: string): string[] | null {
 }
 
 /**
+ * 同义词家族：词表里同时存在「同一个东西的两种叫法」，模型会把它们一起写出来
+ * （`white blouse, collared shirt`、`denim shorts, jean shorts`）。两个词在
+ * NAI 里指向同一种衣物，等于把同一件衣服写了两遍权重，还把 prompt 撑长。
+ *
+ * 这里只收「确实指同一物」的组，不认同义词（shirt 与 blouse 在词表里都指衬衣，
+ * 合并时保留模型先写的那个——顺序是它表达重点的手段）。
+ */
+const SYNONYM_FAMILIES: string[][] = [
+  ['blouse', 'shirt', 'collared shirt', 'dress shirt'],
+  ['jean shorts', 'denim shorts'],
+  ['jeans', 'denim pants'],
+  ['hair blowing', 'hair in wind', 'hair lift'],
+  ['thighhighs', 'thigh highs', 'kneehighs', 'knee socks', 'socks'],
+  ['panties', 'underwear'],
+  ['bra', 'brassiere'],
+  ['bag', 'handbag', 'school bag'],
+];
+
+const SYNONYM_OWNER = new Map<string, string>();
+for (const family of SYNONYM_FAMILIES) for (const word of family) SYNONYM_OWNER.set(word, family[0]);
+
+/**
+ * 同族只留第一个：`white blouse, collared shirt` → `white blouse`。
+ * 在 normaliseLexiconTag 里做，序列化与发送前都会经过，存量楼层也会被纠正。
+ */
+function collapseSynonyms(pieces: string[]): string[] {
+  const used = new Set<string>();
+  const kept: string[] = [];
+  for (const piece of pieces) {
+    // 词表里的家族是「中心词」，模型写的常带颜色与材质（white blouse / collared shirt），
+    // 所以按后缀匹配：取这一段末尾 1–3 个词，能被家族认领就归到那个家族。
+    const words = piece.toLowerCase().split(' ').filter(Boolean);
+    let owner = '';
+    for (let size = Math.min(3, words.length); size >= 1 && !owner; size -= 1) {
+      owner = SYNONYM_OWNER.get(words.slice(words.length - size).join(' ')) ?? '';
+    }
+    if (owner) {
+      if (used.has(owner)) continue;
+      used.add(owner);
+    }
+    kept.push(piece);
+  }
+  return kept;
+}
+
+/**
  * tag 规范化：拆合成词、景别只留一个、同词去重。
  * 不改顺序（顺序＝模型表达的重点），不改词形（词表写了什么就照写）。
  */
@@ -236,7 +282,7 @@ export function normaliseLexiconTag(tag: string): string {
     seen.add(low);
     kept.push(piece);
   }
-  return kept.join(', ');
+  return collapseSynonyms(kept).join(', ');
 }
 
 /**

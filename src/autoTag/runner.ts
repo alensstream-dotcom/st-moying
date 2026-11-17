@@ -724,6 +724,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 空计划只纠一次：这一楼有没有可画画面本质上是模型判断，硬纠 5 次换不来更好的结果，
     // 只会把「这一段没画面」拖成 600 秒（第 1 楼实测 5 次 / 667 秒仍 0 张）。
     let emptyPlanRetried = false;
+    let baseNlRetried = false;
     // 上一次 attempt 是否被判为「被截断」:是则后续重试改发降载版历史(精简思考清单 +
     // 略去长解释的契约)。降载必须换掉整份历史而不是只追加一句「写短点」——思考清单
     // 本身就是思考长度的来源,只在末尾恳求,模型照旧逐条自证。
@@ -988,6 +989,22 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               candidate.images.push(fallback);
               console.warn(`[墨影] ${fallbackNote(source)}`);
               diagnostic('images:fallback', { floor, position: fallback.position });
+            }
+          }
+          // Base nl 缺失:模型偶尔只写 tag 不写 nl(实测第 7/8 楼)。
+          // nl 是「这一格的空间与瞬间」唯一载体,缺了就只剩一堆标签,
+          // 画面靠概率拼。还有重试次数时纠一次，不要每楼都重跑。
+          if (!slot && attempt < retries && !baseNlRetried && profile.nl) {
+            const bare = candidate.images.filter((image) => !image.nl?.trim());
+            if (bare.length) {
+              baseNlRetried = true;
+              retryNote = [
+                '<retry_base_nl>',
+                '上一次有图片的 Base nl 是空的。Base nl 是这张图「这一刻在发生什么」的唯一说明，不是可选字段。',
+                '用一句完整英文补上：谁在做什么、在什么地方、光从哪来——不超过 20 词，句号结尾。',
+                '不要复述 tag 里已经写过的人数、景别、服装名词。',
+              ].join('\n');
+              throw new Error('Base nl 缺失');
             }
           }
           // 引句锚定:after 必须是本楼正文里的原句。编出来的引句意味着画面也是编的
