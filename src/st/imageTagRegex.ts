@@ -1,4 +1,4 @@
-import { normaliseLexiconTag, stripBaseEcho, separateWorldTags } from '@/data/tagLexicon';
+import { dropGenericScenes, stripGarmentRestatement, normaliseLexiconTag, stripBaseEcho, separateWorldTags } from '@/data/tagLexicon';
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import { getContext } from '@/st/context';
@@ -290,18 +290,23 @@ export function serializeImageTag(content: ImageTagContent): string {
     normaliseLexiconTag(content.tag),
     content.characters.map((character) => normaliseLexiconTag(character.tag)),
   );
-  const characters = content.characters.map((character, index) => ({
-    ...character,
-    tag: divided.characters[index] ?? '',
-  }));
+  const characters = content.characters.map((character, index) => {
+    const tag = divided.characters[index] ?? '';
+    // nl 复述 tag 服装是模型最顽固的习惯（「She wears a damp white shirt…」）。
+    // 放在出口删，是因为中间层会被 enforceClothing/enforceAppearance 重新塞回 nl。
+    return { ...character, tag, nl: stripGarmentRestatement(character.nl, tag) };
+  });
+  const baseNl = stripGarmentRestatement(content.nl ?? '', divided.base);
   // 单人图：Base 只留场景/机位/光线/人数，角色块已经写过的姿势与身体从 Base 剥掉。
-  const tag = normaliseLexiconTag(
-    stripBaseEcho(
-      divided.base,
-      characters.map((character) => character.tag),
+  const tag = dropGenericScenes(
+    normaliseLexiconTag(
+      stripBaseEcho(
+        divided.base,
+        characters.map((character) => character.tag),
+      ),
     ),
   );
-  const nl = content.nl ? `<nl>${content.nl}</nl>` : '';
+  const nl = baseNl ? `<nl>${baseNl}</nl>` : '';
   const negative = content.negative ? `<negative>${content.negative}</negative>` : '';
   const charactersBlock = characters.length
     ? `<characters>${JSON.stringify(characters)}</characters>`

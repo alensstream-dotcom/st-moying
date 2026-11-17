@@ -402,3 +402,67 @@ export function inLexicon(tag: string): boolean {
     TAG_LEXICON[key].some((word) => word.toLowerCase() === normalized),
   );
 }
+// nl 不该复述 tag 已经写过的衣服：两份 caption 各算各的权重，同一件衬衫写两遍
+// 只会让画面被它拽住。这里按分句删——「She wears X」这类分句整句丢，
+// 剩下的分句只有在「没动作、只是在念衣服」时才丢。
+const DRESS_MODIFIER = new Set([
+  '1girl', '1boy', '2girls', '2boys', 'girl', 'boy', 'solo', 'white', 'black', 'blue', 'pink', 'red',
+  'green', 'yellow', 'grey', 'gray', 'brown', 'purple', 'orange', 'pale', 'fair', 'dark', 'light',
+  'long', 'short', 'high', 'low', 'open', 'closed', 'wet', 'damp', 'sleeve', 'sleeves', 'hair',
+  'eyes', 'eye', 'skin', 'tall', 'slender', 'thin', 'she', 'her', 'his', 'he', 'and', 'with',
+]);
+
+const RESTATEMENT_ACTION = /\b(holds?|holding|rests?|resting|turns?|turning|looks?|looking|leans?|leaning|steps?|stepping|walks?|walking|stands?|standing|sits?|sitting|reaches?|reaching|raises?|raising|pulls?|pulling|pushes?|pushing|covers?|covering|glances?|tilts?|shifts?|fingers?|palm|hand|hands|shoulder|back|chest|collar)\b/i;
+
+/** 从 nl 里删掉「复述 tag 服装」的分句；删空就返回空串。 */
+export function stripGarmentRestatement(nl: string, ...tagTexts: string[]): string {
+  const text = (nl || '').trim();
+  if (!text) return '';
+  const garments = new Set(
+    tagTexts
+      .join(', ')
+      .toLowerCase()
+      .split(/[^a-z0-9 ]+/)
+      .map((word) => word.trim())
+      .filter((word) => word.length > 2 && !DRESS_MODIFIER.has(word)),
+  );
+  const pieces: string[] = [];
+  for (const piece of text.split(/(?<=[.!?])\s+|,\s+(?=and\s|her\s|his\s|she\s|he\s)/)) {
+    const trimmed = piece.trim();
+    if (!trimmed) continue;
+    // 「She wears X, 动作」——把穿着前缀切掉，动作后半句留下
+    const wearPrefix = trimmed.match(/^(?:she|he)?\s*(?:is\s+)?(?:wears?|wearing|dressed|clad)\b[^,]*,\s*(.+)$/i);
+    if (wearPrefix) {
+      pieces.push(wearPrefix[1]);
+      continue;
+    }
+    pieces.push(trimmed);
+  }
+  const kept = pieces.filter((piece) => {
+    const trimmed = piece.trim();
+    if (!trimmed) return false;
+    if (/^(?:she|he)?\s*(?:is\s+)?(?:wears?|wearing|dressed|clad)\b|^the\b[^.]{0,40}\bis\s+(?:on|around)\s+the\s+(?:floor|chair|bed)\b/i.test(trimmed)) return false;
+    const words = trimmed.toLowerCase().split(/[^a-z0-9 ]+/).filter(Boolean);
+    const hits = words.filter((word) => garments.has(word)).length;
+    if (!hits) return true;
+    return RESTATEMENT_ACTION.test(trimmed);
+  });
+  // 什么都没删就原样返回：不要因为重排把 `A girl.\\nSecond line.` 变成逗号串，
+  // 那会让摘要行丢掉句子边界。
+  if (kept.length === pieces.length) return text;
+  const out = kept.join(', ').replace(/,\s*,/g, ',').replace(/^[,\s]+|[,\s]+$/g, '').trim();
+  return out;
+}
+
+const GENERIC_SCENES = new Set(['house', 'indoors', 'indoor', 'outdoors', 'outdoor', 'room', 'building']);
+
+/** 已经有具体场所（stairs / bathroom / classroom…）时，house / indoors 只会稀释画面。 */
+export function dropGenericScenes(base: string): string {
+  const tokens = base.split(',').map((token) => token.trim()).filter(Boolean);
+  const concrete = tokens.filter((token) => {
+    const lower = token.toLowerCase();
+    return TAG_LEXICON.scene.includes(lower) && !GENERIC_SCENES.has(lower);
+  });
+  if (concrete.length < 2) return base;
+  return tokens.filter((token) => !GENERIC_SCENES.has(token.toLowerCase())).join(', ');
+}
