@@ -185,9 +185,40 @@ describe('露点词要有正文撑腰', () => {
     expect(one.tag).not.toContain('breasts out');
     expect(one.characters[0].tag).not.toContain('breasts out');
   });
-  it('正文写了胸口时保留', () => {
-    const two = image('1girl, hallway, breasts out');
-    applyTextQualifiers(two, '她衣领敞得很开，胸口几乎全露在外面。');
-    expect(two.characters[0].tag).toContain('breasts out');
+  it('正文写胸口时 cleavage 成立、breasts out 仍不成立', () => {
+    const two = image('1girl, hallway, cleavage, breasts out');
+    applyTextQualifiers(two, '她衣领敞得很开，乳沟若隐若现。');
+    expect(two.tag).toContain('cleavage');
+    expect(two.tag).not.toContain('breasts out');
+    expect(two.characters[0].tag).not.toContain('breasts out');
+  });
+  it('正文真写到乳头才留 breasts out', () => {
+    const three = image('1girl, hallway, breasts out');
+    applyTextQualifiers(three, '她胸口大开，乳头都露在外面。');
+    expect(three.characters[0].tag).toContain('breasts out');
+  });
+});
+
+describe('nl 不复述 tag 里的服装', () => {
+  const one = (nl: string): any => ({
+    position: 'P1',
+    tag: '1girl, hallway',
+    nl: '',
+    characters: [{ name: '温岚', tag: '1girl, white blouse, short sleeves, denim shorts', nl }],
+  });
+  it('She wears … 的从句被删掉，留下动作', () => {
+    const img = one('She wears a damp white shirt, her hairstyle swaying in the breeze.');
+    applyTextQualifiers(img, '她站在走廊里，头发被风吹起。');
+    expect(img.characters[0].nl).not.toMatch(/shirt|denim/i);
+  });
+  it('整句只是服装就清空', () => {
+    const img = one('She wears a white blouse and denim shorts.');
+    applyTextQualifiers(img, '她站在走廊里。');
+    expect(img.characters[0].nl).toBe('');
+  });
+  it('写衣领怎么被拉开的句子保留', () => {
+    const img = one('Her collar is unbuttoned as she raises a hand to cover her chest.');
+    applyTextQualifiers(img, '她抬手掩住衣领。');
+    expect(img.characters[0].nl).toContain('raises a hand');
   });
 });

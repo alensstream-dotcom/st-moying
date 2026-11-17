@@ -2621,19 +2621,30 @@ export function applyTextQualifiers(image: ImageInsertion, source: string): void
   // 露点词必须有正文撑腰：本楼正文只写「衣领敞开、露出锁骨」时，
   // 模型补 breasts out / nipples 是它自己的加戏，画出来就和剧情不符。
   const near = (source ? storyNearImage(text, image) : '') || text;
-  const exposure = /\b(?:breasts out|bare breasts?|exposed breasts?|nipples?|areolae?|cleavage|underboob|sideboob)\b/i;
-  const mentioned = /胸|乳|ru房|乳沟|乳头|乳晕|走光|裸/.test(near); // 锁骨太轻，撑不起 breasts out
-  if (!mentioned) {
-    const scrub = (tag: string): string =>
-      normaliseLexiconTag(
-        tag
-          .split(',')
-          .map((token) => token.trim())
-          .filter((token) => token && !exposure.test(token))
-          .join(', '),
-      );
-    image.tag = scrub(image.tag);
-    for (const c of image.characters) c.tag = scrub(c.tag);
+  // 露点词分两档：乳沟/侧乳只要正文写了胸口或领口就成立；
+  // breasts out / nipples 得真的写到乳头或裸胸，不能靠「胸口」推。
+  const NEAR_SOFT = /胸|领口|乳沟|ru沟/;
+  const NEAR_HARD = /乳头|乳晕|乳房|裸胸|奶子|没穿|解开了.{0,6}胸|衣物.{0,4}滑落/;
+  const SOFT_EXPOSURE = /\b(?:cleavage|underboob|sideboob)\b/i;
+  const HARD_EXPOSURE = /\b(?:breasts out|bare breasts?|exposed breasts?|nipples?|areolae?)\b/i;
+  const scrubExposure = (tag: string, pattern: RegExp): string =>
+    normaliseLexiconTag(
+      tag
+        .split(',')
+        .map((token) => token.trim())
+        .filter((token) => token && !pattern.test(token))
+        .join(', '),
+    );
+  if (!NEAR_SOFT.test(near)) {
+    image.tag = scrubExposure(image.tag, SOFT_EXPOSURE);
+    image.tag = scrubExposure(image.tag, HARD_EXPOSURE);
+    for (const c of image.characters) {
+      c.tag = scrubExposure(c.tag, SOFT_EXPOSURE);
+      c.tag = scrubExposure(c.tag, HARD_EXPOSURE);
+    }
+  } else if (!NEAR_HARD.test(near)) {
+    image.tag = scrubExposure(image.tag, HARD_EXPOSURE);
+    for (const c of image.characters) c.tag = scrubExposure(c.tag, HARD_EXPOSURE);
   }
 
   // Base 的场所下限：模型爱只写 `house, day`，画面就没有「在楼梯上」这个事实。
@@ -2651,11 +2662,42 @@ export function applyTextQualifiers(image: ImageInsertion, source: string): void
 
   for (const c of image.characters) {
     if (!c.nl) continue;
-    const verbs = /\b(holds?|holding|rests?|resting|turns?|looks?|leans?|steps?|walks?|stands?|sits?|reaches?|raises?|pulls?|pushes?|fingertips|palm|hand)\b/i.test(c.nl);
-    if (!verbs && garmentWords(c.nl) >= 2) {
+    // nl 里凡是「把 tag 已经写过的衣服再念一遍」的部分都删掉：只保留动作与空间。
+    // 判据是「分句里出现 tag 里已有的服装词」而不是动词黑名单——
+    // `She wears a damp white shirt and denim shorts, hair swaying` 这种句子前半截
+    // 有动词 wears 也照样是复述，按动词判会漏。
+    const DRESS_MODIFIER = new Set([
+      '1girl', '1boy', '2girls', '2boys', 'girl', 'boy', 'solo', 'white', 'black', 'blue', 'pink', 'red',
+      'green', 'yellow', 'grey', 'gray', 'brown', 'purple', 'orange', 'pale', 'fair', 'dark', 'light',
+      'long', 'short', 'high', 'low', 'open', 'closed', 'wet', 'damp', 'sleeve', 'sleeves', 'hair',
+      'eyes', 'eye', 'skin', 'tall', 'slender', 'thin', 'she', 'her', 'his', 'he', 'and', 'with',
+    ]);
+    const tagGarments = new Set(
+      c.tag
+        .toLowerCase()
+        .split(/[^a-z0-9 ]+/)
+        .map((word) => word.trim())
+        .filter((word) => word.length > 2 && !DRESS_MODIFIER.has(word)),
+    );
+    const pieces = c.nl.split(/(?<=[.!?])\s+|,\s+(?=and\s|her\s|his\s|she\s|he\s)/);
+    const kept = pieces.filter((piece) => {
+      const lower = piece.toLowerCase();
+      const garmentHits = lower.split(/[^a-z ]+/).filter((word) => word && tagGarments.has(word)).length;
+      // 「她穿着 X」「X is on the floor」这类句子就是在念 tag，动作词再多也不留
+      if (/^(?:she|he)?\s*(?:is\s+)?(?:wears?|wearing|dressed|clad)\b|\bis\s+(?:on|around)\s+the\s+(?:floor|chair|bed)\b/i.test(piece.trim())) return false;
+      if (!garmentHits) return true;
+      const action = /\b(holds?|holding|rests?|resting|turns?|looks?|leans?|steps?|walks?|reaches?|raises?|pulls?|pushes?|covers?|covering|glances?|tilts?|shifts?|fingers?|palm|hand|shoulder|back)\b/i.test(piece);
+      return action;
+    });
+    const next = kept.join(', ').replace(/,\s*,/g, ',').replace(/^[,\s]+|[,\s]+$/g, '').trim();
+    const leftoverGarments = garmentWords(next) >= 2 && !/\b(holds?|holding|rests?|turns?|looks?|leans?|steps?|walks?|stands?|sits?|reaches?|raises?|pulls?|pushes?|covers?|covering)\b/i.test(next);
+    if (!next || leftoverGarments) {
       console.warn('[墨影] 角色 nl 只是复述服装，整段丢弃');
       c.nl = '';
+      continue;
     }
+    if (next !== c.nl.trim()) console.warn('[墨影] 角色 nl 里的服装复述已删掉');
+    c.nl = next;
   }
 }
 export function enforceClothing(
