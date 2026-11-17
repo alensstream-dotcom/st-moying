@@ -179,7 +179,7 @@ export function lexiconMenuBlock(floorText = ''): string {
  * 不是叠加而是打架，画面最后取哪个由采样决定，于是同一段正文两次出图一大一小。
  * 这里保留模型先写的那个（顺序是它表达重点的手段），其余丢掉。
  */
-const SHOT_SCALES = ['wide shot', 'full body', 'cowboy shot', 'upper body', 'portrait', 'close-up'];
+const SHOT_SCALES = ['wide shot', 'full body', 'cowboy shot', 'medium shot', 'upper body', 'portrait', 'close-up'];
 
 /** 词表全部词（小写），合成词拆分时用。 */
 const KNOWN_WORDS: Set<string> = new Set(
@@ -283,6 +283,70 @@ export function stripBaseEcho(base: string, characterTags: readonly string[]): s
       return BASE_KEEP.has(low) || !owned.has(low);
     });
   return kept.join(', ');
+}
+
+/**
+ * 世界类词（机位/光线/场景）只属于 Base。
+ *
+ * 实测第 5 节：Base 写 `upper body`，角色块又写 `full body, front view, soft lighting,
+ * window light, house` —— 同一个景别在两个 caption 里各算一次权重，画面被两份互相
+ * 矛盾的机位撕开（上半身特写里塞进全身构图）。场景与光线也一样：char_caption 里的
+ * `house` 会把人物单独拽回一栋房子，而不跟她所在的那个房间。
+ *
+ * 所以角色块只留「这个人」：身份、外貌、衣着、表情、姿势、身体。世界类一律搬回 Base。
+ */
+const WORLD_HEADS: Set<string> = new Set([
+  ...TAG_LEXICON.camera,
+  ...TAG_LEXICON.light,
+  ...TAG_LEXICON.scene,
+]);
+
+const SHOT_ORDER = ['wide shot', 'full body', 'cowboy shot', 'medium shot', 'upper body', 'portrait', 'close-up'];
+
+function splitTags(tag: string): string[] {
+  return tag
+    .split(',')
+    .map((piece) => piece.trim().replace(/\s+/g, ' '))
+    .filter(Boolean);
+}
+
+/**
+ * 把角色块里的世界类词搬到 Base：返回搬完的两块。
+ *
+ * 景别特殊处理——Base 已经有景别就以 Base 为准（模型先写的那句是它想要的镜头），
+ * 角色块里冲突的景别直接丢；Base 没有景别时把角色块那个搬上去，保证画面有镜头。
+ */
+export function separateWorldTags(
+  base: string,
+  characterTags: readonly string[],
+): { base: string; characters: string[] } {
+  if (!characterTags.length) return { base, characters: [...characterTags] };
+  const basePieces = splitTags(base);
+  const baseLower = new Set(basePieces.map((piece) => piece.toLowerCase()));
+  const baseHasShot = basePieces.some((piece) => SHOT_SCALES.includes(piece.toLowerCase()));
+  const carried: string[] = [];
+  const characters = characterTags.map((tag) => {
+    const kept: string[] = [];
+    for (const piece of splitTags(tag)) {
+      const low = piece.toLowerCase();
+      if (!WORLD_HEADS.has(low)) {
+        kept.push(piece);
+        continue;
+      }
+      if (SHOT_SCALES.includes(low)) {
+        // 景别只在 Base 缺席时搬一个上去
+        if (!baseHasShot && !carried.some((word) => SHOT_SCALES.includes(word))) carried.push(piece);
+        continue;
+      }
+      if (!baseLower.has(low)) {
+        baseLower.add(low);
+        carried.push(piece);
+      }
+    }
+    return kept.join(', ');
+  });
+  const merged = [...basePieces, ...carried].join(', ');
+  return { base: merged, characters };
 }
 
 /** 判断一个 tag 是否在词表内（校验用；暂不阻断，只用于诊断日志）。 */

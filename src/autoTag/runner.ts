@@ -68,6 +68,7 @@ import { BBI_OUTFIT_EXTRA_KEY } from '@/autoTag/outfitState';
 import {
   CLOTHING_PROTOCOL,
   acceptClothingChanges,
+  applyTextQualifiers,
   adoptChangedClothing,
   adoptStoryClothing,
   synthesiseSceneClothing,
@@ -1692,6 +1693,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       const castNames = new Set(
         image.characters.map((c) => (activeEntries.length ? resolveCanonicalCharName(c.name, activeEntries) : c.name)),
       );
+      // 最后一道：袖长等修饰语必须落在写回楼层的 tag 上（外貌层会重建 tag，前面补的会被冲掉）。
+      applyTextQualifiers(image, source);
       frames.push({
         tag: serializeImageTag(image),
         sourceLine: image.sourceLine,

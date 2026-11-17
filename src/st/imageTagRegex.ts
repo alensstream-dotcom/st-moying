@@ -1,4 +1,4 @@
-import { normaliseLexiconTag, stripBaseEcho } from '@/data/tagLexicon';
+import { normaliseLexiconTag, stripBaseEcho, separateWorldTags } from '@/data/tagLexicon';
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import { getContext } from '@/st/context';
@@ -284,14 +284,20 @@ export function serializeImageTag(content: ImageTagContent): string {
   // 而不是分散在解析、服装执行、外貌执行几处——那几处都会往 tag 里追加词
   // （act 扩展、账本、外貌库），任何一处漏掉就会把 `long straight hair`、
   // 重复的 `blush`、`upper body + full body` 写回楼层。
-  const characters = content.characters.map((character) => ({
+  // 先分家：机位/光线/场景归 Base，人物归角色块。两份 caption 各自独立计权重，
+  // 同一个景别写两遍就是两个镜头同时在抢画面（`upper body` 与 `full body` 打架）。
+  const divided = separateWorldTags(
+    normaliseLexiconTag(content.tag),
+    content.characters.map((character) => normaliseLexiconTag(character.tag)),
+  );
+  const characters = content.characters.map((character, index) => ({
     ...character,
-    tag: normaliseLexiconTag(character.tag),
+    tag: divided.characters[index] ?? '',
   }));
   // 单人图：Base 只留场景/机位/光线/人数，角色块已经写过的姿势与身体从 Base 剥掉。
   const tag = normaliseLexiconTag(
     stripBaseEcho(
-      content.tag,
+      divided.base,
       characters.map((character) => character.tag),
     ),
   );

@@ -209,6 +209,9 @@ const CJK_CHAR = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
  * 这里只清空该字段、不抛错——中文 nl 发出去是纯负收益（预算翻几倍、画面还读不准），
  * 退回纯 tag 至少画面成立；而为了让这一楼的图还在，不能因为它丢图或丢角色。
  */
+
+/** 账本口径的假句子：`Wearing white shirt, unfastened.` / `Not wearing jeans; it has been taken off.` */
+const CLOTHING_DUMP = /^(?:not\s+wearing|wearing|she\s+is\s+wearing|she\s+wears)\b[^.!?]*[,;][^.!?]*\b(?:wearing|is|are)\b/i;
 function sanitizeNl(value: unknown, field: string, index: number): string {
   const text = sanitizeContent(value, field, index);
   if (!text) return '';
@@ -224,6 +227,10 @@ function sanitizeNl(value: unknown, field: string, index: number): string {
   const hasVerb = /\b(is|are|was|were|wears?|wearing|holds?|holding|stands?|standing|sits?|sitting|lies|lying|turns?|looks?|leans?|rests?|reaches|raises|pulls?|pushes?|tucks|resting|holding|facing|glancing|smiles?|says?|speaks?)\b/i.test(text);
   if (commas >= 3 && !hasVerb && words <= 14) {
     console.warn(`[墨影] images[${index}].${field} 是 tag 列表而不是句子，整段丢弃`);
+    return '';
+  }
+  if (CLOTHING_DUMP.test(text)) {
+    console.warn('[墨影] nl 是账本口径的名词堆（不是一句英文），整段丢弃：' + text.slice(0, 60));
     return '';
   }
   return text;

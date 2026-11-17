@@ -4,6 +4,7 @@ import { applyWardrobeChoices, wardrobeChoiceRevision } from '@/state/wardrobeCh
 import type { CostumeContext, CostumeFloor } from './costumeContext';
 import type { TargetSegment } from './clean';
 import type { ImageInsertion } from './protocol';
+import { TAG_LEXICON } from '@/data/tagLexicon';
 import { extractGarment, readOutfitState, readWear, BBI_OUTFIT_EXTRA_KEY } from './outfitState';
 import { candidateAliasesForEntry, resolveCanonicalCharName } from './charReuse';
 import { isCollarToken, isPropToken, storyMentionsCollar, storyMentionsProp } from './props';
@@ -2574,6 +2575,56 @@ function dropConflictingGarments(text: string, record?: ClothingRecord): string[
     .filter(Boolean);
 }
 
+
+/**
+ * 收尾两道指令：袖长与「nl 复述服装」。
+ *
+ * 为什么放在最后而不在 enforceClothing 里：外貌层(enforceAppearance)会
+ * `tag = unique([...canonical, ...dynamic])` 重建角色 tag，服装层补进去的修饰语
+ * 会被整条丢掉——实测正文写「白色短袖衬衣」，写回楼层的 tag 仍是 `white shirt`，
+ * 出来就是长袖。所以修饰语在**序列化前**补一次，谁都覆盖不了。
+ *
+ * nl 同理：模型常把服装再复述一遍（`She wears a white short-sleeved collared shirt
+ * and blue denim shorts…`），那正是 tag 已经说完的东西。这种句子不是补充，
+ * 只是一句更长的 tag，直接丢掉，让画面靠 tag 定位。
+ */
+const SLEEVE_TOKENS = /\b(?:short sleeves|long sleeves|sleeveless)\b/i;
+const SHIRT_LIKE = /\b(?:shirt|blouse|dress|t-?shirt|sweater|hoodie|jacket|coat|uniform)\b/i;
+
+export function applyTextQualifiers(image: ImageInsertion, source: string): void {
+  const text = source || '';
+  const sleeve = /短袖/.test(text)
+    ? 'short sleeves'
+    : /长袖/.test(text)
+      ? 'long sleeves'
+      : /无袖|吊带/.test(text)
+        ? 'sleeveless'
+        : '';
+  if (sleeve) {
+    for (const c of image.characters) {
+      if (SHIRT_LIKE.test(c.tag) && !SLEEVE_TOKENS.test(c.tag)) c.tag = `${c.tag}, ${sleeve}`;
+    }
+    if (image.characters.length === 0 && SHIRT_LIKE.test(image.tag) && !SLEEVE_TOKENS.test(image.tag))
+      image.tag = `${image.tag}, ${sleeve}`;
+  }
+
+  const clothing = new Set([...TAG_LEXICON.clothing].map((word) => word.toLowerCase()));
+  const garmentWords = (text2: string): number =>
+    text2
+      .toLowerCase()
+      .split(/[^a-z ]+/)
+      .map((word) => word.trim())
+      .filter(Boolean)
+      .filter((word) => clothing.has(word)).length;
+  for (const c of image.characters) {
+    if (!c.nl) continue;
+    const verbs = /\b(holds?|holding|rests?|resting|turns?|looks?|leans?|steps?|walks?|stands?|sits?|reaches?|raises?|pulls?|pushes?|fingertips|palm|hand)\b/i.test(c.nl);
+    if (!verbs && garmentWords(c.nl) >= 2) {
+      console.warn('[墨影] 角色 nl 只是复述服装，整段丢弃');
+      c.nl = '';
+    }
+  }
+}
 export function enforceClothing(
   image: ImageInsertion,
   state: ClothingState,
@@ -2711,6 +2762,19 @@ export function enforceClothing(
         ? stateTokens
         : ledgerTokens;
     c.tag = [...new Set([...dynamic, ...modelGarments, ...ledgerTags])].join(', ');
+
+    // 正文写「白色**短袖**衬衣」，模型只取 `shirt` 就丢掉了「短」——出来是长袖。
+    // 修饰语是封闭集合（袖长三种），能判就补；判不出（正文没写）就不猜。
+    const sleeve = /短袖/.test(source || '')
+      ? 'short sleeves'
+      : /长袖/.test(source || '')
+        ? 'long sleeves'
+        : /无袖|吊带/.test(source || '')
+          ? 'sleeveless'
+          : '';
+    const hasSleeveWord = /\b(?:short sleeves|long sleeves|sleeveless)\b/i.test(c.tag);
+    const hasShirtLike = /\b(?:shirt|blouse|dress|t-?shirt|sweater|hoodie|jacket|coat)\b/i.test(c.tag);
+    if (sleeve && !hasSleeveWord && hasShirtLike) c.tag = `${c.tag}, ${sleeve}`;
     if (nl) {
       // 双通道分工：服装的**品类与状态**归 tag（caption.tag 已并入），
       // 衣物与接触的**具体形态**归 nl（模型写的）。旧版无条件用 caption.nl 覆盖，
@@ -2727,7 +2791,12 @@ export function enforceClothing(
       if (dressed && !hasOff && !NUDITY_HINT.test(source || '')) c.tag = stripNudeTokens(c.tag);
       const cleaned = dropConflictingGarments(c.nl, record).join(' ').trim();
       const kept = dressed ? dropNudityClaims(cleaned).join(' ').trim() : cleaned;
-      c.nl = kept || caption.nl;
+      // **绝不退回 caption.nl**：那是账本渲染出来的「Wearing white shirt, collared
+      // shirt, short sleeves, unfastened. Wearing pink bra. Wearing denim shorts.」——
+      // 一串名词短语，不是一句英文，而且把 tag 已经说过的品类又复述一遍。
+      // 模型那句被删空就留空：留空只是少一条空间信息，塞 dump 会让模型以为
+      // 「nl 就是复述 tag」，下一楼继续学坏。
+      c.nl = kept;
     }
   }
   if (managed && independent) {
