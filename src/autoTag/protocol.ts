@@ -1,7 +1,9 @@
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import { normaliseLexiconTag } from '@/data/tagLexicon';
 import type { TargetSegment } from '@/autoTag/clean';
+import { parseFacts, type StoryFact } from '@/autoTag/facts';
 import { normalizeAct, normalizeGiver, type ActGiver, type SexAct } from '@/autoTag/actTags';
+import { parseCandidates, pruneByCandidates } from '@/autoTag/candidates';
 import { parseClothingChanges, type ClothingChange } from './outfitTimeline';
 import { parseIdentityClaims, type IdentityClaim } from '@/state/characterIdentity';
 import { FORBIDDEN_SUBTAG, readCenter, serializeImageTag } from '@/st/imageTagRegex';
@@ -65,6 +67,8 @@ export interface ImagePlan {
   identities?: IdentityClaim[];
   outfitChanges?: ClothingChange[];
   images: ImageInsertion[];
+  /** 正文事实表：模型先写事实、再写画面；缺失时为空数组。 */
+  facts?: StoryFact[];
   /** AI 报告的角色库变更(建档/字段更新);调用方负责落库。 */
   changes: CharChange[];
 }
@@ -429,12 +433,31 @@ export function parseImagePlan(
     throw new Error(`AI 给出的 ${rejected.length} 张图片都没有可落地的位置（${rejected[0]}）`);
   }
 
-  const limitedImages = images.slice(0, normalizedMax);
-  if (limitedImages.length < normalizedMin) {
-    throw new Error(`AI 返回了 ${limitedImages.length} 张图片，少于设置的最少图片数 ${normalizedMin}`);
+  // 候选层：模型若给了候选表，就用打分结果决定留哪几张（低于门槛的落点丢掉，
+  // 超上限的按分数留高的）。没给候选就保持原样——它没走这条路，不擅自删图。
+  const candidates = parseCandidates(parsed.candidates, new Set(positions.keys()));
+  const ranked = pruneByCandidates(images, candidates, normalizedMax);
+  if (ranked.dropped.length) {
+    console.warn(
+      `[墨影] 按候选打分丢掉 ${ranked.dropped.length} 张：` +
+        ranked.dropped.map((item) => `${item.position}(分 ${item.score ?? '未入候选'})`).join('、'),
+    );
   }
+  const limitedImages = ranked.images.slice(0, normalizedMax);
+  // 「最少几张」是期望值，不是硬门槛：少于它照样收，只记一条日志。
+  // 旧行为是抛错重试，等于逼模型为了凑数去编一个不存在的瞬间——
+  // 少一张图是损失，编一张假图是污染账本。
+  if (limitedImages.length < normalizedMin) {
+    console.warn(
+      `[墨影] 本楼只找到 ${limitedImages.length} 个可信画面（设置里的最少张数是 ${normalizedMin}），按实际张数收下`,
+    );
+  }
+  const knownNames = new Set<string>(['scene']);
+  for (const image of limitedImages) for (const character of image.characters ?? []) knownNames.add(character.name);
+  const facts = parseFacts(parsed.facts, knownNames);
   return {
     images: limitedImages,
+    facts,
     changes: parseChanges(parsed.changes, positions, segmentById),
     costumeContexts: parsed.costumeContexts,
     outfitChanges: parseClothingChanges(parsed.outfitChanges, segments, source),

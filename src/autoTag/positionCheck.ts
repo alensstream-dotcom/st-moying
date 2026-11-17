@@ -114,8 +114,26 @@ export function unanchoredAfters(
   for (const image of images) {
     const quote = String(image.afterQuote ?? '').trim();
     if (!quote) continue;
+    // 模型常把 after 直接写成 P 编号（索引表就在正文下方，这是最省事的守法方式）。
+    // 位置本身就是权威信息，P 编号不需要再拿正文比对，否则「合法的 P1」会被
+    // 判成引句不锚定，白白烧掉一次重试并最终不落图。
+    if (/^P\d+$/i.test(quote)) continue;
     if (!body.includes(norm(quote))) bad.push(quote.slice(0, 24));
   }
+  return bad;
+}
+
+/** 哪些图（按下标）的 after 在本楼正文里找不到。弃图用这个，不要拿引句去反查。 */
+export function unanchoredIndexes(images: Array<{ afterQuote?: string }>, targetText: string): number[] {
+  const norm = (value: string) =>
+    value.replace(/\s+/g, '').replace(/["'“”‘’「」『』…—\-~、,，。.!！?？；;:：]/g, '');
+  const body = norm(targetText);
+  const bad: number[] = [];
+  images.forEach((image, index) => {
+    const quote = String(image.afterQuote ?? '').trim();
+    if (!quote || /^P\d+$/i.test(quote)) return;
+    if (!body.includes(norm(quote))) bad.push(index);
+  });
   return bad;
 }
 

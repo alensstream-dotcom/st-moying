@@ -85,7 +85,9 @@ describe('正文自己点名的换装（不依赖模型 tag）', () => {
       expect(out.changes[0].operation).toBe('patch');
       expect(caption).toContain('red skirt');
       expect(caption).toContain('white shirt');
-      expect(caption).toContain('white panties');
+      // 内裤贴在裙子底下、加上外套扣好时不出镜（visibility 口径）：
+      // 账本仍记着它在穿，tag 里不该出现——否则画面会把内衣画在裙子外面。
+      expect(caption).not.toContain('white panties');
       expect(caption).not.toContain('black skirt');
     });
 

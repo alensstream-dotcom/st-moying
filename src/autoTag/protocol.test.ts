@@ -29,15 +29,11 @@ describe('auto tag position protocol', () => {
     });
   });
 
-  it('rejects a result below the configured minimum so the runner can retry', () => {
-    expect(() =>
-      parseImagePlanWithRange(
-        '{"images":[{"position":"P1","tag":"only one"}]}',
-        segments,
-        2,
-        3,
-      ),
-    ).toThrow('少于设置的最少图片数 2');
+  it('接受少于「最少张数」的结果，只记日志（不逼模型凑图）', () => {
+    // 「最少几张」是期望值而不是硬门槛：抛错重试等于逼模型编一个不存在的瞬间。
+    const plan = parseImagePlanWithRange('{"images":[{"position":"P1","tag":"only one"}]}', segments, 2, 3);
+    expect(plan.images).toHaveLength(1);
+    expect(plan.images[0].tag).toBe('only one');
   });
 
   it('accepts an empty image list when the configured minimum is zero', () => {

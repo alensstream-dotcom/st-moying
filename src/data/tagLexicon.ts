@@ -257,6 +257,18 @@ function collapseSynonyms(pieces: string[]): string[] {
  * tag 规范化：拆合成词、景别只留一个、同词去重。
  * 不改顺序（顺序＝模型表达的重点），不改词形（词表写了什么就照写）。
  */
+const MALE_FEMININE_STATE = /^(?:arched back|spread legs|spread pussy|clitoris|pussy juice|blush|moaning|trembling|heavy breathing|ahegao|panties|bra|breasts|nipples|areolae|cleavage|spread arms?)$/i;
+
+/**
+ * 男主块里被塞进女性的身体状态时清掉——模型会把同一段动作的描述复制给两个人，
+ * 画出来就是一个张腿呻吟的男人。男性块只保留他的动作与施动部位。
+ */
+export function stripMaleEcho(tag: string): string {
+  const parts = tag.split(',').map((t) => t.trim()).filter(Boolean);
+  if (!parts.some((t) => /^1boy$/i.test(t))) return tag;
+  return parts.filter((t) => !MALE_FEMININE_STATE.test(t)).join(', ');
+}
+
 export function normaliseLexiconTag(tag: string): string {
   if (!tag) return tag;
   const pieces = tag
@@ -450,6 +462,19 @@ export function stripGarmentRestatement(nl: string, ...tagTexts: string[]): stri
   // 什么都没删就原样返回：不要因为重排把 `A girl.\\nSecond line.` 变成逗号串，
   // 那会让摘要行丢掉句子边界。
   if (kept.length === pieces.length) return text;
+  // 整句都是服装复述时不要直接留空：把衣物名词摘掉，还有动作与主语就留成一句话。
+  // 空串等于这一格放弃描述（实测第 1 楼因此丢了「靠在他肩上说话」这个动作）。
+  if (!kept.length) {
+    const bare = text
+      .split(/\s+/)
+      .filter((word) => !garments.has(word.toLowerCase().replace(/[^a-z0-9]/g, '')))
+      .join(' ')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/\s+([,.!?])/g, '$1')
+      .trim();
+    const words = bare.split(/\s+/).filter(Boolean);
+    return bare && words.length >= 5 && /\b(?:she|he|her|his)\b/i.test(bare) ? bare : '';
+  }
   const out = kept.join(', ').replace(/,\s*,/g, ',').replace(/^[,\s]+|[,\s]+$/g, '').trim();
   return out;
 }

@@ -11,7 +11,7 @@
  * 长度纪律交给规范（DEFAULT_NAI_V5_SPEC 第 6 条）与 nai.ts 的 clampNlWords。
  */
 
-import { fullPositivePrompt, isNai5 } from '@/backends/nai';
+import { clampNlWords, fullPositivePrompt, isNai5 } from '@/backends/nai';
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import type { NaiSettings } from '@/state/settings';
 
@@ -85,4 +85,60 @@ export function warnIfOverBudget(
     );
   }
   return report;
+}
+/** 预算闸门的失约异常：调用方按「这一张画不出来」处理，不要静默发出去。 */
+export class NaiBudgetError extends Error {
+  constructor(message: string, readonly report: NaiBudgetReport) {
+    super(message);
+    this.name = 'NaiBudgetError';
+  }
+}
+
+/**
+ * 发送前的预算闸门。
+ *
+ * 顺序：先按保守估算量一次 → 超了就收紧 NL（整句/整从句，交给 clampNlWords）→
+ * 仍超就从 Base 里去掉「只增加体量、不增加信息」的通用场景词（house / indoors /
+ * indoors 这类）→ 还超就不发，把超额来源写在错误里。
+ *
+ * 不做的三件事：不从末尾剪断（会留下半个动作）、不删角色块（少一个人比少一句更错）、
+ * 不改用户固定画师串（那是用户的钱和审美）。这三件正是旧版「警告一下照发」留下的坑。
+ */
+export function enforceNaiBudget(
+  nai: NaiSettings,
+  prompt: string,
+  nl: string,
+  characters: ReadonlyArray<ImageCharacterPrompt>,
+): { prompt: string; nl: string; characters: ReadonlyArray<ImageCharacterPrompt>; report: NaiBudgetReport } {
+  const GENERIC = /\b(?:indoors?|outside|house|room|day|night)\b/gi;
+  let currentPrompt = prompt;
+  let currentNl = nl;
+  let report = reportNaiBudget(nai, currentPrompt, currentNl, characters);
+  if (!report.over) return { prompt: currentPrompt, nl: currentNl, characters, report };
+
+  // 1) 收紧 NL：只留最短的那句（上限直接砍到 14 词）。
+  const tightened = clampNlWords(currentNl, 14);
+  if (tightened !== currentNl) {
+    currentNl = tightened;
+    report = reportNaiBudget(nai, currentPrompt, currentNl, characters);
+    if (!report.over) return { prompt: currentPrompt, nl: currentNl, characters, report };
+  }
+
+  // 2) 去掉不承载信息的通用场景词（具体场所词不动）。
+  const trimmedPrompt = currentPrompt
+    .split(',')
+    .map((token) => token.trim())
+    .filter((token) => token && !GENERIC.test(token))
+    .join(', ');
+  if (trimmedPrompt !== currentPrompt) {
+    currentPrompt = trimmedPrompt;
+    report = reportNaiBudget(nai, currentPrompt, currentNl, characters);
+    if (!report.over) return { prompt: currentPrompt, nl: currentNl, characters, report };
+  }
+
+  throw new NaiBudgetError(
+    `提示词超出 NAI 预算：估算 ${report.used}/${report.total} tokens（Base ${report.base}，角色 ${report.characters.join('+')}）。` +
+      '已先收紧 NL、再删通用场景词，仍然放不下。请减少角色数或缩短服装描述，不要指望模型替你截断。',
+    report,
+  );
 }

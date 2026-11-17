@@ -77,6 +77,29 @@ export interface GenerationParams {
 }
 
 /** 随图落盘的完整出图元信息。 */
+/**
+ * 冻结配方：真正发给后端的编译结果。
+ *
+ * 与 positive 的区别：positive 是「拼好的整串」，这里是**分通道的结构**
+ * （Base tag / Base nl / 每个角色块 / 画幅方向 / 模型）。重画时按这块结构
+ * 重新拼装，不去重新编译提示词——否则改了编译器，老图就再也画不出同一张。
+ *
+ * 只在提交那一刻写一次，之后任何设置/规则变化都不动它。
+ */
+export interface CompiledRecipe {
+  v: 1;
+  /** 生成时插件版本；编译器语义变了靠它识别。 */
+  appVersion: string;
+  prompt: string;
+  nl: string;
+  negative: string;
+  characters: Array<{ name: string; tag: string; nl: string }>;
+  size: string;
+  model: string;
+  /** 定的种子；重画时换种子即换一张，但配方不动。 */
+  seed: number | null;
+}
+
 export interface GenerationMeta {
   continuity?: string[];
   backend: 'nai' | 'comfyui';
@@ -94,6 +117,8 @@ export interface GenerationMeta {
   /** NAI 实际叠加的 vibe（被跳过的不在内）；其它后端为空数组。 */
   vibes: GenerationVibe[];
   params: GenerationParams;
+  /** 冻结配方；旧图没有这一项。 */
+  recipe?: CompiledRecipe;
 }
 
 /** 强度等小数展示：整数不带小数点，其余最多 3 位、去掉尾随 0。 */

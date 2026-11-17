@@ -30,7 +30,7 @@ function wardrobe(name: string, pieces: Array<[string, string]>): Wardrobe {
 }
 
 describe('旧版账本里的走光词会陈旧回收', () => {
-  it('连着两楼没再提就收回穿着，并清掉那串 legacy 词', () => {
+  it('legacy 走光词同样 sticky：没写穿衣/整理动作就一直保留', () => {
     // 第 1 楼实际账本：模型把 off shoulder / breasts out 写进了 state.legacy，
     // 旧版只回收 location 与 exposure，这两位就一直跟到第 15 楼。
     const state = new Map([
@@ -47,7 +47,9 @@ describe('旧版账本里的走光词会陈旧回收', () => {
     settleStaleUndress(asState(state), '茉莉坐在沙发上看书，窗外的雨停了。');
     settleStaleUndress(asState(state), '茉莉喝了口茶，继续翻页。');
     const piece = [...state.values()][0].pieces[0] as { state: Record<string, string> };
-    expect(piece.state.stale).toBe('0');
+    // 走光状态跨楼保持：没有穿衣/整理动作就不许悄悄收回。
+    expect(piece.state.legacy).toBe('off shoulder, breasts out');
+    settleStaleUndress(asState(state), '茉莉拉好衣服，坐直了身子。');
     expect(piece.state.legacy).toBeUndefined();
   });
 

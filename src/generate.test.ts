@@ -312,6 +312,20 @@ describe('generateImage', () => {
       artist: { id: 'art_a', name: '厚涂', prompt: 'artist:wlop' },
       vibes: [{ id: 'v1', name: '参考A', group: '', strength: 0.8, effectiveStrength: 0.8 }],
       params: { sampler: 'k_euler', steps: 28, cfg: 5 },
+      // 冻结配方随图落盘：重画时按这份结构原样复现，不重新编译。
+      recipe: {
+        v: 1,
+        appVersion: expect.any(String),
+        // 存的是**分通道的结构**：Base tag 只放模型写的那串，画师串与质量词、
+        // 整串负面由后端按渠道配置拼——这样重画时换渠道也仍然复现同一张。
+        prompt: '1girl',
+        nl: '',
+        negative: expect.stringContaining('worst quality'),
+        characters: [],
+        size: 'portrait',
+        model: 'nai-diffusion-4-5-full',
+        seed: 1,
+      },
     });
   });
 

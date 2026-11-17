@@ -65,9 +65,27 @@ import {
   resolveCanonicalCharName,
 } from '@/autoTag/charReuse';
 import { BBI_OUTFIT_EXTRA_KEY } from '@/autoTag/outfitState';
+import { BBI_OUTCOME_EXTRA_KEY, classifyFailure, recordOutcome, type FloorOutcome } from '@/autoTag/outcome';
+import {
+  BBI_FACTS_EXTRA_KEY,
+  factsAcrossSceneBreak,
+  factsBackedByLedger,
+  gateFactOwnership,
+  factsToClothingChanges,
+  applyFactClothing,
+  factsBlock,
+  dedupeFacts,
+  repairByFacts,
+  stripExposureTokens,
+  dropExposureClaims,
+  type StoredFacts,
+  type StoryFact,
+} from '@/autoTag/facts';
 import {
   CLOTHING_PROTOCOL,
   acceptClothingChanges,
+  applyExplicitFacts,
+  storyLooksLikeNewScene,
   applyTextQualifiers,
   adoptChangedClothing,
   adoptStoryClothing,
@@ -83,6 +101,7 @@ import {
   narrativeHash,
   readClothingFloor,
   savedImageClothing,
+  settleStaleUndress,
   type ClothingFloor,
   type ClothingState,
 } from '@/autoTag/outfitTimeline';
@@ -101,15 +120,14 @@ import {
 } from '@/autoTag/shotCheck';
 import { salvageJsonObject } from '@/autoTag/salvage';
 import { applySuggestedDistance, diagnoseDistance } from '@/autoTag/shotGuide';
-import { fallbackImage, fallbackNote, isDrawWorthy } from '@/autoTag/fallbackImage';
+import { isDrawWorthy } from '@/autoTag/fallbackImage';
 import { refreshWardrobeLock } from '@/st/wardrobeLock';
 import {
   adjacentPositionNote,
   adjacentPositions,
   duplicatePositionNote,
   duplicatePositions,
-  unanchoredAfters,
-  unanchoredQuoteNote,
+  unanchoredIndexes,
 } from '@/autoTag/positionCheck';
 import { diagnoseTruncation, EMPTY_PLAN_RETRY_NOTE, truncationRetryNote } from '@/autoTag/truncation';
 import {
@@ -496,6 +514,16 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
   }
   const swipeId = activeSwipeId(message);
   const identity = `${chatId}\u0000${floor}\u0000${swipeId ?? 'none'}\u0000${textHash(source)}`;
+  // 同一楼、同一份正文之前提取过的事实时，本轮直接沿用：模型不用从零再猜一遍，
+  // 重试也少写一段输出（首字延迟只付一次，输出量也小）。
+  const storedFacts = (message.extra?.[BBI_FACTS_EXTRA_KEY] ?? null) as StoredFacts | null;
+  // 上一楼的事实表：上一楼已确立的状态在下一楼仍然成立，一开始就下发，
+  // 而不是等重试才补上。上一楼没提取过就是空。
+  const previousFloorFacts = (context.chat[floor - 1]?.extra?.[BBI_FACTS_EXTRA_KEY] ?? null) as StoredFacts | null;
+  const previousFacts: StoryFact[] =
+    previousFloorFacts?.v === 1 ? dedupeFacts(previousFloorFacts.facts ?? []) : [];
+  const cachedFacts: StoryFact[] =
+    storedFacts && storedFacts.v === 1 && storedFacts.hash === textHash(source) ? storedFacts.facts : [];
   // 手动是显式意图:即使同一正文自动流程已处理过(比如结论是无需插图)也照跑,
   // 但仍写入 processed,防止自动流程随后对同一正文重复请求。
   if (!opts.manual && processed.has(identity)) {
@@ -580,7 +608,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const promptOptions = slot ? { ...settings.autoTag, minImages: 1, maxImages: 1 } : settings.autoTag;
     // gemini 档改发紧缩契约(见 compactContract.ts 的实测表)。整轮请求固定一次:
     // 验收、建档 nl 校验、重试都必须看同一份口径,中途改动会让前后不一致。
-    const compact = useCompactContract(promptOptions.jailbreakTier);
+    // gemini 档只留 slimContract 一份契约：再叠一份紧凑契约会给出互相打架的
+    // 字段口径（一份要 after 写原句、一份要 after 写 P 编号；一份说器官由插件补、
+    // 一份说不要写器官），模型夹在中间只能瞎猜。实测第 0 楼因此被判「引句不锚定」重试。
+    const compact = isGeminiTier(promptOptions.jailbreakTier) ? false : useCompactContract(promptOptions.jailbreakTier);
     // 协议形态开跑时快照一次:写协议、验收与收尾同一份,用户中途拨开关也不会前后不一
     const profile = autoTagProfile();
     // 素材候选的同分摇号种子:取自 identity(聊天+楼层+swipe+正文哈希)。
@@ -605,6 +636,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     const wardrobeBaseline = new Map([...wardrobe].map(([name, entry]) => [name, JSON.stringify(entry)]));
     // 本楼的衣柜选择也要按主名归一：clothingBefore 只处理 floor 之前的楼层。
     applyWardrobeChoices(wardrobe, message, undefined, entriesBefore);
+    // 当前这一楼自己的翻篇证据也要先算进去：clothingBefore 只逐楼处理「已经发生」
+    // 的楼层，本楼的「第二天/出门」在账本下发前没被处理过，模型看到的就是上一楼
+    // 的「掀衣露胸」，于是照着画一张她露着胸走过走廊的图。
+    settleStaleUndress(wardrobe, rawSource);
     const wardrobeRevision = clothingRevision(context.chat, floor);
     const expectedStory = narrativeHash(rawSource);
     const savedWardrobe = readClothingFloor(message, wardrobeRevision);
@@ -655,6 +690,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         // 破限词的口径必须与下面的紧缩契约同源(见 jailbreak.ts 的 geminiWantsExplicitWords):
         // `gemini`(自动)档在 4 系上要发宽松版,否则「档位文本禁器官词 + 契约允许器官词」自相矛盾。
         activeChannel?.model,
+        previousFacts.filter((fact) => fact.confidence !== 'unknown'),
       );
       built.push({
         role: 'system',
@@ -744,11 +780,17 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 换模型名也不会变(实测 agy 整站 16 个模型名全回同一句 agy_credential_missing)。
     // 一旦命中就直接结束循环,把「换渠道」这句话交给用户,而不是白烧 5 次重试。
     let credentialDead = false;
+    // 结局记录要用的两笔计数:发了几次、丢了几张。都在循环外累计,
+    // 因为写盘那一步已经出了循环,循环里的 attempt 变量拿不到。
+    let attemptsUsed = 0;
+    let droppedImages = 0;
     for (let attempt = 0; attempt < granted && !plan; attempt++) {
+      attemptsUsed = attempt + 1;
       if (controller.signal.aborted) {
         processed.delete(identity);
         return;
       }
+      if (attempt > 0 && cachedFacts.length) retryNote = [retryNote, factsBlock(cachedFacts)].filter(Boolean).join('\n\n');
       // 被拦过一次之后改发「user 只留一句指令」的布局:实测把正文与账本挪进 system 后
       // 同一份内容从 0/4 翻成 4/4。原样重发只会再被拦一次,还多花一次钱。
       const baseMessages =
@@ -957,7 +999,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             !slot &&
             profile.naiCharPrompts &&
             profile.nl &&
-            !compact &&
+            // 精简契约（gemini 档）里 changes 不带 nl —— 外貌只靠 tag 与档案字段，
+            // 这条校验若照旧生效，每次建档都会被自己判失败，重试到次数用尽仍不落图。
+            !isGeminiTier(promptOptions.jailbreakTier) &&
             candidate.changes.some((change) => change.field === 'new' && !change.nl?.trim())
           ) {
             throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
@@ -981,16 +1025,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             retryNote = EMPTY_PLAN_RETRY_NOTE;
             throw new Error('返回了空 images');
           }
-          // 重试到底还是 0 张、而这一楼明明有值得画的情节：自己拼一张。
-          // 交白卷对用户是纯损失（整楼没图 + 批量队列判失败），拼一张最差也只是构图普通。
-          if (!slot && !candidate.images.length && isDrawWorthy(source)) {
-            const fallback = fallbackImage(source, preparedTarget.segments, entriesBefore);
-            if (fallback) {
-              candidate.images.push(fallback);
-              console.warn(`[墨影] ${fallbackNote(source)}`);
-              diagnostic('images:fallback', { floor, position: fallback.position });
-            }
-          }
+          // 「这一楼没有值得画的瞬间」是正常结果，不再是失败：不再自己拼一张默认图。
+          // 兜底图会替模型决定「这楼该有画面」，而它连 nl 都是空的——等于代码编剧情。
+          // 该楼的 changes/outfitChanges 照常落盘，只是不落图。
           // Base nl 缺失:模型偶尔只写 tag 不写 nl(实测第 7/8 楼)。
           // nl 是「这一格的空间与瞬间」唯一载体,缺了就只剩一堆标签,
           // 画面靠概率拼。还有重试次数时纠一次，不要每楼都重跑。
@@ -1007,14 +1044,17 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               throw new Error('Base nl 缺失');
             }
           }
-          // 引句锚定:after 必须是本楼正文里的原句。编出来的引句意味着画面也是编的
-          // (第 12 楼正文只有李斌在书房计划,模型却画了温岚坐沙发喝奶茶)。
-          // 只在还有重试次数时纠,重试到底仍不锚定就放行——不为了形式丢掉整张图。
-          if (!slot && attempt < retries) {
-            const loose = unanchoredAfters(candidate.images, preparedTarget.promptText);
+          // 引句锚定:after 必须是本楼正文里逐字存在的原句(纯 P 编号例外)。编出来的
+          // 引句意味着画面也是编的(第 12 楼正文只有李斌在书房计划,模型却画了温岚坐
+          // 沙发喝奶茶)。这是事实门槛，不再随重试次数失效：不锚定的那一张直接丢，
+          // 其余照常落位；一张不剩就是「本楼无可画瞬间」，属正常结果，不补图。
+          if (!slot) {
+            const loose = unanchoredIndexes(candidate.images, preparedTarget.promptText);
             if (loose.length) {
-              retryNote = unanchoredQuoteNote(loose);
-              throw new Error(`引句不在正文里(${loose.length})`);
+              const dropped = loose.map((index) => candidate.images[index]?.afterQuote ?? '').filter(Boolean);
+              candidate.images = candidate.images.filter((_, index) => !loose.includes(index));
+              droppedImages += loose.length;
+              console.warn(`[墨影] 丢弃 ${loose.length} 张引句不在正文里的图：${dropped.join(' / ')}`);
             }
           }
           // 落位重复:两张图挤在同一段,画出来是同一瞬间拍两遍。仅当可选位置
@@ -1187,6 +1227,54 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           return;
         }
         plan = parsed.plan;
+        // 跨场景时丢掉继承来的露点事实：昨天敞着怀，不代表今天出门还敞着。
+        // 只丢继承的，正文真写了（explicit）照留。
+        if (plan) {
+          const before = plan.facts?.length ?? 0;
+          const exposed = (name: string) => {
+            const record = wardrobe.get(name);
+            return !!record?.pieces.some(
+              (piece) =>
+                piece.state?.exposure === 'bare' ||
+                piece.state?.exposure === 'partial' ||
+                ['lifted', 'pulled_aside'].includes(String(piece.state?.arrangement ?? '')),
+            );
+          };
+          // 归属闸门放最前：模型常把别人的衣物记到女主身上（「小姨子的内裤」），
+          // 这类事实一旦进账本，下一楼就会把她画成全裸。
+          const ownedFacts = gateFactOwnership(plan.facts ?? [], [
+            ...[...entriesBefore.keys()].map(String),
+            ...(plan.facts ?? []).map((fact) => fact.subject).filter((name) => name && name !== 'scene'),
+          ]);
+          if (ownedFacts.length < (plan.facts?.length ?? 0))
+            console.warn(`[墨影] 丢掉 ${(plan.facts?.length ?? 0) - ownedFacts.length} 条归属不是她的事实`);
+          plan.facts = factsBackedByLedger(
+            factsAcrossSceneBreak(ownedFacts, storyLooksLikeNewScene(source)),
+            exposed,
+          );
+          if ((plan.facts.length ?? 0) < before) {
+            console.warn(`[墨影] 跨场景丢掉 ${before - plan.facts.length} 条继承的露点事实`);
+            for (const image of plan.images)
+              for (const character of image.characters ?? []) {
+                const cleaned = stripExposureTokens(character.tag);
+                if (cleaned !== character.tag) {
+                  console.warn(`[墨影] ${image.position} ${character.name} 的 tag 去掉了跨场景继承的露点词`);
+                  character.tag = cleaned;
+                  const prose = dropExposureClaims(character.nl);
+                  if (prose !== character.nl) character.nl = prose;
+                }
+              }
+          }
+        }
+        // 事实表只做减法：这楼有「她穿着某件衣服」的明确事实、又没有裸露事实时，
+        // 把她 tag 里的裸体词摘掉。新增内容仍归模型，这里不改写别的字段。
+        if (plan) {
+          for (const image of plan.images) {
+            const repaired = repairByFacts(image, plan.facts ?? []);
+            if (repaired.length)
+              console.warn(`[墨影] ${image.position} 事实表否定了裸体断言：${repaired.join('；')}`);
+          }
+        }
       } catch (error) {
         if (controller.signal.aborted) {
           processed.delete(identity);
@@ -1270,6 +1358,18 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           '墨影自动 tag 失败',
         );
       }
+      // 失败也要落一笔结局：界面据此显示「这楼没画面」而不是「失败」，
+      // 用户才不会把正常的空镜头当成故障去反复重试。
+      const verdict = classifyFailure(lastError || 'tag 分析未通过校验');
+      await recordOutcome(floor, swipeId ?? null, chatId, {
+        v: 1,
+        status: verdict.status,
+        reason: verdict.reason,
+        images: 0,
+        dropped: droppedImages,
+        attempts: attemptsUsed,
+        at: Date.now(),
+      });
       if (opts.headless) throw new Error(lastError || 'tag 分析未通过校验');
       return;
     }
@@ -1436,10 +1536,20 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           change.charOffset,
         );
       }
+    // 模型只写 facts：服装变更由事实翻译而来，与人工干预走同一条校验管线。
+    // 模型自己的 outfitChanges 不再写账本（两条自由通道正是「谁写进去的」追不出来的原因）。
+    const modelClothingChanges = slot ? [] : factsToClothingChanges(plan.facts ?? [], preparedTarget.segments);
+    if (!slot && plan.outfitChanges?.length)
+      console.warn(`[墨影] 忽略模型自报的 ${plan.outfitChanges.length} 条服装变更（服装只从 facts 进账本）`);
+    if (modelClothingChanges.length) {
+      const appliedFacts = applyFactClothing(wardrobe, modelClothingChanges);
+      if (appliedFacts.length)
+        console.warn(`[墨影] 账本按事实更新 ${appliedFacts.length} 件：${appliedFacts.slice(0, 6).join('、')}`);
+    }
     const accepted = acceptClothingChanges(
       slot
         ? []
-        : (plan.outfitChanges ?? []).filter((c) => {
+        : modelClothingChanges.filter((c) => {
             // 账本按主名记，模型可能写「晚晴」；不归一会查不到 suitMode=always 而被放进
             // accept 里再拒掉，用户看到一条本可静默的警告。
             const name = activeEntries.length
@@ -1452,6 +1562,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       wardrobe,
       activeEntries,
     );
+    // 事实表是账本的上游证据之一：模型在 facts 里明确写了「她穿着白衬衫」时，
+    // 账本里记着脱下的同一件衣服就该恢复穿着——explicit 的事实高于继承来的状态。
+    if (!slot && plan.facts?.length)
+      for (const line of applyExplicitFacts(wardrobe, plan.facts))
+        console.warn(`[墨影] 事实表把账本改回穿着：${line}`);
+
     const scope = `${chatId}|${floor}|${swipeId ?? 0}|${expectedStory}`;
     if (!slot) {
       // 正文自己点名了换装（「换上了睡衣」「只剩一件白色泳衣」「穿着黑吊带」）时，
@@ -1682,12 +1798,27 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         const inferred = mouth === 'on-her' ? 'mouth-on-her' : mouth === 'on-him' ? 'mouth-on-him' : null;
         image.act = alignMouthAct(image.act, mouth) ?? image.act ?? inferred;
       }
+      // 插入类行为模型经常整个漏掉（只写「按住腰」），画面就只剩一个握腰的手。
+      // 正文里「插进去/进入/抽送」是确定事实，按它补 act，行为和器官由枚举表补齐。
+      if (!image.act) {
+        const sentence = explicitSentence(source, image.sourceLine, image.charOffset);
+        if (/插入|插进|进入|挺进|抽送|顶进|操进|没入/.test(sentence)) {
+          image.act = /后入|背后|趴着|撅着|背对/.test(sentence) ? 'rear' : 'front';
+        }
+      }
       if (image.act) {
         const expansion = actExpansion(image.act);
         if (expansion.base.length) image.tag = appendExplicitTags(image.tag, expansion.base);
+        // 需要有男方在场的行为，人数 tag 必须写出来：只写 `1girl` 时模型会把
+        // `penis`、`his hand` 画到她身上，或者干脆画成她自己。
+        if (expansion.needsMale && !/\b1boy\b/i.test(image.tag)) image.tag = `${image.tag}, 1boy`;
         // 承受方 = 非男性角色块。`self`/`toy` 没有 source 段,男性块什么都不加。
         for (const character of image.characters) {
-          const receiving = !isMaleIdentity(character.name, planIdentities);
+          // 男性判定不能只靠 planIdentities：模型常不给男主建档，`isMaleIdentity` 认不出，
+          // 于是把承受方标签（moaning/arched back/spread legs）塞进男主块，画出一个张腿的男人。
+          const receiving =
+            !/\b1boy\b|faceless male/i.test(character.tag) &&
+            !isMaleIdentity(character.name, planIdentities);
           const extra = receiving ? expansion.target : expansion.source;
           if (extra.length) character.tag = appendExplicitTags(character.tag, extra);
         }
@@ -1711,7 +1842,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         image.characters.map((c) => (activeEntries.length ? resolveCanonicalCharName(c.name, activeEntries) : c.name)),
       );
       // 最后一道：袖长等修饰语必须落在写回楼层的 tag 上（外貌层会重建 tag，前面补的会被冲掉）。
-      applyTextQualifiers(image, source);
+      applyTextQualifiers(image, source, wardrobe, plan.facts ?? []);
       frames.push({
         tag: serializeImageTag(image),
         sourceLine: image.sourceLine,
@@ -1911,6 +2042,26 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             {
               key: BBI_OUTFIT_EXTRA_KEY,
               value: nextWardrobe,
+            },
+            {
+              key: BBI_FACTS_EXTRA_KEY,
+              value: {
+                v: 1,
+                hash: textHash(source),
+                at: Date.now(),
+                facts: plan.facts ?? [],
+              } satisfies StoredFacts,
+            },
+            {
+              key: BBI_OUTCOME_EXTRA_KEY,
+              value: {
+                v: 1,
+                status: plan.images.length ? 'success' : 'no_frame',
+                images: plan.images.length,
+                dropped: droppedImages,
+                attempts: attemptsUsed,
+                at: Date.now(),
+              } satisfies FloorOutcome,
             },
           ],
       { render: !opts.headless },

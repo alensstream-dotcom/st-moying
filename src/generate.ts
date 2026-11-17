@@ -54,9 +54,10 @@ import {
   naiQualityTags,
   fullNegativePrompt,
 } from '@/backends/nai';
-import { warnIfOverBudget } from '@/backends/naiBudget';
+import { enforceNaiBudget } from '@/backends/naiBudget';
 import { effectiveOrientation, parseSize, pickSize, type Orientation } from '@/backends/size';
 import { acquireNaiSlot } from '@/floor/genQueue';
+import { PLUGIN_VERSION } from '@/version';
 import type { GenerationMeta } from '@/generationMeta';
 import {
   activeComfyPreset,
@@ -82,6 +83,12 @@ export interface GenerateInput {
   naiPortraitResolution?: string;
   /** Exact saved story frame; omitted for free-form APIs and material previews. */
   storyFrame?: { floor: number; tag: string };
+  /**
+   * 冻结重画:传进来的 prompt/nl/characters 就是当年提交的那一份,
+   * 不要再按当前规则重编译（外貌/服装/道具都不动）。
+   * 用在“用原配方重画”上——改了规则也要能复现老图。
+   */
+  frozen?: boolean;
   /** 正向 danbooru 短 tag。 */
   prompt: string;
   /** 自然语言部分(可空)。 */
@@ -279,7 +286,7 @@ export async function generateImage(
     input.characters?.some((c) => resolveCanonicalCharName(c.name, charTagLib.entries) === e.name),
   );
   let appearanceNotes: string[] = [];
-  if (input.storyFrame && input.characters?.length) {
+  if (!input.frozen && input.storyFrame && input.characters?.length) {
     const chat = getContext()?.chat ?? [];
     const saved = readClothingFloor(
       chat[input.storyFrame.floor],
@@ -366,7 +373,7 @@ export async function generateImage(
     };
   }
   let costumeContext: CostumeContext | undefined;
-  if (input.storyFrame) {
+  if (!input.frozen && input.storyFrame) {
     const chat = getContext()?.chat ?? [],
       floor = input.storyFrame.floor;
     const saved = readClothingFloor(chat[floor], clothingRevision(chat, floor));
@@ -402,7 +409,8 @@ export async function generateImage(
       };
     }
   }
-  if (input.storyFrame && input.characters?.length) {
+  // 冻结重画跳过这一段：固定套装也属于“当前规则”，重画时不该再套一遍。
+  if (!input.frozen && input.storyFrame && input.characters?.length) {
     const chat = getContext()?.chat ?? [],
       floor = input.storyFrame.floor;
     const saved = readClothingFloor(chat[floor], clothingRevision(chat, floor));
@@ -460,6 +468,7 @@ export async function generateImage(
     const size = effectiveOrientation(activeOrientationLock(), input.size ?? 'portrait');
     let result: ComfyImageResult;
     let meta: GenerationMeta;
+    let recipe: GenerationMeta['recipe'];
     if (isNai) {
       // 单次覆盖模型:素材缩略图走 V4 试用模型(不占 Anlas),不该为此改动用户保存的渠道设置。
       // effectiveNai() 返回的是浅拷贝,改它不会污染 settings。
@@ -565,16 +574,16 @@ export async function generateImage(
       }
       if (subjectCount > 1 && referenceSet.length)
         appearanceNotes.push('多人画面：人物骨架仍以文字 tag 为准，参考图只做脸与发型锚定');
-      // 4.5 的 512 token 是 base + 全部 char_captions 共享的，超了静默截尾。
-      // 只量不改：内容纪律在规范与 clampNlWords，这里留下现场供排查缺角色/丢句。
-      warnIfOverBudget(naiConn, input.prompt, input.nl ?? '', characters);
+      // 4.5 的 512 token 是 base + 全部 char_captions 共享的，超了 NAI 不报错、
+      // 从尾部静默丢。这里改成发送前闸门：先收紧 NL、再删通用场景词，仍超就不发。
+      const fitted = enforceNaiBudget(naiConn, input.prompt, input.nl ?? '', characters);
       const output = await generateNaiImage(
         naiConn,
         // characters 原样透传:不支持的模型由 buildNaiParameters 自己滤掉(同一口径
         // naiSupportsCharacterPrompts),在这儿再滤一遍只会多一处会漂的判据
         {
-          prompt: input.prompt,
-          nl: input.nl ?? '',
+          prompt: fitted.prompt,
+          nl: fitted.nl,
           characters,
           seed: input.seed,
           size,
@@ -586,7 +595,24 @@ export async function generateImage(
         },
       );
       result = output.result;
-      meta = { backend: 'nai', model: naiConn.model, ...output.usage };
+      // 冻结配方:提交那一刻的结构化编译结果。重画时按它拼装,
+      // 不重新走一遍外貌/服装/词表——否则改了规则,老图就再也复现不出来。
+      recipe = {
+        v: 1,
+        appVersion: PLUGIN_VERSION,
+        prompt: fitted.prompt,
+        nl: fitted.nl,
+        negative: fullNegativePrompt(naiConn),
+        characters: characters.map((character) => ({
+          name: character.name,
+          tag: character.tag,
+          nl: character.nl,
+        })),
+        size: size,
+        model: naiConn.model,
+        seed: input.seed ?? null,
+      };
+      meta = { backend: 'nai', model: naiConn.model, ...output.usage, recipe };
     } else {
       const conn = effectiveComfyConn();
       result = await generateComfyImage(

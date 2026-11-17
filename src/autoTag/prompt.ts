@@ -29,6 +29,7 @@ import { buildLoreBlock } from '@/data/loreIndex';
 import { isAiStoryMessage, isStoryMessage, type STContext, type STMessage } from '@/st/context';
 import { readClothingFloor } from '@/autoTag/outfitTimeline';
 import { storyGarmentLine, storyGarments } from '@/autoTag/storyGarments';
+import { factsBlock, type StoryFact } from '@/autoTag/facts';
 import { parseImageTagContent } from '@/st/imageTagRegex';
 import type { AutoTagSettings } from '@/state/settings';
 import {
@@ -389,6 +390,12 @@ export async function buildAutoTagMessages(
    * (见 jailbreak.ts 的 geminiWantsExplicitWords)。缺省时按「保守一档」处理。
    */
   channelModel?: string,
+  /**
+   * 上一次分析留在同一楼的事实表（穿着/场所/身体/动作）。
+   * 重试时模型会读到「上一轮你自己提取过什么」，不必重新猜一遍已确立的状态；
+   * 事实本身带出处，模型可以沿用也可以按正文改口，但不能凭空重编。蓬
+   */
+  facts?: StoryFact[],
 ): Promise<ChatMsg[]> {
   const target = context.chat[targetFloor];
   const preparedTarget =
@@ -836,9 +843,11 @@ ${characterRule}
   // 服装现状排在最近实拍 tag 之前:它是结论(该穿什么),实拍 tag 是证据。
   const outfitBlock = outfitStateBlock?.trim() ? `${outfitStateBlock.trim()}\n\n` : '';
   const anchorBlock = anchorText?.trim() ? `${anchorText.trim()}\n\n` : '';
+  const factsText = facts?.length ? `${factsBlock(facts)}\n\n` : '';
+
   const ledgerBlock = shotLedgerText?.trim() ? `${shotLedgerText.trim()}\n\n` : '';
   const storyGarmentBlock = storyGarmentLine(preparedTarget.promptText);
-  const ledgerText = `${memoryText}\n\n${libraryBlock}\n\n${seedBlock ? `${seedBlock}\n\n` : ''}${reuseBlock}${outfitBlock}${storyGarmentBlock ? `${storyGarmentBlock}\n\n` : ''}${anchorBlock}${ledgerBlock}${lastShotBlock}${loreBlock ? `${loreBlock}\n\n` : ''}${taskBlock}${previous ? `${previous}\n\n` : ''}`;
+  const ledgerText = `${memoryText}\n\n${libraryBlock}\n\n${seedBlock ? `${seedBlock}\n\n` : ''}${reuseBlock}${factsText}${outfitBlock}${storyGarmentBlock ? `${storyGarmentBlock}\n\n` : ''}${anchorBlock}${ledgerBlock}${lastShotBlock}${loreBlock ? `${loreBlock}\n\n` : ''}${taskBlock}${previous ? `${previous}\n\n` : ''}`;
   const anchorIndexBlock = preparedTarget.anchorIndex
     ? `--- 位置索引 ---\nposition 取此处的 P编号；after 必须从上面的正文里逐字抄原句。\n${preparedTarget.anchorIndex}`
     : '';

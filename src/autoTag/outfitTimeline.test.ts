@@ -498,11 +498,14 @@ describe('settleStaleUndress', () => {
       ],
     ]);
 
-  it('连续两楼不提这件衣服就穿回去', () => {
+  it('没写穿衣动作就一直保持脱下（状态 sticky）', () => {
     const state = make();
     settleStaleUndress(state, '两人坐在窗边聊天。');
     expect(state.get('林晚晴')?.pieces[0].state.location).toBe('removed');
     settleStaleUndress(state, '天色暗了下来。');
+    // 旧版「连续两楼没提就穿回」会让上一楼脱掉的衣服在无换装描写的楼层里复活。
+    expect(state.get('林晚晴')?.pieces[0].state.location).toBe('removed');
+    settleStaleUndress(state, '她穿上衬衫和裤子，走到门口。');
     expect(state.get('林晚晴')?.pieces[0].state.location).toBe('worn');
     expect(state.get('林晚晴')?.pieces[1].state.location).toBe('worn');
   });
@@ -513,8 +516,12 @@ describe('settleStaleUndress', () => {
     expect(state.get('林晚晴')?.pieces[0].state.location).toBe('removed');
   });
 
-  it('场景翻篇立刻穿回', () => {
+  it('换场景按最近着装复原，同一场景内保持 sticky', () => {
     const state = make();
+    // 同场景两楼没提衣物：保持脱下，不许自动穿回。
+    settleStaleUndress(state, '屋里很安静，她在窗边坐了一会儿。');
+    expect(state.get('林晚晴')?.pieces[0].state.location).toBe('removed');
+    // 场景翻篇（第二天出门）：按最近一次着装复原。
     settleStaleUndress(state, '第二天清晨，她出门锁门。');
     expect(state.get('林晚晴')?.pieces[0].state.location).toBe('worn');
   });
@@ -523,7 +530,7 @@ describe('settleStaleUndress', () => {
     const state = make();
     settleStaleUndress(state, '她坐在窗边发呆。');
     settleStaleUndress(state, '窗外下起了雨。');
-    expect(state.get('林晚晴')?.pieces[0].state.location).toBe('worn');
+    expect(state.get('林晚晴')?.pieces[0].state.location).toBe('removed');
     expect(state.get('林晚晴')?.pieces[1].state.location).toBe('worn');
   });
 });
@@ -782,6 +789,39 @@ describe('真实正文：场景推断与账本兜底', () => {
       charOffset: 0,
     } as unknown as ImageInsertion;
   }
+
+  it('衣物按由外到内渲染：外套在前、衬衫在中、内衣在后', () => {
+    const record: ClothingRecord = {
+      name: '温岚',
+      outfitId: 'o1',
+      source: 'init',
+      pieces: [
+        { id: 'bra', design: 'pink bra', state: { location: 'worn' } },
+        // 外套拎在手臂上：不遮盖，所以内衣该出镜（扣好的外套会把它们全盖住）。
+        { id: 'coat', design: 'trench coat', state: { location: 'worn', arrangement: 'carried' } },
+        { id: 'shirt', design: 'white shirt', state: { location: 'worn', fastening: 'open' } },
+      ],
+    };
+    const caption = clothingCaption(record);
+    expect(caption.tag.indexOf('trench coat')).toBeLessThan(caption.tag.indexOf('white shirt'));
+    expect(caption.tag.indexOf('white shirt')).toBeLessThan(caption.tag.indexOf('pink bra'));
+  });
+
+  it('别人的外套只剥领属、不写成她的衣服名', () => {
+    const record: ClothingRecord = {
+      name: '温岚',
+      outfitId: 'o1',
+      source: 'init',
+      pieces: [
+        { id: 'coat', design: '李斌的西装外套', state: { location: 'worn', arrangement: 'carried' } },
+        { id: 'shirt', design: 'white shirt', state: { location: 'worn' } },
+      ],
+    };
+    const caption = clothingCaption(record);
+    expect(caption.tag).not.toContain('李斌');
+    // 搭在手臂上不遮盖身体：身上的衬衫仍是唯一遮盖物。
+    expect(caption.tag).toContain('white shirt');
+  });
 
   function garmentKindOf(design: string): string {
     return garmentKind(design);

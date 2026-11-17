@@ -435,20 +435,33 @@ const CHAR_NL_MAX_WORDS = 30;
 export function clampNlWords(nl: string, maxWords: number): string {
   const text = (nl ?? '').trim().replace(/\s+/g, ' ');
   if (!text) return '';
-  if (text.split(' ').length <= maxWords) return text;
-  const sentences = text.match(/[^.!?]+[.!?]+/g) ?? [text];
+  const words = (value: string) => value.split(' ').filter(Boolean).length;
+  if (words(text) <= maxWords) return text;
+  // 截断的最小单位是「从句」，不是单词：按词硬切会把 "with his hand on her" 留成
+  // "with his hand"，动作的对象和落点全丢，画面反而更错。
+  const sentences = (text.match(/[^.!?]+[.!?]+/g) ?? [text]).map((sentence) => sentence.trim());
   const kept: string[] = [];
-  let words = 0;
-  for (const raw of sentences) {
-    const sentence = raw.trim();
-    const count = sentence.split(' ').filter(Boolean).length;
-    if (!count) continue;
-    if (words + count > maxWords) break;
+  let used = 0;
+  for (const sentence of sentences) {
+    const count = words(sentence);
+    if (used + count > maxWords) break;
     kept.push(sentence);
-    words += count;
+    used += count;
   }
-  const result = kept.length ? kept.join(' ') : `${text.split(' ').slice(0, maxWords).join(' ')}.`;
-  console.warn(`[墨影] nl 超长已截断（上限 ${maxWords} 词）：${text.length} 字符 → ${result.length} 字符`);
+  let result = kept.join(' ').trim();
+  if (!result) {
+    // 第一句本身就超限：退到分句层，尽量保住「谁—做什么—对谁」。
+    const clauses = (sentences[0] ?? text).split(/,\s*/).map((clause) => clause.trim()).filter(Boolean);
+    for (const clause of clauses) {
+      const count = words(clause);
+      if (used + count > maxWords) break;
+      result = result ? `${result}, ${clause}` : clause;
+      used += count;
+    }
+    if (!result) result = `${text.split(' ').slice(0, maxWords).join(' ')}`;
+    if (!/[.!?]$/.test(result)) result = `${result}.`;
+  }
+  console.warn(`[墨影] nl 超长已按整句/整从句截断（上限 ${maxWords} 词）：${text.length} 字符 → ${result.length} 字符`);
   return result;
 }
 

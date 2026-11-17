@@ -20,6 +20,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { cancelFloorTags } from '@/autoTag/runner';
+import { requestFloorTags } from '@/autoTag/runner';
 import { clothingTrace } from '@/autoTag/outfitTimeline';
 import { extractGarment } from '@/autoTag/outfitState';
 import { effectiveOrientation, type Orientation } from '@/backends/size';
@@ -265,12 +266,59 @@ const barText = computed(() => {
 });
 
 /** 无图且后端未就绪时,占位区中央的配置引导。 */
+/**
+ * 上次分析留下的结局（成功/没画面/半成功/需复核/失败）。
+ * 没有它的时候卡片只说「待生成」，用户分不清「还没跑」和「跑了但没有画面」。
+ */
+const lastOutcome = computed(() => {
+  const message = getContext()?.chat?.[props.messageId];
+  return (message?.extra as Record<string, unknown> | undefined)?.bbiTagOutcome as
+    | { status?: string; reason?: string }
+    | undefined;
+});
+
 const pendingHint = computed(() => {
+  const outcome = lastOutcome.value;
+  if (outcome?.reason && !shownEntry.value) return outcome.reason;
+  if (outcome?.status === 'no_frame') return '这一楼没有值得画的瞬间（模型判定）';
   if (!comfyActive.value && !naiActive.value) return '出图后端未选择,请到墨影「渠道」页选择出图渠道';
   return naiActive.value
     ? '未配置 NAI,请到墨影「渠道」页填写 API Key'
     : '未配置 ComfyUI,请到墨影「渠道」页填写工作流';
 });
+
+/**
+ * 这张图当时提交的冻结配方（若有）。
+ *
+ * 重画分两种：
+ * - 冻结重画：拿旧配方原样再跑一遍（只换种子）。编译器后来怎么改都不影响，
+ *   所以“我喜欢的那张脸”能一直复现。
+ * - 重编译重画：按当前规则重新拼（新改的服装/外貌规则才生效）。
+ * 只有配方版本对得上、且 tag 原文没被改过时，冻结重画才成立。
+ */
+function frozenRecipeOf(entry: BbiImageEntry | null) {
+  const recipe = entry?.meta?.recipe;
+  if (!recipe || recipe.v !== 1) return null;
+  // 只认“tag 原文没被改过”的那张：promptHash(entry.prompt) 与当前槽位 hash 一致。
+  if (promptHash(entry!.prompt) !== hash.value) return null;
+  return recipe;
+}
+
+/**
+ * 只重跑这一楼的分析（改 understanding），不碰已有图片。
+ * 与「重画」分开：重画是拿现有的理解再拍一张，重分析是重新看这一段文字。
+ */
+async function reanalyseFloor(): Promise<void> {
+  menuOpen.value = false;
+  const ctx = getContext();
+  if (!ctx) return;
+  try {
+    await requestFloorTags(props.messageId, { replace: true });
+  } catch (error) {
+    console.warn('[墨影] 重新分析这一楼失败', error);
+    if (import.meta.env.DEV) console.error(error);
+  }
+}
 
 async function generate(fresh = false): Promise<void> {
   if (busy.value || planning.value || !configured.value) return;
@@ -278,16 +326,26 @@ async function generate(fresh = false): Promise<void> {
   const currentHash = hash.value;
   // 本次任务的输入全部就地取值:请求在途时本组件很可能已被重水合销毁
   // (任一兄弟槽位出图都会触发全楼重建),销毁后再读 props 不可靠。
+  /*
+   * 重画优先走冻结配方：同一张图重画时，把当时提交的结构原样再发一遍。
+   * 不走这一步的话，重画会按当前规则重新编译提示词——你刚调过服装/外貌规则，
+   * 于是“同一张图”出来是另一张脸，用户没法把喜欢的那张反复复现。
+   * 只有 tag 原文被改过（hash 不匹配）才回落到重新编译。
+   */
+  const frozen = fresh ? frozenRecipeOf(shownEntry.value) : null;
   const job = {
     messageId: props.messageId,
     swipeId: props.swipeId,
     seq: props.seq,
     tag: props.tag,
-    prompt: props.prompt,
-    nl: props.nl,
-    negative: props.negative,
-    characters: props.characters.map((character) => ({ ...character })),
-    size: effectiveSize.value,
+    prompt: frozen ? frozen.prompt : props.prompt,
+    nl: frozen ? frozen.nl : props.nl,
+    negative: frozen ? frozen.negative : props.negative,
+    characters: frozen
+      ? frozen.characters.map((character) => ({ ...character, nl: character.nl }))
+      : props.characters.map((character) => ({ ...character })),
+    size: frozen ? (frozen.size as Orientation) : effectiveSize.value,
+    frozen: !!frozen,
   };
   // NAI 需要闸门排队 → 先显示「排队中」;ComfyUI 有服务端队列,直接进 generating
   const { signal, token } = beginGen(slot, currentHash, naiActive.value ? 'queued' : 'generating');
@@ -761,13 +819,35 @@ onMounted(() => {
                 class="bbi-fab"
                 type="button"
                 :disabled="!configured"
-                :title="configured ? '重绘' : '请先在墨影「渠道」页完成配置'"
+                :title="configured ? '换种子重画（沿用这张图的原始配方）' : '请先在墨影「渠道」页完成配置'"
+                @click="
+                  menuOpen = false;
+                  generate();
+                "
+              >
+                <Icon name="refresh" :size="15" />
+              </button>
+              <button
+                v-if="shownEntry"
+                class="bbi-fab"
+                type="button"
+                :disabled="!configured"
+                :title="configured ? '按当前规则重新编译后重画（改了服装/外貌规则后用这个）' : '请先在墨影「渠道」页完成配置'"
                 @click="
                   menuOpen = false;
                   generate(true);
                 "
               >
-                <Icon name="refresh" :size="15" />
+                <Icon name="settings" :size="15" />
+              </button>
+              <button
+                v-if="shownEntry"
+                class="bbi-fab"
+                type="button"
+                title="只重新分析这一楼（改理解，不动已有图片）"
+                @click="reanalyseFloor()"
+              >
+                <Icon name="search" :size="15" />
               </button>
               <button
                 v-if="shownEntry"
