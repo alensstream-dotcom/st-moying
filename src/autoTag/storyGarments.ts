@@ -79,3 +79,62 @@ export function storyGarmentLine(text: string): string {
   if (!garments.length) return '';
   return `【本楼正文衣物】${garments.join(', ')}\n（这一行是从本楼正文里认出来的穿着。它与上面的账本冲突时，以本楼正文为准；账本只是上一楼留下的状态。）`;
 }
+// 场所：Base 只写 `house, day` 太糊，模型会把「楼梯」「走廊」这些真正决定画面的词省掉。
+// 只认正文里确实写到的场所，认不出来就不补——替模型编场所比写糊更糟。
+const PLACE_ALIASES: Array<[string, string[]]> = [
+  ['楼梯', ['stairs']],
+  ['楼上', ['stairs']],
+  ['走廊', ['hallway']],
+  ['过道', ['hallway']],
+  ['玄关', ['doorway']],
+  ['门口', ['doorway']],
+  ['教室', ['classroom']],
+  ['客厅', ['living room']],
+  ['卧室', ['bedroom']],
+  ['房间', ['bedroom']],
+  ['浴室', ['bathroom']],
+  ['卫生间', ['bathroom']],
+  ['洗手间', ['bathroom']],
+  ['厨房', ['kitchen']],
+  ['沙发', ['couch']],
+  ['床上', ['bed']],
+  ['车内', ['car interior']],
+  ['街道', ['street']],
+  ['街', ['street']],
+  ['天台', ['rooftop']],
+  ['阳台', ['balcony']],
+  ['办公室', ['office']],
+  ['酒店', ['hotel']],
+  ['公寓', ['apartment']],
+  ['学校', ['school']],
+  ['窗', ['window']],
+];
+
+const PLACE_TAGS = new Set(TAG_LEXICON.scene);
+const PLACE_CJK = Object.entries(tagChinese as Record<string, string>)
+  .filter(([tag, zh]) => typeof zh === 'string' && PLACE_TAGS.has(tag) && zh.length >= 2 && zh.length <= 8)
+  .map(([tag, zh]) => ({ zh, tag }))
+  .sort((a, b) => b.zh.length - a.zh.length);
+
+/** 正文里出现的场所词（按出现顺序、上限 3 个）。 */
+export function storyPlaces(text: string): string[] {
+  if (!text) return [];
+  const hits: string[] = [];
+  const seen = new Set<string>();
+  for (const [zh, tags] of PLACE_ALIASES) {
+    if (!text.includes(zh)) continue;
+    for (const tag of tags) {
+      if (!PLACE_TAGS.has(tag) || seen.has(tag)) continue;
+      hits.push(tag);
+      seen.add(tag);
+    }
+    if (hits.length >= 3) return hits;
+  }
+  for (const { zh, tag } of PLACE_CJK) {
+    if (seen.has(tag) || hits.length >= 3) break;
+    if (!text.includes(zh)) continue;
+    hits.push(tag);
+    seen.add(tag);
+  }
+  return hits;
+}

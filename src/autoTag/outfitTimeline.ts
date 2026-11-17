@@ -4,12 +4,12 @@ import { applyWardrobeChoices, wardrobeChoiceRevision } from '@/state/wardrobeCh
 import type { CostumeContext, CostumeFloor } from './costumeContext';
 import type { TargetSegment } from './clean';
 import type { ImageInsertion } from './protocol';
-import { TAG_LEXICON } from '@/data/tagLexicon';
+import { TAG_LEXICON, normaliseLexiconTag } from '@/data/tagLexicon';
 import { extractGarment, readOutfitState, readWear, BBI_OUTFIT_EXTRA_KEY } from './outfitState';
 import { candidateAliasesForEntry, resolveCanonicalCharName } from './charReuse';
 import { isCollarToken, isPropToken, storyMentionsCollar, storyMentionsProp } from './props';
 import type { CharTagEntry } from '@/state/charTags';
-import { storyGarments } from './storyGarments';
+import { storyGarments, storyPlaces } from './storyGarments';
 import type { STMessage } from '@/st/context';
 import { parseImageTagContent, parseImageTags, stripImageTags } from '@/st/imageTagRegex';
 
@@ -2591,6 +2591,8 @@ function dropConflictingGarments(text: string, record?: ClothingRecord): string[
 const SLEEVE_TOKENS = /\b(?:short sleeves|long sleeves|sleeveless)\b/i;
 const SHIRT_LIKE = /\b(?:shirt|blouse|dress|t-?shirt|sweater|hoodie|jacket|coat|uniform)\b/i;
 
+const GENERIC_SCENE = new Set(['house', 'indoors', 'indoor', 'outdoors', 'outdoor', 'day', 'night', 'blurry background', 'depth of field']);
+
 export function applyTextQualifiers(image: ImageInsertion, source: string): void {
   const text = source || '';
   const sleeve = /短袖/.test(text)
@@ -2616,6 +2618,37 @@ export function applyTextQualifiers(image: ImageInsertion, source: string): void
       .map((word) => word.trim())
       .filter(Boolean)
       .filter((word) => clothing.has(word)).length;
+  // 露点词必须有正文撑腰：本楼正文只写「衣领敞开、露出锁骨」时，
+  // 模型补 breasts out / nipples 是它自己的加戏，画出来就和剧情不符。
+  const near = (source ? storyNearImage(text, image) : '') || text;
+  const exposure = /\b(?:breasts out|bare breasts?|exposed breasts?|nipples?|areolae?|cleavage|underboob|sideboob)\b/i;
+  const mentioned = /胸|乳|ru房|乳沟|乳头|乳晕|走光|裸/.test(near); // 锁骨太轻，撑不起 breasts out
+  if (!mentioned) {
+    const scrub = (tag: string): string =>
+      normaliseLexiconTag(
+        tag
+          .split(',')
+          .map((token) => token.trim())
+          .filter((token) => token && !exposure.test(token))
+          .join(', '),
+      );
+    image.tag = scrub(image.tag);
+    for (const c of image.characters) c.tag = scrub(c.tag);
+  }
+
+  // Base 的场所下限：模型爱只写 `house, day`，画面就没有「在楼梯上」这个事实。
+  // 只从本楼正文里取（storyPlaces 认不出就返回空），不编。
+  const scenes = new Set([...TAG_LEXICON.scene].map((word) => word.toLowerCase()));
+  const baseTokens = image.tag.split(',').map((token) => token.trim().toLowerCase()).filter(Boolean);
+  const concrete = baseTokens.filter((token) => scenes.has(token) && !GENERIC_SCENE.has(token));
+  if (concrete.length < 2) {
+    for (const place of storyPlaces(near)) {
+      if (baseTokens.includes(place)) continue;
+      baseTokens.push(place);
+    }
+    image.tag = baseTokens.join(', ');
+  }
+
   for (const c of image.characters) {
     if (!c.nl) continue;
     const verbs = /\b(holds?|holding|rests?|resting|turns?|looks?|leans?|steps?|walks?|stands?|sits?|reaches?|raises?|pulls?|pushes?|fingertips|palm|hand)\b/i.test(c.nl);

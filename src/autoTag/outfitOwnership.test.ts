@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptClothingChanges, dropForeignWear, enforceClothing } from '@/autoTag/outfitTimeline';
+import { acceptClothingChanges, applyTextQualifiers, dropForeignWear, enforceClothing } from '@/autoTag/outfitTimeline';
 import type { ClothingChange, ClothingState } from '@/autoTag/outfitTimeline';
 import type { CharTagEntry } from '@/state/charTags';
 
@@ -169,5 +169,25 @@ describe('「而自己」当主语的裸体句不许记到她账上', () => {
     const out = acceptClothingChanges([change(ev, { subjectEvidence: sub } as never)], src, dressed(), [entry('温岚')]);
     expect(out.changes.length).toBe(0);
     expect(out.rejected.length).toBe(1);
+  });
+});
+
+describe('露点词要有正文撑腰', () => {
+  const image = (tag: string): any => ({
+    position: 'P1',
+    tag,
+    nl: '',
+    characters: [{ name: '温岚', tag: '1girl, white blouse, breasts out', nl: '' }],
+  });
+  it('正文只写锁骨与衣领敞开时，breasts out 被摘掉', () => {
+    const one = image('1girl, hallway, breasts out');
+    applyTextQualifiers(one, '她领口微微敞开，露出锁骨和一小片雪白的肌肤。');
+    expect(one.tag).not.toContain('breasts out');
+    expect(one.characters[0].tag).not.toContain('breasts out');
+  });
+  it('正文写了胸口时保留', () => {
+    const two = image('1girl, hallway, breasts out');
+    applyTextQualifiers(two, '她衣领敞得很开，胸口几乎全露在外面。');
+    expect(two.characters[0].tag).toContain('breasts out');
   });
 });
