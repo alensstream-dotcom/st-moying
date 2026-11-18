@@ -237,6 +237,10 @@ function collapseSynonyms(pieces: string[]): string[] {
   const used = new Set<string>();
   const kept: string[] = [];
   for (const piece of pieces) {
+    if (/^(?:(?:open|unbuttoned|unzipped|no)\s+.+|.+\s+(?:removed|lift|down|aside))$/i.test(piece)) {
+      kept.push(piece);
+      continue;
+    }
     // 词表里的家族是「中心词」，模型写的常带颜色与材质（white blouse / collared shirt），
     // 所以按后缀匹配：取这一段末尾 1–3 个词，能被家族认领就归到那个家族。
     const words = piece.toLowerCase().split(' ').filter(Boolean);

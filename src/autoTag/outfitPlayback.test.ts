@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { prepareTargetText } from './clean';
 import { injectImageTags } from './protocol';
-import { parseImageTags } from '@/st/imageTagRegex';
+import { parseImageTagContent, parseImageTags, serializeImageTag } from '@/st/imageTagRegex';
 import type { ImageInsertion } from './protocol';
 import {
   clothingAt, clothingBefore, clothingCaption, clothingRevision, enforceClothing, narrativeHash,
@@ -49,6 +49,11 @@ describe('服装按原文位置重放', () => {
     expect(pieces[2].find((p) => p.id === 'bra')?.state.location).toBe('worn');
     expect(pieces[3].find((p) => p.id === 'bra')?.state.location).toBe('removed');
     expect(pieces[4]).toEqual(pieces[3]);
+    const opened = clothingAt(before, result.changes, 'story', 0, images[2].charOffset);
+    enforceClothing(images[2], opened, false, true, [person], story);
+    const saved = parseImageTagContent(serializeImageTag(images[2])).characters[0].tag;
+    expect(saved).toContain('white shirt');
+    expect(saved).toContain('open shirt');
   });
 
   it('无图楼层换了单件后跨楼继承，镜头猜测和没描述过的颜色都不能复写', () => {
