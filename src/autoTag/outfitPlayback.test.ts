@@ -53,7 +53,8 @@ describe('服装按原文位置重放', () => {
     enforceClothing(images[2], opened, false, true, [person], story);
     const saved = parseImageTagContent(serializeImageTag(images[2])).characters[0].tag;
     expect(saved).toContain('white shirt');
-    expect(saved).toContain('open shirt');
+    expect(saved).toContain('open collar');
+    expect(saved).not.toContain('open shirt');
   });
 
   it('无图楼层换了单件后跨楼继承，镜头猜测和没描述过的颜色都不能复写', () => {

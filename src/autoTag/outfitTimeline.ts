@@ -96,13 +96,14 @@ export type ClothingState = Map<string, ClothingRecord>;
 export const CLOTHING_PROTOCOL = `服装时间线由 outfitChanges 记录。每项 {name,position,operation,evidence,subjectEvidence,pieces:[{id,design,state}]}。
 name 用人物原名，position 用 P 编号，evidence 逐字引用本楼发生的动作或当前穿着陈述。代词动作可在 subjectEvidence 单独引用主语句。在 images 之前按原文顺序报告所有穿脱事件，包括没有选入插图的动作；无事件才给 []。
 init 在没有既有穿搭时记录首次着装。change 用于正文明确整套换装。add 用于加穿或补充明确穿着的单件。patch 用现有部件 ID，每次只写有变化的字段，款式相同就令 design 为空。正文直接写出一件不同款式时可用 patch 修正对应部件。外套、上衣、内衣、下装、鞋袜按件拆开。design 用独立标签，例如 white shirt, collared shirt, short sleeves。
-state 可用 location=worn/removed/held/floor/chair、fastening=closed/open/loose、arrangement=normal/lifted/pulled_aside/lowered/around_waist/around_ankles、leftSleeve/rightSleeve=on_arm/off_arm/rolled_up、damage=intact/torn、wetness=dry/wet、exposure=covered/partial/bare。脱下外套只改外套；随后解开衬衣领口只改衬衣 fastening；同一楼里每次动作分别写事件。未变化的部件和字段由账本继承。
+state 可用 location=worn/removed/held/floor/chair、fastening=closed/open/loose、opening=collar/front、arrangement=normal/lifted/pulled_aside/lowered/around_waist/around_ankles、leftSleeve/rightSleeve=on_arm/off_arm/rolled_up、damage=intact/torn、wetness=dry/wet、exposure=covered/partial/bare。脱下外套只改外套；解开衬衣领口只改衬衣的 fastening 和 opening，袖子保持原样。同一楼里每次动作分别写事件。未变化的部件和字段由账本继承。
 跨场景的省略换装由程序按角色参与的明确活动推定，逐图只使用该画面位置之前的状态。请报告正文明确给出的款式和穿脱；短暂移动、聊天、特写、计划、回忆和没提衣服不算事件。款式与穿脱写进服装时间线，人物档案保留固定外貌。无论后端是否支持独立人物提示，都请提供具名 characters。`;
 const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 const text = (v: unknown) => (typeof v === 'string' ? v.trim().slice(0, 1600) : '');
 const STATES: Record<string, string[]> = {
   location: ['worn', 'removed', 'held', 'floor', 'chair', 'unknown'],
   fastening: ['closed', 'open', 'loose', 'unknown'],
+  opening: ['collar', 'front', 'unknown'],
   /**
    * carried:衣服在身上/手里但没穿到身上去——外套搭在手臂上、拎着、披在肩头。
    * 它既不是 worn(不遮盖任何部位)也不是 held(没有离开她),单独立一格,
@@ -1448,7 +1449,9 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
     if (hiddenByOuter) continue;
     tags.push(englishDesign(stripPossessive(p.design).design));
     if (s.legacy) tags.push(s.legacy);
-    if (s.fastening === 'open')
+    const openCollar = ['open', 'loose'].includes(s.fastening) && s.opening === 'collar';
+    if (openCollar) tags.push('open collar');
+    else if (s.fastening === 'open')
       tags.push(
         /shirt|blouse/i.test(p.design)
           ? 'open shirt'
@@ -1458,7 +1461,7 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
               ? 'open coat'
               : 'open clothes',
       );
-    if (s.fastening === 'loose') tags.push('loose clothes');
+    if (s.fastening === 'loose' && !openCollar) tags.push('loose clothes');
     if (s.leftSleeve === 'off_arm' || s.rightSleeve === 'off_arm') tags.push('off shoulder');
     if (s.leftSleeve === 'rolled_up' || s.rightSleeve === 'rolled_up') tags.push('sleeves rolled up');
     if (s.damage === 'torn') tags.push('torn clothes');
@@ -1492,7 +1495,7 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
     };
     if (arrangements[s.arrangement]) tags.push(arrangements[s.arrangement]);
     const detail = [
-      s.fastening === 'open' ? 'unfastened' : s.fastening === 'closed' ? 'fastened' : '',
+      openCollar ? 'with the collar open' : s.fastening === 'open' ? 'unfastened' : s.fastening === 'closed' ? 'fastened' : '',
       arrangements[s.arrangement],
       s.exposure === 'bare' ? 'pulled clear of the covered skin' : s.exposure === 'partial' ? 'pulled partly aside' : '',
       s.leftSleeve === 'off_arm' ? 'left sleeve off the arm' : '',
@@ -1922,7 +1925,11 @@ export function inferClothingState(
     state.exposure = 'bare';
   if (aside) state.arrangement = 'pulled_aside';
   if (around) state.arrangement = /踝|脚/.test(evidence) ? 'around_ankles' : 'lowered';
-  if (open) state.fastening = partialOpen ? 'loose' : 'open';
+  if (open || partialOpen) {
+    state.fastening = partialOpen ? 'loose' : 'open';
+    state.opening = partialOpen || /衣领|领口/.test(evidence) && !/前襟|衣襟|从上到下|全部扣/.test(evidence)
+      ? 'collar' : 'front';
+  }
   if (/扣好|扣上|系好|系上|拉好拉链|拉上拉链/.test(evidence)) state.fastening = 'closed';
   if (/掖好|整理好|放下裙摆|放下衣摆|拉回原位/.test(evidence))
     Object.assign(state, { arrangement: 'normal', exposure: 'covered' });
