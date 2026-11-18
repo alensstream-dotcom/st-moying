@@ -26,8 +26,7 @@ import { isGeminiTier } from '@/autoTag/jailbreak';
  * 代价与补偿(重要,改这里之前先读):
  * - `nl`(自然语言描述)不再由模型写。NAI 的自然语言段会变薄,但露骨内容本来就由
  *   `explicitTags.ts` 的本地词典按正文补齐,不依赖模型写 nl。
- * - `outfitChanges` 不再由模型写。服装改由 `synthesiseSceneClothing` /
- *   `adoptChangedClothing` / `applyWardrobeChoices` 按正文动作在本地推进。
+ * - `outfitChanges` 只报明确着装或穿脱事件。服装时间线也会按本地正文补足可核实的动作。
  * - `identities` 不再由模型写。性别判定改由 `femaleStoryFact`(正文代词)与库内档案承担。
  * 这三个字段的**消费端一行都不用改**:缺字段时各处的 `?? []` / `?? undefined` 本来就是
  * 「本地兜底」路径,只是过去很少走到。
@@ -65,6 +64,7 @@ const ACT_FIELD_SPEC = `【act：这一格在做什么（必填一个值，没�
 export const COMPACT_PLAN_CONTRACT = `【本轮输出格式（唯一的一种）】
 只输出这一个对象，不要有任何其他键：
 {"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","nl":"一句英文自然语言","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag","nl":"一句英文自然语言"}]}],"changes":[],"outfitChanges":[],"costumeContexts":[],"identities":[]}
+outfitChanges 按服装时间线协议记录正文中每次明确的穿脱或换装。images=[] 时也需记录。
 nl 写进 JSON，不要写成长段散文：它只补 tag 说不清的那一件事。
 ${ACT_FIELD_SPEC}
 ${TAG_WHITELIST}`;
@@ -86,6 +86,7 @@ ${TAG_WHITELIST}`;
 export const COMPACT_PLAN_CONTRACT_LOOSE = `【本轮输出格式（唯一的一种）】
 只输出这一个对象，键固定为 images / changes / outfitChanges / costumeContexts / identities：
 {"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","nl":"一句英文自然语言","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag","nl":"一句英文自然语言"}]}],"changes":[],"outfitChanges":[],"costumeContexts":[],"identities":[]}
+outfitChanges 按服装时间线协议记录正文中每次明确的穿脱或换装。images=[] 时也需记录。
 nl 写在 JSON 里，与 tag 分工：tag 管可枚举项，nl 管这个动作怎么完成、衣物与接触的具体形态、画面里的空间层次。一句写完，不要写成段。
 ${ACT_FIELD_SPEC}
 

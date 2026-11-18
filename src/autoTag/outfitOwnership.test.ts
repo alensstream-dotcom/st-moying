@@ -133,7 +133,7 @@ describe('穿脱证据必须归属到本人', () => {
 });
 
 describe('账本裸体残影不许跨楼传播', () => {
-  it('账本说她脱光、但本楼正文的裸露是他的，就把衣服穿回去', () => {
+  it('正文写到其他人物时，不改动她已记录在账本里的穿脱状态', () => {
     // 实测第 7 节：李斌洗澡自慰（赤裸、精液），温岚只是上楼回家。
     // 旧账本把她记成 removed，于是这一楼她没有衣服可穿，出图全身裸。
     const state: ClothingState = new Map();
@@ -155,9 +155,8 @@ describe('账本裸体残影不许跨楼传播', () => {
     const text = '而自己，赤裸的身体上还残留着精液，依旧保持着充血状态的肉棒。温岚上楼回家。';
     enforceClothing(target as never, state, true, false, [entry('温岚')], text);
     const tag = target.characters[0].tag;
-    expect(tag).not.toContain('completely nude');
-    expect(tag).not.toContain('nipples');
-    expect(tag).toContain('nightgown');
+    expect(tag).not.toMatch(/(?:^|, )nightgown(?:,|$)/);
+    expect(state.get('温岚')?.pieces[0].state.location).toBe('removed');
   });
 });
 

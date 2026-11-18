@@ -85,7 +85,7 @@ export interface BuildTraceArgs {
   }>;
   /** 清洗前的那一份（按 position 索引）。 */
   original: ReadonlyMap<string, { nl: string; characters: ReadonlyArray<{ name: string; nl: string }> }>;
-  wardrobe: ClothingState;
+  wardrobes: readonly ClothingState[];
   segmentOf: (position: string) => string;
 }
 
@@ -97,8 +97,9 @@ export function buildFloorTrace(args: BuildTraceArgs): FloorTrace {
     facts: args.facts?.length ?? 0,
     ...(args.restored?.length ? { restored: [...args.restored] } : {}),
     ...(args.events?.length ? { events: [...args.events] } : {}),
-    images: args.images.map((image) => {
+    images: args.images.map((image, index) => {
       const before = args.original.get(image.position);
+      const wardrobe = args.wardrobes[index];
       return {
         position: image.position,
         ...(image.candidateId ? { candidateId: image.candidateId } : {}),
@@ -110,7 +111,7 @@ export function buildFloorTrace(args: BuildTraceArgs): FloorTrace {
         nlOriginal: before?.nl ?? '',
         characters: (image.characters ?? []).map((character) => ({
           name: character.name,
-          outfit: outfitLine(args.wardrobe, character.name),
+          outfit: wardrobe ? outfitLine(wardrobe, character.name) : '',
           tag: character.tag,
           nl: character.nl ?? '',
           nlOriginal: before?.characters.find((entry) => entry.name === character.name)?.nl ?? '',

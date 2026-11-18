@@ -15,6 +15,7 @@ import {
   garmentKind,
   initialiseClothingFromImage,
   parseClothingChanges,
+  planClothingTimeline,
   proseGarment,
   synthesiseSceneClothing,
   type ClothingChange,
@@ -754,10 +755,13 @@ describe('真实正文：场景推断与账本兜底', () => {
     expect(panties.state.arrangement).toBe('pulled_aside');
   });
 
-  it('账本漏判但正文在裸时，保留模型写的 nude；正文只是亲吻仍按账本', () => {
+  it('正文明确写了没穿衣服时，从事件更新账本；普通接触沿用已有着装', () => {
     const state = seeded('茉莉');
     const nude = { ...image('1girl, nude, black hair') } as ImageInsertion;
-    enforceClothing(nude, state, false, true, [entry('茉莉')], '她赤裸着身子躺在床上，乳球随着呼吸起伏。');
+    const story = '茉莉没穿衣服就躺下睡觉。';
+    const result = planClothingTimeline(story, [entry('茉莉')], state, [], [], 'test', () =>
+      ({ era: 'unknown', culture: 'unknown', evidence: '', source: 'story' }));
+    enforceClothing(nude, clothingAt(state, result.changes, 'test'), false, true, [entry('茉莉')], story);
     expect(nude.characters[0].tag).toContain('nude');
 
     const kiss = { ...image('1girl, nude, black hair') } as ImageInsertion;

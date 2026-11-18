@@ -746,7 +746,7 @@ ${characterRule}
   - **同一楼的多张图各自按所在 P 位置取状态，不要用整楼最后的状态统一覆盖**：脱衣发生在第 2 张图的位置，第 1 张就必须还是穿着；换装发生在第 3 段，前两张就还是旧衣服。每张图的 clothing 状态只取决于「这张图所在的那一句之前，正文里已经发生过的穿脱动作」——这是「3 张图 = 3 个剧情节点的 3 个服装状态」的唯一正确口径。
   - **【服装现状】里那套装束是既成事实，不是灵感**：它来自前面楼层的实际画面加角色档案里的固定着装，两处都已经替她定好了穿什么。正文没写换衣服，就把那套衣服逐字照抄进每一张图——袖型、颜色、裙长、丝袜、鞋，一件都不改。
   - **整套换掉比单件出错更难救**：前楼是丝质睡裙，这一楼变成衬衫短裙，属于凭空换装；只有正文明确出现换、脱、穿的动词才允许换一整套。外观相近但款式不同的（换了颜色的同款、多了件外套）算同一套，可以加配件，不许换主体廓形。
-  - 已经脱掉或解开的部件，本场之内不许自己穿回去：前面脱了胸罩或内裤，这场戏后面就不能再出现 bra、panties，只能写 topless、bottomless、clothes around waist、hanging on one arm。**但换了场（第二天、出门、回到日常、下一段情节）就该穿回去了**：睡前的全裸不会带到第二天上班，正文没有继续裸露的描写时按【服装现状】恢复穿着。
+  - 已经脱掉或解开的部件，本场之内不许自己穿回去：前面脱了胸罩或内裤，这场戏后面就不能再出现 bra、panties，只能写 topless、bottomless、clothes around waist、hanging on one arm。程序在角色确实开始新的活动时按活动补足省略的换装，例如就寝后次日到公司。需要按原文记录明确的穿着和穿脱，普通切镜和时间词继续沿用。
   - **只允许单向推进，有例外要举证**：穿着 → 半脱 → 脱落。半脱与脱落必须分开写：半脱是衣服还在身上（tugged down、off shoulder、pulled aside、breasts out、skirt lifted、clothes around waist），脱落是离开了身体（on the floor、held in hand、hanging on one arm）。写成半脱的一律不许补 nude / completely nude。
   - 露肩、露背、露臀的姿势不是裸体：肩膀露出来写 off shoulder、露臀写 skirt lifted / panties around one thigh，衣服继续留在身上当参照物，剥光等于把这层信息丢掉。
   - 款式用可识别的独立英文标签逐项记录，例如 white shirt, collared shirt, long sleeves, black skirt, pleated skirt，不拼成形容词长句，不为了丰富而追加新剪裁、材质或服装。穿脱、破损和湿润另记 state；已有款式原样复用。

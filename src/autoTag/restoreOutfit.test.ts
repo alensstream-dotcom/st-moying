@@ -66,7 +66,7 @@ describe('诊断轨迹', () => {
         },
       ],
       original: new Map([['P2', { nl: 'She is wearing white shirt, collared shirt.', characters: [{ name: '温岚', nl: 'Wearing white shirt.' }] }]]),
-      wardrobe: state(),
+      wardrobes: [state()],
       segmentOf: (position) => (position === 'P2' ? '她把信封递到他手里。' : ''),
     });
     expect(trace.facts).toBe(1);

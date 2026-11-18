@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CharTagEntry } from '@/state/charTags';
-import { clothingBefore, redressForNewScene, settleStaleUndress, type ClothingState } from './outfitTimeline';
+import { clothingBefore, narrativeHash, redressForNewScene, settleStaleUndress, type ClothingState } from './outfitTimeline';
 
 const entry = (name: string): CharTagEntry =>
   ({ name, fields: {}, raw: '', nl: '', source: 'manual', desc: '', history: [] }) as unknown as CharTagEntry;
@@ -62,7 +62,7 @@ describe('历史账本里的饰物部件在读取时被剔除', () => {
         bbiOutfitState: {
           v: 2,
           swipe: 0,
-          sourceHash: 'x',
+          sourceHash: narrativeHash(floor === 1 ? '茉莉站在原地。' : ''),
           upstreamHash: 'x',
           start: ['茉莉'],
           delta: false,
@@ -77,6 +77,8 @@ describe('历史账本里的饰物部件在读取时被剔除', () => {
               ],
             },
           ],
+          changes: [],
+          frames: [],
         },
       },
     }));
