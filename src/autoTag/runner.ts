@@ -1634,7 +1634,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       const moment = selectedMoments.get(image.position);
       const sameFrameFacts = moment ? (plan.facts ?? []).filter((fact) =>
         !!fact.evidence && moment.segment.text.includes(fact.evidence)) : plan.facts ?? [];
-      applyTextQualifiers(image, source, at, sameFrameFacts);
+      applyTextQualifiers(image, source, at, sameFrameFacts, moment?.sceneText);
       if (!profile.naiCharPrompts) image.inlineCharacters = true;
       if (moment) compileShotActions(image, moment, profile.nl, profile.naiCharPrompts, sameFrameFacts);
       frames.push({

@@ -80,6 +80,18 @@ describe('grounded female-centered frame selection', () => {
     expect(frame.characters.find((c) => c.name === '乔明')?.nl).toMatch(/holds her waist.*kissing/);
   });
 
+  it('carries the scene forward only as far as the next location and rejects a future location in the draft', () => {
+    const text = '室内排练厅里，顾遥穿着深蓝外套，乔明正在调试一盏灯。顾遥双手接住掉下来的玻璃杯。乔明独自去了隔壁机房。顾遥走进浴室，敞开衬衫的领口。';
+    const shots = rank(text);
+    const first = draftKnownShot(shots.find((shot) => shot.segment.id === 'P2')!)!;
+    first.tag = '1girl, cockpit, cowboy shot';
+    compileShotActions(first, shots.find((shot) => shot.segment.id === 'P2')!, true);
+    expect(first.tag).toContain('rehearsal hall');
+    expect(first.tag).not.toContain('cockpit');
+    const later = draftKnownShot(shots.find((shot) => shot.segment.id === 'P4')!)!;
+    expect(later.tag).toContain('bathroom');
+  });
+
   it('compiles an unrendered compound action from the original response without borrowing later action facts', () => {
     const source = '顾遥钻过横梁，同时扶紧栏杆。顾遥摸了摸墙上的油漆。';
     const segments = prepareTargetText(source, []).segments;

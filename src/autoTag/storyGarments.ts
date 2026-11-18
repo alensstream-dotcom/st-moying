@@ -82,6 +82,10 @@ export function storyGarmentLine(text: string): string {
 // 场所：Base 只写 `house, day` 太糊，模型会把「楼梯」「走廊」这些真正决定画面的词省掉。
 // 只认正文里确实写到的场所，认不出来就不补——替模型编场所比写糊更糟。
 const PLACE_ALIASES: Array<[string, string[]]> = [
+  ['排练厅', ['rehearsal hall']],
+  ['排练室', ['rehearsal hall']],
+  ['舞台', ['stage']],
+  ['机房', ['equipment room']],
   ['楼梯', ['stairs']],
   ['楼上', ['stairs']],
   ['走廊', ['hallway']],
@@ -110,7 +114,7 @@ const PLACE_ALIASES: Array<[string, string[]]> = [
   ['窗', ['window']],
 ];
 
-const PLACE_TAGS = new Set(TAG_LEXICON.scene);
+const PLACE_TAGS = new Set([...TAG_LEXICON.scene, 'rehearsal hall', 'equipment room', 'stage']);
 const PLACE_CJK = Object.entries(tagChinese as Record<string, string>)
   .filter(([tag, zh]) => typeof zh === 'string' && PLACE_TAGS.has(tag) && zh.length >= 2 && zh.length <= 8)
   .map(([tag, zh]) => ({ zh, tag }))
@@ -123,6 +127,7 @@ const PLACE_CJK = Object.entries(tagChinese as Record<string, string>)
  *  （推开教室门走进去、回到卧室、穿过走廊）——只认介词会把最常见的写法漏掉。 */
 const LOCATIVE_BEFORE =
   /(?:在|于|进|到|从|里|中|内|上|坐|站|躺|趴|蹲|靠|走|跑|推开|推门|拉开|回到|返回|穿过|经过|路过|来到|进入|走进)/;
+const LOCATIVE_AFTER = /^(?:里|内|中|上方|中央|边缘|旁边)/;
 
 function placeMentioned(text: string, zh: string): boolean {
   let from = 0;
@@ -130,7 +135,7 @@ function placeMentioned(text: string, zh: string): boolean {
     const index = text.indexOf(zh, from);
     if (index < 0) return false;
     const before = text.slice(Math.max(0, index - 10), index);
-    if (LOCATIVE_BEFORE.test(before)) return true;
+    if (LOCATIVE_BEFORE.test(before) || LOCATIVE_AFTER.test(text.slice(index + zh.length))) return true;
     from = index + zh.length;
   }
 }
@@ -154,7 +159,7 @@ function nearestLocativeIndex(text: string, zh: string): number {
     const index = text.indexOf(zh, from);
     if (index < 0) return best;
     const before = text.slice(Math.max(0, index - 10), index);
-    if (LOCATIVE_BEFORE.test(before)) best = index;
+    if (LOCATIVE_BEFORE.test(before) || LOCATIVE_AFTER.test(text.slice(index + zh.length))) best = index;
     from = index + zh.length;
   }
 }
@@ -240,4 +245,12 @@ export function groundScenes(tag: string, text: string): string {
       return lower === primary;
     })
     .join(', ');
+}
+
+/** Prefer the scene proven by the current or an earlier story sentence. */
+export function groundFramePlace(tag: string, text: string): string {
+  const primary = primaryPlace(text);
+  if (!primary) return tag;
+  const tokens = new Set([...tag.split(',').map((token) => token.trim()).filter(Boolean), primary]);
+  return groundScenes([...tokens].join(', '), text);
 }

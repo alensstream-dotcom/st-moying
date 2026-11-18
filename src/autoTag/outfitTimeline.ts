@@ -2875,6 +2875,8 @@ export function applyTextQualifiers(
   ledger?: ClothingState,
   /** 本轮事实表：动作类事实同样构成「必须看得见」的要求。 */
   facts?: readonly { kind: string; value: string }[],
+  /** 整楼分镜提供已成立的场景原句，避免附近的换场句串进当前画面。 */
+  sceneText?: string,
 ): void {
   const fullText = source || '';
   const frameEnd = absoluteOffset(fullText, image.sourceLine ?? 0, image.charOffset ?? 0);
@@ -2985,7 +2987,7 @@ export function applyTextQualifiers(
   const baseTokens = image.tag.split(',').map((token) => token.trim().toLowerCase()).filter(Boolean);
   const concrete = baseTokens.filter((token) => scenes.has(token) && !GENERIC_SCENE.has(token));
   if (concrete.length < 2) {
-    for (const place of storyPlaces(near)) {
+    for (const place of storyPlaces(sceneText ?? near)) {
       if (baseTokens.includes(place)) continue;
       baseTokens.push(place);
     }
@@ -3055,7 +3057,7 @@ export function applyTextQualifiers(
 
   // 可见性只看这一格自己的正文（图附近的窗口），不是整楼：整楼前面提过鞋袜，
   // 就会把后面递信那张图强行拉成全身，动作反而被缩小到看不清。
-  image.tag = groundScenes(image.tag, near || text);
+  image.tag = groundScenes(image.tag, sceneText ?? (near || text));
   const needs = seeNeeds(near || text);
   // 事实表里写下的动作也算：模型这一轮可能把「她的手按在他胸口」只写进 fact，
   // 没写进 tag/nl；只看正文就会漏掉「必须装得下手」这条可见性要求。

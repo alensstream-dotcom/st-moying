@@ -8,7 +8,7 @@ import { FEMALE_CUE_RE, femaleCastNames, mentionIndexes } from './femaleCast';
 import { isNarratedOnly } from './onScreen';
 import { unanchoredIndexes } from './positionCheck';
 import type { ImageInsertion, ImagePlan } from './protocol';
-import { groundScenes, primaryPlace } from './storyGarments';
+import { groundFramePlace, primaryPlace } from './storyGarments';
 
 interface VisibleAction {
   source: RegExp;
@@ -53,6 +53,7 @@ const FEMALE_PRONOUN = /她(?!们)|\b(?:she|her)\b/i;
 const MALE_PRONOUN = /(?<!其|别)他(?!人|们)|\b(?:he|him|his)\b/i;
 const GROUP_PRONOUN = /两人|[他她]们|\bthey\b/i;
 const PLACE_BREAK = /独自|只有.{1,12}一个人|隔壁|镜头转到|第二天|次日|隔天|回到|离开/;
+const SCENE_BREAK = /镜头转到|第二天|次日|隔天|回到|离开|来到|进入|走进|去了/;
 const APPEARANCE_OR_ACTION = /起身|站在|坐在|冲向|跌|坠|扑|接住|挡住|张开|抓|松手|倒下|跪|抬|低头|转身|递|掀|披|穿|脱|敞|退|挥|摊开|展开|推|拉|吻|抱|握|望|笑|哭|脸色|身穿|出现|\b(?:stands?|sits?|kneels?|holds?|reaches?|jumps?|falls?|walks?|turns?|steps?|smiles?)\b/i;
 
 export interface ShotMoment {
@@ -62,6 +63,7 @@ export interface ShotMoment {
   female: string[];
   cast: string[];
   score: number;
+  sceneText: string;
   continues?: TargetSegment;
 }
 
@@ -115,6 +117,7 @@ export function inventoryShots(
   const proposed = new Set(plan.images.filter((image) => image.afterQuote).map((image) => image.position));
   const moments: ShotMoment[] = [];
   let recentCast: string[] = [];
+  let sceneText = '';
   let prior: ShotMoment | undefined;
   for (const segment of segments) {
     const text = visibleShotText(segment.text);
@@ -122,6 +125,8 @@ export function inventoryShots(
     prior = undefined;
     if (!text || isNarratedOnly(text)) continue;
     if (PLACE_BREAK.test(text)) recentCast = [];
+    if (SCENE_BREAK.test(text)) sceneText = '';
+    if (primaryPlace(text)) sceneText = text;
     const cast = names.filter((name) => mentionIndexes(text, name, entries).length &&
       !(text.includes(name + '的') && !text.replaceAll(name + '的', '').includes(name) &&
         /照片|画像|报名表|档案|名字/.test(text)));
@@ -157,7 +162,7 @@ export function inventoryShots(
     const modelValue = quality ? Math.min(actions.length ? 8 : 27, scoreCandidate(model)) : 0;
     const strength = sourceValue + modelValue + (grounded ? 2 : 0);
     prior = { segment, action: grounded && model?.action ? model.action : text, actions, female,
-      cast: [...new Set([...cast, ...female])], score: strength, continues: continues?.segment };
+      cast: [...new Set([...cast, ...female])], score: strength, sceneText, continues: continues?.segment };
     moments.push(prior);
   }
   return moments.sort((left, right) => right.score - left.score ||
@@ -223,7 +228,7 @@ export function draftKnownShot(moment: ShotMoment, facts: readonly StoryFact[] =
     position: segment.id, sourceLine: segment.sourceLine, charOffset: segment.charOffset,
     afterQuote: segment.text, frameAction: moment.action, candidateId: segment.id,
     tag: [`${girlCount}girl${girlCount > 1 ? 's' : ''}`, boyCount ? `${boyCount}boy${boyCount > 1 ? 's' : ''}` : '',
-      primaryPlace(segment.text), castNames.length > 1 ? 'from side' : '', 'soft lighting'].filter(Boolean).join(', '),
+      primaryPlace(moment.sceneText), castNames.length > 1 ? 'from side' : '', 'soft lighting'].filter(Boolean).join(', '),
     nl: '', negative: '', size: castNames.length > 1 ? 'landscape' : 'portrait',
     characters: castNames.map((name) =>
       ({ name, tag: female.includes(name) ? '1girl' : '1boy', nl: '' })),
@@ -279,6 +284,7 @@ function compileReportedActions(image: ImageInsertion, moment: ShotMoment, facts
 export function compileShotActions(
   image: ImageInsertion, moment: ShotMoment, withNl: boolean, independent = true, facts: readonly StoryFact[] = [],
 ): void {
+  image.tag = groundFramePlace(image.tag, moment.sceneText);
   const actions = moment.actions;
   if (!actions.length) {
     compileReportedActions(image, moment, facts, withNl);
@@ -301,9 +307,7 @@ export function compileShotActions(
   const full = actions.some((id) => ACTIONS[id].scale === 'full body');
   const scale = full ? 'full body' : compound || actions.some((id) => ACTIONS[id].scale === 'cowboy shot')
     ? 'cowboy shot' : 'upper body';
-  const scene = primaryPlace(visibleShotText(moment.segment.text));
-  const groundedBase = scene ? groundScenes(`${image.tag}, ${scene}`, moment.segment.text) : image.tag;
-  const base = tags(groundedBase).filter((token) => !SCALE.test(token) && !TIGHT_ANGLE.test(token) &&
+  const base = tags(image.tag).filter((token) => !SCALE.test(token) && !TIGHT_ANGLE.test(token) &&
     !(compound && /^(?:solo|1girl|1boy|2girls)$/i.test(token)));
   if (compound && partner) {
     const femalePartner = moment.female.includes(partner.name);
