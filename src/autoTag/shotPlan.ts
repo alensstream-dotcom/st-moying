@@ -419,10 +419,40 @@ export function compileShotActions(
     }
   }
   image.tag = [...new Set([...base, scale])].join(', ');
+  resolveActConflict(image, actions);
   if (!independent) {
     image.inlineCharacters = true;
     if (withNl && !compound) image.nl = woman.nl;
   }
+}
+
+// 同一张图里不能既写「舔」又写「插」:动作表按这一格的动作为准,
+// 把与之互斥的另一套动作词从 Base 与角色 tag 里剔掉(模型最爱顺手把整段剧情都写进一张图)。
+const VAGINAL_WORDS = /^(?:vaginal(?: sex)?|sex|hetero|penis|pussy|creampie|cum in pussy|impregnation)$/i;
+const ORAL_WORDS = /^(?:cunnilingus|fellatio|oral|licking pussy|tongue)$/i;
+
+// 同义重复也一起收拾:`vaginal` 与 `vaginal sex`、`creampie` 与 `cum in pussy` 同时出现
+// 只是把权重叠了两遍,画面不会因此更准;`2people` 不是 tag 语法里的词。
+const NOISE_WORDS = /^(?:2people|2 people|indoor|outdoor)$/i;
+
+export function resolveActConflict(image: { tag: string; characters: Array<{ tag: string; nl: string }> }, actions: readonly string[]): void {
+  const penetrating = actions.includes('penetration');
+  const licking = actions.includes('cunnilingus');
+  const sucking = actions.includes('oral');
+  const drop = penetrating ? ORAL_WORDS : licking || sucking ? VAGINAL_WORDS : null;
+  const clean = (tag: string): string => {
+    const list = tags(tag).filter((token) => !NOISE_WORDS.test(token));
+    const has = (pattern: RegExp): boolean => list.some((token) => pattern.test(token));
+    return list
+      .filter((token) => !(drop && drop.test(token)))
+      // 只剩「oral」而这一格是插入时,把光秃秃的 oral 也去掉(它会被读成口交)。
+      .filter((token) => !(penetrating && /^oral$/i.test(token) && !sucking))
+      .filter((token) => !(/^vaginal$/i.test(token) && has(/^vaginal sex$/i)))
+      .filter((token) => !(/^creampie$/i.test(token) && has(/^cum in pussy$/i)))
+      .join(', ');
+  };
+  image.tag = clean(image.tag);
+  for (const character of image.characters) character.tag = clean(character.tag);
 }
 
 export function shotRepairMessages(moments: readonly ShotMoment[], withNl: boolean, clothes: string): ChatMsg[] {

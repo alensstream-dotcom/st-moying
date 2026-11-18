@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { emptyCharFields, type CharTagEntry } from '@/state/charTags';
 import { parseImageTagContent, serializeImageTag } from '@/st/imageTagRegex';
 import { prepareTargetText } from './clean';
-import { compileShotActions, draftKnownShot, independentShots, inventoryShots, verifiedShot } from './shotPlan';
+import { compileShotActions, draftKnownShot, independentShots, inventoryShots, resolveActConflict, verifiedShot } from './shotPlan';
 import { parseImagePlan, type ImageInsertion, type ImagePlan } from './protocol';
 
 const person = (name: string, sex: string): CharTagEntry =>
@@ -119,5 +119,22 @@ describe('grounded female-centered frame selection', () => {
     expect(frame.characters[0].tag).toContain('ducking under the beam, gripping the railing');
     expect(frame.characters[0].nl).toContain('ducking under the beam while she is gripping the railing');
     expect(frame.characters[0].tag).not.toContain('paint');
+  });
+
+  it('keeps only the act this beat shows: no licking and penetration in one frame', () => {
+    const image = {
+      tag: '1girl, 1boy, bedroom, cunnilingus, oral, vaginal sex, creampie',
+      characters: [{ tag: '1girl, oral, sex', nl: '' }, { tag: '1boy, penis', nl: '' }],
+    };
+    resolveActConflict(image, ['penetration']);
+    expect(image.tag).not.toContain('cunnilingus');
+    expect(image.tag).toContain('vaginal sex');
+    expect(image.characters[0].tag).not.toContain('oral');
+
+    const licking = { tag: '1girl, sex, cunnilingus', characters: [{ tag: '1girl, penis, sex', nl: '' }] };
+    resolveActConflict(licking, ['cunnilingus']);
+    expect(licking.tag).not.toContain(' sex');
+    expect(licking.tag).toContain('cunnilingus');
+    expect(licking.characters[0].tag).not.toContain('penis');
   });
 });

@@ -91,6 +91,7 @@ import {
   compileShotActions, draftKnownShot, independentShots, inventoryShots, shotRepairMessages,
   shotSelectionInstructions, verifiedShot, type ShotMoment,
 } from '@/autoTag/shotPlan';
+import { primaryPlace } from '@/autoTag/storyGarments';
 import { refreshWardrobeLock } from '@/st/wardrobeLock';
 import { diagnoseTruncation, truncationRetryNote } from '@/autoTag/truncation';
 import {
@@ -1015,6 +1016,13 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               }
             };
             accept(candidate.images);
+            // 整楼一张都没通过校验时不要清空：模型给的位置都在正文里、人物也在场，
+            // 只是没通过「动作必须完全一致」这类严格判据。留一张总比这楼什么都没有强。
+            if (!authored.size && candidate.images.length) {
+              for (const image of candidate.images) {
+                if (byPosition.has(image.position) && !authored.has(image.position)) authored.set(image.position, image);
+              }
+            }
             const wanted = moments.slice(0, promptOptions.maxImages);
             const draft = (moment: ShotMoment) => draftKnownShot(moment, actionFacts);
             const needs = wanted.filter((moment) => !authored.has(moment.segment.id) &&
@@ -1032,22 +1040,43 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 accept(repaired.images);
               } catch (error) {
                 if (controller.signal.aborted) throw error;
-                diagnostic('shots:repair-failed', { floor, positions: needs.map((moment) => moment.segment.id) });
+                diagnostic('shots:repair-failed', {
+                  floor, positions: needs.map((moment) => moment.segment.id),
+                  error: error instanceof Error ? error.message : String(error),
+                });
               }
             }
             // 名额没填满时再补一轮:模型只肯写一格、而正文里还有同样够格的瞬间,
             // 这里只针对那几个具体段落问一次,不是整楼重跑,也不是凭空造画面。
+            // 先每个「动作组合」只留一张，再按分数补满：同名动作连着出现时
+            // （插入推进、继续插入）不该占掉两个名额，读者要看的是不同的瞬间。
             const buildKept = (): ImageInsertion[] => {
               const list: ImageInsertion[] = [];
               selectedMoments = new Map();
-              for (const moment of moments) {
+              // 动作 + 场所作为「这一格是不是重复」的判据：同动作换房间是另一个镜头，
+              // 同房间同动作再说一遍就是把两张图拍成一张。
+              const signature = (moment: ShotMoment): string =>
+                `${[...moment.actions].sort().join('+')}@${primaryPlace(moment.sceneText)}`;
+              const take = (moment: ShotMoment, skip: Set<string>): boolean => {
                 const image = authored.get(moment.segment.id) ?? draft(moment);
-                if (!image) continue;
+                if (!image) return false;
+                const id = signature(moment);
+                if (skip.has(id)) return false;
                 image.candidateId = moment.segment.id;
                 if (moment.actions.length) image.frameAction = [moment.continues?.text, moment.segment.text].filter(Boolean).join('');
                 list.push(image);
                 selectedMoments.set(image.position, moment);
+                skip.add(id);
+                return true;
+              };
+              const used = new Set<string>();
+              for (const moment of moments) {
+                if (take(moment, used)) break;
+                if (list.length) break;
+              }
+              for (const moment of moments) {
                 if (list.length === promptOptions.maxImages) break;
+                take(moment, used);
               }
               return list;
             };
@@ -1080,7 +1109,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                   diagnostic('shots:filled', { floor, positions: missing.map((moment) => moment.segment.id), got: kept.length });
                 } catch (error) {
                   if (controller.signal.aborted) throw error;
-                  diagnostic('shots:fill-failed', { floor });
+                  diagnostic('shots:fill-failed', { floor, error: error instanceof Error ? error.message : String(error) });
                 }
               }
             }
