@@ -67,8 +67,6 @@ describe('auto tag prompt', () => {
       maxImages: 3,
       retryCount: 1,
       autoGenerate: true,
-
-      fillMissingScenes: true,
       jailbreakTier: 'strong',
       lore: { enabled: true, maxNsfw: 3, wardrobeLimit: 8, thumbModel: '', thumbIntervalMs: 10000 },
       prompts: prompts({ jailbreak: '被忽略的旧附加词' }),

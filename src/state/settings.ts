@@ -521,13 +521,6 @@ export interface AutoTagSettings {
   retryCount: number;
   /** 写入 tag 后是否立即调用出图渠道自动生成图片(默认开;关闭则卡片上手动点「生成」)。 */
   autoGenerate: boolean;
-  /**
-   * 模型自己切出的场景里有关键转折没出图时,是否单独补一次小请求。
-   *
-   * 默认开:补的那次只带「这一格原文 + 一句错因」,输出一两百 token,比整楼重跑便宜得多。
-   * 关掉就完全不多调 API——代价是模型漏掉的转折这一楼就真的没有,要等下一楼或手动重来。
-   */
-  fillMissingScenes?: boolean;
   /** 破限挡位:与 prompts.jailbreak 叠加(档位在前、自定义在后)。 */
   jailbreakTier: JailbreakTierId;
   /** 素材库注入(服装/姿势候选)。 */
@@ -1485,7 +1478,6 @@ function defaults(): ImageSettings {
       maxImages: 2,
       retryCount: 1,
       autoGenerate: true,
-      fillMissingScenes: true,
       jailbreakTier: 'strong',
       lore: {
         enabled: true,
@@ -2110,8 +2102,6 @@ function normalize(raw: unknown): ImageSettings {
         : d.autoTag.retryCount,
     autoGenerate:
       typeof rt.autoGenerate === 'boolean' ? rt.autoGenerate : d.autoTag.autoGenerate,
-    fillMissingScenes:
-      typeof rt.fillMissingScenes === 'boolean' ? rt.fillMissingScenes : d.autoTag.fillMissingScenes,
     // 破限挡位:白名单校验,认不出的(旧配置)落回默认档
     jailbreakTier: JAILBREAK_TIER_IDS.includes(rt.jailbreakTier as JailbreakTierId)
       ? (rt.jailbreakTier as JailbreakTierId)

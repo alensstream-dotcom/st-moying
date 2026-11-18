@@ -1092,8 +1092,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
 
           // 这里只按模型自己给出的场景范围补，不另造画面，也不重掷已经合格的图。
 
-          const wantFill = settings.autoTag.fillMissingScenes !== false;
-          if (!slot && wantFill && !coverageFilled && candidate.scenes?.length && candidate.images.length < promptOptions.maxImages) {
+          if (!slot && !coverageFilled && candidate.scenes?.length && candidate.images.length < promptOptions.maxImages) {
 
             coverageFilled = true;
 

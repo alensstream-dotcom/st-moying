@@ -40,8 +40,6 @@ const options: AutoTagSettings = {
   maxImages: 3,
   retryCount: 0,
   autoGenerate: true,
-
-  fillMissingScenes: true,
   jailbreakTier: 'strong',
   lore: {
     enabled: false,
