@@ -3078,7 +3078,14 @@ function wardrobeToken(token: string): boolean {
 function wardrobeProse(nl: string, record: ClothingRecord): string {
   const complete = completeOutfit(record.pieces);
   const worn = record.pieces.filter((p) => !OFF_BODY.includes(p.state.location));
-  return (nl ?? '').split(/(?<=[.!?])\s+/).filter((sentence) => {
+  // Clothing named in a negative clause still conditions the positive image prompt.
+  // Keep the action and let the timed snapshot supply the clothes that should be pictured.
+  const item = String.raw`(?:[\w-]+\s+){0,3}?(?:jackets?|coats?|blazers?|shirts?|blouses?|vests?|camisoles?|tank tops?|bras?|panties|underwear|pants|trousers|skirts?|dresses|pajamas|pyjamas|nightgowns?|clothes|clothing)\b`;
+  const negated = new RegExp(String.raw`\b(?:without|(?:no longer|not) wearing)\s+${item}(?:(?:,\s*|\s+(?:and|or)\s+)${item})*`, 'gi');
+  return (nl ?? '').split(/(?<=[.!?])\s+/).map((sentence) =>
+    sentence.replace(negated, '').replace(/\s+([,.])/g, '$1').replace(/^[,\s]+/, '').trim(),
+  ).filter((sentence) => {
+    if (!sentence) return false;
     if (complete && NUDITY_CLAIM.test(sentence)) return false;
     if (/\b(?:pajamas|pyjamas|nightgown|nightdress)\b/i.test(sentence) &&
         record.activity && record.activity !== 'sleep' &&

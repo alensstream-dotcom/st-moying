@@ -55,6 +55,11 @@ describe('服装按原文位置重放', () => {
     expect(saved).toContain('white shirt');
     expect(saved).toContain('open collar');
     expect(saved).not.toContain('open shirt');
+    images[3].characters[0].nl = 'Without the jacket or vest, she tidies the desk in her white shirt.';
+    const removed = clothingAt(before, result.changes, 'story', 0, images[3].charOffset);
+    enforceClothing(images[3], removed, true, true, [person], story);
+    expect(images[3].characters[0].nl).toContain('tidies the desk');
+    expect(images[3].characters[0].nl).not.toMatch(/jacket|vest/);
   });
 
   it('无图楼层换了单件后跨楼继承，镜头猜测和没描述过的颜色都不能复写', () => {
