@@ -56,9 +56,13 @@ describe('diagnoseCast', () => {
     expect(gaps.some(gap => gap.kind === 'wrong-count')).toBe(true);
   });
 
-  it('已有 1boy 时「两只手」也算可疑,提醒确认', () => {
+  it('已有 1boy 时「两只手」不报警——手不是人', () => {
+    // 实机教训：旧规则把「他的两只手撑在她耳边」判成「可能有两个男人」，于是每一楼里
+    // 所有带接触的图都被 cast 校验退回重写，模型只好改交单女主的日常镜头——用户看到的就是
+    // 「NSFW 剧情不生图、长楼层只剩结尾日常」。手数不等于人数，只保留「前后夹/两根肉棒」
+    // 这类明确指向两个身体的写法。
     const gaps = diagnoseCast('两只手按在她腰上', '1girl, 1boy', [], [], true);
-    expect(gaps.some(gap => gap.detail.includes('两只手'))).toBe(true);
+    expect(gaps).toEqual([]);
   });
 
   it('单人画面里「两只手」不报警(可能只是她自己的手)', () => {

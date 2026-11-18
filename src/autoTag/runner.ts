@@ -101,6 +101,7 @@ import {
 import { salvageJsonObject } from '@/autoTag/salvage';
 import { applySuggestedDistance, diagnoseDistance } from '@/autoTag/shotGuide';
 import { isDrawWorthy } from '@/autoTag/fallbackImage';
+import { CANDIDATE_FLOOR, rankCandidates, scoreCandidate } from '@/autoTag/candidates';
 import { refreshWardrobeLock } from '@/st/wardrobeLock';
 import {
   adjacentPositionNote,
@@ -740,6 +741,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     let emptyPlanRetried = false;
     let baseNlRetried = false;
     let localRepairDone = false;
+    // 场景覆盖补图只做一次：候选表是模型自己写的，漏掉的高分场景最多补两张。
+    let coverageFilled = false;
     // 角色 nl 只补一次：整楼重跑十分钟起，只缺一句时重掷全部图最不划算。
     let nlRepaired = false;
     // 局部修复只做一次：把被挡掉的那一格单独重写，已经合格的图不动。
@@ -1078,6 +1081,126 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 } catch (error) {
                   console.warn('[墨影] 局部修复失败，按原计划丢弃这一格', error);
                 }
+              }
+            }
+          }
+          // 场景覆盖（第一优先）：模型自己切出的 scenes 里，凡 keyChange=是 的场景都必须有一张。
+
+          // 实测 1867/3369 字的长楼层：候选里明明有沙发展开、厨房桌沿两段，它挑的却是
+
+          // 「玄关理衣领」「浴室拨头发」——不是候选没看见，是它按「好不好写」排了序。
+
+          // 这里只按模型自己给出的场景范围补，不另造画面，也不重掷已经合格的图。
+
+          if (!slot && !coverageFilled && candidate.scenes?.length && candidate.images.length < promptOptions.maxImages) {
+
+            coverageFilled = true;
+
+            const idNum = (id: string): number => Number.parseInt(/^P(\d+)$/i.exec(id.trim())?.[1] ?? '0', 10);
+
+            const gaps = candidate.scenes
+
+              .filter((scene) => scene.keyChange)
+
+              .filter((scene) => {
+
+                const from = idNum(scene.from);
+
+                const to = Math.max(from, idNum(scene.to));
+
+                return !candidate.images.some((image) => {
+
+                  const at = idNum(image.position);
+
+                  return at >= from && at <= to;
+
+                });
+
+              })
+
+              .slice(0, Math.max(0, promptOptions.maxImages - candidate.images.length));
+
+            for (const scene of gaps) {
+
+              const segment = preparedTarget.segments.find((entry) => entry.id === scene.from);
+
+              if (!segment || !activeChannel) continue;
+
+              try {
+
+                const raw = await requestCompletion(
+
+                  activeChannel,
+
+                  repairMessages({
+
+                    segment: segment.text,
+
+                    position: segment.id,
+
+                    error: `这一楼有一个正在变化的场景（${scene.sceneId}${scene.place ? ` · ${scene.place}` : ''}，从 ${scene.from} 到 ${scene.to}）整段没有出图。它是这一楼的关键转折，不能跳过。`,
+
+                  }),
+
+                  { signal: controller.signal, source: '补一张漏掉的场景' },
+
+                );
+
+                const retryPlan = parseImagePlan(raw, [segment], 0, 1, source);
+
+                const fixed = retryPlan.images[0];
+
+                if (fixed && !unanchoredIndexes([fixed], segment.text).length) {
+
+                  candidate.images.push({ ...fixed, position: segment.id });
+
+                  console.warn(`[墨影] 补上场景 ${scene.sceneId} 的画面：${segment.id}${scene.place ? `（${scene.place}）` : ''}`);
+
+                }
+
+              } catch (error) {
+
+                console.warn('[墨影] 补场景失败，按原计划', error);
+
+              }
+
+            }
+
+          }
+
+          // 场景覆盖（第二优先）：scenes 没给或已被填过时，退回按候选表补高分格。
+          // 实测 1867 字、四段床戏的长楼层只出两张，而且两张都是结尾的玄关日常——
+          // 根因不是候选里没看见转折，是它按「好不好写」挑了一格最安全的。这里只补
+          // 模型自己打过高分的那一格，不另造画面，也不重掷已经合格的图。
+          if (!slot && !coverageFilled && candidate.candidates?.length && candidate.images.length < promptOptions.maxImages) {
+            coverageFilled = true;
+            const covered = new Set(candidate.images.map((image) => image.position));
+            const missing = rankCandidates(candidate.candidates)
+              .filter((item) => !covered.has(item.position) && scoreCandidate(item) >= CANDIDATE_FLOOR)
+              .slice(0, Math.max(0, promptOptions.maxImages - candidate.images.length));
+            for (const item of missing) {
+              const segment = preparedTarget.segments.find((entry) => entry.id === item.position);
+              if (!segment || !activeChannel) continue;
+              try {
+                const raw = await requestCompletion(
+                  activeChannel,
+                  repairMessages({
+                    segment: segment.text,
+                    position: segment.id,
+                    error: '这一楼的这个场景还没有出图：它在候选表里分数够高，属于「不画就缺一块剧情」的一格。',
+                    frameAction: item.action,
+                    focus: item.action,
+                  }),
+                  { signal: controller.signal, source: '补一张漏掉的场景' },
+                );
+                const retryPlan = parseImagePlan(raw, [segment], 0, 1, source);
+                const fixed = retryPlan.images[0];
+                if (fixed && !unanchoredIndexes([fixed], segment.text).length) {
+                  candidate.images.push({ ...fixed, position: segment.id });
+                  console.warn(`[墨影] 补上漏掉的场景：${segment.id}（${item.action}）`);
+                }
+              } catch (error) {
+                console.warn('[墨影] 补场景失败，按原计划', error);
               }
             }
           }

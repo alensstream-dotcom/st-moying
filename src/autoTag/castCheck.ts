@@ -49,11 +49,7 @@ const EXTRA_MALE_RE =
 const EXTRA_MALE_STRONG_RE =
   /(?:前后夹|一前一后|两根肉棒|双插|两根一起|同时插|两人一起|三人行)/;
 
-/**
- * 弱信号:「另一只手」「两只手」可能是男主的手,也可能只是女主自己的两只手。
- * 只在画面里已经有一个男性时才算数——帮忙把 1boy 抬到 2boys,不会凭空往单人图里加人。
- */
-const WEAK_EXTRA_MALE_RE = /(?:另一只手|两只手|两双手|另一双手)/;
+
 
 /** 正文里数出的在场女性名字(调用方给已建档名字表)。 */
 export function countPresentNames(text: string, names: Iterable<string>): number {
@@ -140,12 +136,6 @@ export function diagnoseCast(
     gaps.push({
       kind: 'wrong-count',
       detail: `正文这里是两个男人同时在跟她发生关系(${signal}),画面却只有 ${counts.boys} 个 boy:另一副身体至少要留下一根肉棒或一只手`,
-    });
-  } else if (!EXTRA_MALE_STRONG_RE.test(text ?? '') && counts.boys === 1 && WEAK_EXTRA_MALE_RE.test(text ?? '')) {
-    const weak = (text ?? '').match(WEAK_EXTRA_MALE_RE)![0];
-    gaps.push({
-      kind: 'wrong-count',
-      detail: `正文写了「${weak}」而画面只有 1 个 boy:确认这两只手是不是两个人的,是就写 2boys 并各给一个角色块`,
     });
   }
 

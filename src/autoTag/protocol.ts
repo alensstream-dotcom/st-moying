@@ -3,7 +3,7 @@ import { normaliseLexiconTag } from '@/data/tagLexicon';
 import type { TargetSegment } from '@/autoTag/clean';
 import { parseFacts, type StoryFact } from '@/autoTag/facts';
 import { normalizeAct, normalizeGiver, type ActGiver, type SexAct } from '@/autoTag/actTags';
-import { parseCandidates, pruneByCandidates } from '@/autoTag/candidates';
+import { parseCandidates, pruneByCandidates, type Candidate } from '@/autoTag/candidates';
 import { isNarratedOnly } from '@/autoTag/onScreen';
 import { parseClothingChanges, type ClothingChange } from './outfitTimeline';
 import { parseIdentityClaims, type IdentityClaim } from '@/state/characterIdentity';
@@ -73,6 +73,15 @@ export interface ImageInsertion {
   focus?: string;
 }
 
+/** 模型切出的独立场景：用来核查「有没有把某个正在变化的场景整段漏掉」。 */
+export interface PlanScene {
+  sceneId: string;
+  from: string;
+  to: string;
+  place: string;
+  keyChange: boolean;
+}
+
 export interface ImagePlan {
   costumeContexts?: unknown;
   identities?: IdentityClaim[];
@@ -80,6 +89,11 @@ export interface ImagePlan {
   images: ImageInsertion[];
   /** 正文事实表：模型先写事实、再写画面；缺失时为空数组。 */
   facts?: StoryFact[];
+  /** 模型自评的候选瞬间：用来核查「这一楼的独立场景有没有被覆盖」，
+   * 长楼层只挑结尾日常的根因不是没看见转折，而是它按「好不好写」选了一格。 */
+  candidates?: Candidate[];
+  /** 这一楼的独立场景清单（模型先切场景，再按场景出图）。 */
+  scenes?: PlanScene[];
   /** AI 报告的角色库变更(建档/字段更新);调用方负责落库。 */
   changes: CharChange[];
 }
@@ -368,6 +382,31 @@ function isTagListLike(text: string): boolean {
   return commas >= 2 && !/\b(?:is|are|was|were|has|have|wears?|holds?|grips?|reaches?|sits?|stands?|leans?|turns?|looks?)\b/i.test(value);
 }
 
+/**
+ * 解析模型给出的场景清单。位置必须是目标正文里真实存在的 P 编号；认不出的整条丢掉，
+ * 不做猜测——这条链只用它判断「有没有整段漏掉」，猜错一个范围会把无关段落拉进来。
+ */
+function parseScenes(raw: unknown, positions: ReadonlyMap<string, number>): PlanScene[] {
+  if (!Array.isArray(raw)) return [];
+  const scenes: PlanScene[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const entry = item as Record<string, unknown>;
+    const from = String(entry.from ?? '').trim().toUpperCase();
+    if (!positions.has(from)) continue;
+    const to = String(entry.to ?? from).trim().toUpperCase();
+    scenes.push({
+      sceneId: String(entry.sceneId ?? `S${scenes.length + 1}`).trim() || `S${scenes.length + 1}`,
+      from,
+      to: positions.has(to) ? to : from,
+      place: String(entry.place ?? '').trim(),
+      keyChange: entry.keyChange === true || String(entry.keyChange).toLowerCase() === 'yes',
+    });
+    if (scenes.length >= 12) break;
+  }
+  return scenes;
+}
+
 export function parseImagePlan(
   raw: string,
   segments: TargetSegment[],
@@ -504,8 +543,11 @@ export function parseImagePlan(
   const rawOutfits = Array.isArray(parsed.outfitChanges) ? (parsed.outfitChanges as Array<Record<string, unknown>>) : [];
   for (const change of rawOutfits) if (typeof change?.name === 'string' && change.name) knownNames.add(change.name);
   const facts = parseFacts(parsed.facts, knownNames);
+  const scenes = parseScenes(parsed.scenes, positions);
   return {
     images: limitedImages,
+    candidates,
+    scenes,
     facts,
     changes: parseChanges(parsed.changes, positions, segmentById),
     costumeContexts: parsed.costumeContexts,
