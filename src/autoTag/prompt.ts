@@ -522,8 +522,8 @@ export async function buildAutoTagMessages(
   const minImages = Math.min(maxImages, Math.max(0, Math.floor(Number(options.minImages)) || 0));
   const imageCountRule =
     minImages === 0
-      ? `2. 最终插图范围为 0～${maxImages} 张。有几个合格独立女性镜头就选几个，最多达到上限。没有女性在场的可见瞬间时返回空数组。`
-      : `2. 最终插图上限 ${maxImages} 张。高价值候选不足 ${minImages} 个时，可从目标正文中较次但仍有女性主体的独立瞬间补足；没有女性在场的可见瞬间时返回空数组。`;
+      ? `2. 最终插图范围为 0～${maxImages} 张。有几个合格独立女性镜头就选几个；合格数达到 ${maxImages} 时必须出满，不许自行减到一张。没有女性在场的可见瞬间时返回空数组。亲密与身体接触的瞬间优先占名额。`
+      : `2. 最终插图上限 ${maxImages} 张。高价值候选达到 ${minImages} 个以上且足够填满上限时，必须出满 ${maxImages} 张；只有合格候选不足时才少出。高价值候选不足 ${minImages} 个时，可从目标正文中较次但仍有女性主体的独立瞬间补足；没有女性在场的可见瞬间时返回空数组。亲密与身体接触的瞬间优先占名额。`;
 
   // 画幅方向的判定口径写在后端规范的「画幅方向」段;这里只声明键的合法值,不重复规则。
   // 渠道锁了方向时改口:方向已定,规范里那段选向判据本次不适用,取景要反过来贴合画幅——

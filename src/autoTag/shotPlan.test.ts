@@ -25,6 +25,17 @@ describe('grounded female-centered frame selection', () => {
     expect(rank(text, plan).slice(0, 3).map((moment) => moment.segment.id)).toEqual(['P3', 'P2', 'P4']);
   });
 
+  // 旧评分表只认九条日常动作，命中表项时还把模型自评分压到 8 分：亲吻 36 分压过插入 11 分，
+  // 名额少时核心亲密必被挤掉。这条用例锁住「亲密强度参与排序」。
+  it('ranks an explicit beat above a gentle table action', () => {
+    const text = '乔明俯身吻住顾遥的嘴唇。乔明把顾遥按在床上，挺腰插进她的身体。';
+    const moments = rank(text);
+    expect(moments[0].segment.id).toBe('P2');
+    expect(moments[0].actions).toContain('penetration');
+    expect(moments[1].actions).toContain('kiss');
+    expect(moments[0].score).toBeGreaterThan(moments[1].score);
+  });
+
   it('rejects male-only shots, empty rooms and women mentioned solely in memories even with a positive minimum', () => {
     const text = '空大厅里只有一把椅子。乔明独自在机房打开柜子。他翻出顾遥的照片，想起她昨天站在窗边的样子。他低头看着她的照片。他盘算明天要不要去亲吻她。';
     const shots = rank(text, empty, 2);

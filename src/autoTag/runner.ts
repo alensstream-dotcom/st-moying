@@ -725,6 +725,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 空计划只纠一次：这一楼有没有可画画面本质上是模型判断，硬纠 5 次换不来更好的结果，
     // 只会把「这一段没画面」拖成 600 秒（第 1 楼实测 5 次 / 667 秒仍 0 张）。
     let shotRepairDone = false;
+    let fillRepairDone = false;
     let nlRepaired = false;
     let selectedMoments = new Map<string, ShotMoment>();
     // 上一次 attempt 是否被判为「被截断」:是则后续重试改发降载版历史(精简思考清单 +
@@ -975,10 +976,30 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
           }
           if (!slot) {
+            // 新小说/首楼没有档案，镜头表会因为「认不出谁在画里」直接空掉。模型自己给的图里
+            // 带着人名与 1girl 标签，这就是现成的「谁在场」证据——把它当临时条目交给镜头表，
+            // 别让整楼退化成 no_frame 或只留一张没有场景的图。
+            const inferred: CharTagEntry[] = [];
+            for (const image of candidate.images) {
+              for (const person of image.characters) {
+                const name = String(person.name ?? '').trim();
+                if (!name || !/^1girl/i.test(person.tag)) continue;
+                if (candidateEntries.some((entry) => entry.name === name) || !source.includes(name)) continue;
+                if (inferred.some((entry) => entry.name === name)) continue;
+                inferred.push({
+                  name, fields: { ...emptyCharFields(), sex: '1girl' }, raw: person.tag,
+                  nl: person.nl ?? '', source: 'manual', desc: '', history: [],
+                });
+              }
+            }
+            const shotEntries = inferred.length ? [...candidateEntries, ...inferred] : candidateEntries;
             const moments = independentShots(inventoryShots(
-              preparedTarget.segments, candidate, candidateEntries, candidateFacts, source, promptOptions.minImages,
+              preparedTarget.segments, candidate, shotEntries, candidateFacts, source, promptOptions.minImages,
             ));
+            // 镜头表空 = 这一楼认不出「谁在画里」（常见于新角色名、还没建档的首楼）。
+            // 这时不能把模型给的图全丢掉：保留它自己挑的镜头，只让引句校验把关，比整楼 no_frame 好。
             const byPosition = new Map(moments.map((moment) => [moment.segment.id, moment]));
+            const blind = !moments.length;
             const actionFacts = candidate.facts ?? [];
             const authored = new Map<string, ImageInsertion>();
             const accept = (images: readonly ImageInsertion[]) => {
@@ -1014,16 +1035,58 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 diagnostic('shots:repair-failed', { floor, positions: needs.map((moment) => moment.segment.id) });
               }
             }
-            const kept: ImageInsertion[] = [];
-            selectedMoments = new Map();
-            for (const moment of moments) {
-              const image = authored.get(moment.segment.id) ?? draft(moment);
-              if (!image) continue;
-              image.candidateId = moment.segment.id;
-              if (moment.actions.length) image.frameAction = [moment.continues?.text, moment.segment.text].filter(Boolean).join('');
-              kept.push(image);
-              selectedMoments.set(image.position, moment);
-              if (kept.length === promptOptions.maxImages) break;
+            // 名额没填满时再补一轮:模型只肯写一格、而正文里还有同样够格的瞬间,
+            // 这里只针对那几个具体段落问一次,不是整楼重跑,也不是凭空造画面。
+            const buildKept = (): ImageInsertion[] => {
+              const list: ImageInsertion[] = [];
+              selectedMoments = new Map();
+              for (const moment of moments) {
+                const image = authored.get(moment.segment.id) ?? draft(moment);
+                if (!image) continue;
+                image.candidateId = moment.segment.id;
+                if (moment.actions.length) image.frameAction = [moment.continues?.text, moment.segment.text].filter(Boolean).join('');
+                list.push(image);
+                selectedMoments.set(image.position, moment);
+                if (list.length === promptOptions.maxImages) break;
+              }
+              return list;
+            };
+            let kept: ImageInsertion[] = buildKept();
+            if (kept.length && kept.length < promptOptions.maxImages && !fillRepairDone) {
+              const missing = wanted
+                .filter((moment) => !selectedMoments.has(moment.segment.id))
+                .slice(0, promptOptions.maxImages - kept.length);
+              if (missing.length) {
+                fillRepairDone = true;
+                try {
+                  const messages = shotRepairMessages(missing, profile.nl, outfitBlock);
+                  const options = { signal: controller.signal, source: '补满名额' };
+                  const raw = activeChannel
+                    ? await requestCompletion(activeChannel, messages, options)
+                    : await requestViaMainApi(messages, options);
+                  const repaired = parseImagePlan(raw, missing.map((moment) => moment.segment), 0, missing.length, source, true);
+                  normalizePlanCharacters(repaired.images, candidateEntries);
+                  // 补写这一轮放宽到「段落里点到了这个人」就收：这是专门补名额的请求，
+                  // 再按整楼那套锚点/串场规则层层否决，等于补了个空。
+                  for (const image of repaired.images) {
+                    const moment = missing.find((item) => item.segment.id === image.position);
+                    if (!moment || authored.has(image.position)) continue;
+                    const text = `${moment.continues?.text ?? ''}${moment.segment.text}`;
+                    if (image.characters.some((person) => person.name && text.includes(person.name))) {
+                      authored.set(image.position, image);
+                    }
+                  }
+                  kept = buildKept();
+                  diagnostic('shots:filled', { floor, positions: missing.map((moment) => moment.segment.id), got: kept.length });
+                } catch (error) {
+                  if (controller.signal.aborted) throw error;
+                  diagnostic('shots:fill-failed', { floor });
+                }
+              }
+            }
+            if (!kept.length && blind) {
+              // 认不出谁在画里时，保留模型自己挑的那几张（只受引句校验约束），不要整楼 no_frame。
+              for (const image of candidate.images.slice(0, promptOptions.maxImages)) kept.push(image);
             }
             droppedImages += candidate.images.filter((image) => !kept.includes(image)).length;
             candidate.images = kept;

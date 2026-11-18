@@ -236,12 +236,16 @@ export function groundScenes(tag: string, text: string): string {
   const tokens = tag.split(',').map((token) => token.trim()).filter(Boolean);
   const concrete = tokens.filter((token) => PLACE_TAGS.has(token.toLowerCase()));
   if (!concrete.some((token) => places.has(token.toLowerCase()))) return tag;
+  // 定位不到主场所（正文没写方位词）时也不能两个场所全留：一张图画不出两个房间，
+  // 留第一个出现的那个，比留两个更接近读者看到的画面。
+  const firstPlace = concrete[0]?.toLowerCase();
   return tokens
     .filter((token) => {
       const lower = token.toLowerCase();
       if (!PLACE_TAGS.has(lower)) return true;
       if (!places.has(lower)) return false;
-      if (!primary || PLACE_FURNITURE.test(lower)) return true;
+      if (PLACE_FURNITURE.test(lower)) return true;
+      if (!primary) return lower === firstPlace;
       return lower === primary;
     })
     .join(', ');

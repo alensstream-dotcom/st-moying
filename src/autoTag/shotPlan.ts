@@ -42,6 +42,30 @@ const ACTIONS: Record<string, VisibleAction> = {
   removeCoat: { source: /(?:脱下|脱掉|褪下)[^，。！？；]{0,12}(?:外套|夹克|大衣)|(?:外套|夹克|大衣)[^，。！？；]{0,8}(?:脱下|脱掉)/,
     picture: /(?:off|remove|hang|drap|hold).{0,24}(?:coat|jacket)|(?:coat|jacket).{0,18}(?:chair|rack|off)/i,
     tags: ['holding jacket'], words: 'holds the jacket she has just taken off', value: 21, scale: 'cowboy shot' },
+  undress: { source: /(?:掀|撩|扯开|拉下|拉低|拉开|褪下|滑落)[^，。！？；]{0,12}(?:衣|裙|裤|内衣|胸罩|袜)|(?:衣|裙|内衣|胸罩)[^，。！？；]{0,8}(?:滑落|褪下|被扯)/,
+    picture: /(?:undress|clothes? pulled|pulled aside|shirt lift|skirt lift|off shoulder|bare shoulder)/i,
+    tags: ['clothes pulled aside', 'undressing'], words: 'has her clothes pulled aside', value: 30, scale: 'cowboy shot' },
+  breastPlay: { source: /(?:揉|捏|抚|搓|含|吮|吸|舔|咬|握)[^，。！？；]{0,8}(?:乳|胸)|(?:乳|胸)[^，。！？；]{0,8}(?:被|落入|贴上|抵)/,
+    picture: /(?:breast play|breasts?|nipples?|chest)/i,
+    tags: ['breast play'], words: 'has her breast held and teased', value: 38, scale: 'upper body' },
+  fingering: { source: /(?:手指|指尖|指腹|指节)[^，。！？；]{0,12}(?:探|插|伸|按|搅|拨|滑|进入)|(?:拨开|拉开|按上|贴着)[^，。！？；]{0,6}(?:内裤|私处|腿间|花|下面)/,
+    picture: /(?:fingering|fingers? (?:inside|between)|digit|spread (?:her )?legs|pussy)/i,
+    tags: ['fingering', 'spread legs'], words: 'is touched between her legs', value: 44, scale: 'cowboy shot' },
+  oral: { source: /(?:含|吮|舔|吞|吸)[^，。！？；]{0,10}(?:肉棒|阴茎|龟头|性器|那根)|口交|口活/,
+    picture: /(?:fellatio|oral|mouth (?:on|around)|sucking|lips (?:around|closed around))/i,
+    tags: ['fellatio', 'oral'], words: 'takes him into her mouth', value: 46, scale: 'upper body' },
+  penetration: { source: /(?:插|挺|顶|撞|抽送|没入|进入|埋入)[^，。！？；]{0,10}(?:体内|深处|身体|里面|她)|插入|后入|正面进入|ride|骑/,
+    picture: /(?:sex|penetrat|vaginal|hetero|creampie|cowgirl|missionary|from behind)/i,
+    tags: ['sex', 'hetero'], words: 'is taken from behind', value: 52, scale: 'cowboy shot' },
+  footjob: { source: /(?:用|拿)?(?:脚|足|脚背|脚心|脚趾)[^，。！？；]{0,10}(?:夹住|夹着|蹭|磨|踩|套弄|上下)[^，。！？；]{0,6}(?:肉棒|那根|他|阴茎|性器)|(?:夹住|套弄)[^，。！？；]{0,8}(?:脚|足)/,
+    picture: /(?:footjob|feet|foot|toes?|sole)/i,
+    tags: ['footjob', 'feet'], words: 'uses her feet on him', value: 42, scale: 'cowboy shot' },
+  cunnilingus: { source: /(?:低头|俯身|俯下|埋|凑|贴)[^，。！？；]{0,10}(?:舔|吮|含)[^，。！？；]{0,8}(?:下面|腿间|私处|花|缝|穴)|(?:舔|吮)[^，。！？；]{0,6}(?:下面|腿间|私处|花|缝|穴)/,
+    picture: /(?:cunnilingus|oral|licking|tongue|lips? (?:on|against))/i,
+    tags: ['cunnilingus', 'oral'], words: 'is licked between her legs', value: 44, scale: 'cowboy shot' },
+  climax: { source: /高潮|内射|射在|射进|痉挛|抽搐|颤抖着.{0,6}(?:夹|缩)|一起到了/,
+    picture: /(?:orgasm|climax|creampie|cum|trembling|ahegao)/i,
+    tags: ['orgasm'], words: 'climaxes with her body trembling', value: 40, scale: 'upper body' },
   openCollar: { source: /(?:敞开|解开|松开)[^，。！？；]{0,12}(?:衣领|领口)|(?:衣领|领口)[^，。！？；]{0,6}(?:敞开|解开)/,
     picture: /(?:open|loos|unbutton).{0,20}collar|collar.{0,13}(?:open|loos|unbutton)/i,
     tags: ['open collar'], words: 'opens the collar of her shirt', value: 20, scale: 'upper body' },
@@ -151,6 +175,14 @@ export function inventoryShots(
     if (!cast.some((name) => !women.has(name)) && (group || MALE_PRONOUN.test(presenceText) && recentOthers.length === 1))
       cast.push(...recentOthers);
     if (cast.length || female.length) recentCast = [...new Set([...cast, ...female, ...recentCast])].slice(0, 3);
+    // 单女主小说里段落常用「她」推进，前面又可能隔着几段环境描写，recentCast 已经空了。
+    // 旧写法只认 recentWomen，于是这一格被判成「没有女性入画」，镜头表直接空掉、整楼 no_frame。
+    if (!female.length && women.size === 1 && FEMALE_PRONOUN.test(presenceText)) female.push(...women);
+    // 多人场景里「她」可能指其中一位：把这一格在场名单里的女性并进来，别让整格判成没有女性。
+    if (!female.length) {
+      const onStage = cast.filter((name) => women.has(name));
+      if (onStage.length) female.push(...onStage);
+    }
     if (!female.length && !femaleCue) continue;
     const model = candidates.get(segment.id);
     const grounded = !!model?.evidence && !/^P\d+$/i.test(model.evidence) &&
@@ -159,7 +191,9 @@ export function inventoryShots(
     if (!APPEARANCE_OR_ACTION.test(text) && !actions.length && !(grounded && quality)) continue;
     if (!actions.length && !quality && (model || !proposed.has(segment.id)) && min === 0) continue;
     const sourceValue = actions.reduce((sum, id) => sum + ACTIONS[id].value, 0);
-    const modelValue = quality ? Math.min(actions.length ? 8 : 27, scoreCandidate(model)) : 0;
+    // 命中动作表不再打折：旧写法让「亲吻/搂腰」稳拿 36～52 分，而插入、口交这类表内没写的强画面
+    // 只能靠模型自评（通常 9～15 分），名额少时核心亲密必然被挤掉。自评分一律按原始分计入。
+    const modelValue = quality ? scoreCandidate(model) : 0;
     const strength = sourceValue + modelValue + (grounded ? 2 : 0);
     prior = { segment, action: grounded && model?.action ? model.action : text, actions, female,
       cast: [...new Set([...cast, ...female])], score: strength, sceneText, continues: continues?.segment };
@@ -199,10 +233,12 @@ export function verifiedShot(image: ImageInsertion, moment: ShotMoment, facts: r
       moment.cast.length === 2 &&
       !moment.cast.every((name) => image.characters.some((c) => c.name === name))) return false;
   const caption = [image.tag, image.nl, ...image.characters.flatMap((c) => [c.tag, c.nl])].join(' ');
-  // A known action in a caption cannot be imported from a different beat.
-  const stray = ['kiss', 'waist', 'catchCup', 'kneel', 'shield'].some((id) =>
+  // 道具类动作被搬进来才是真串场（同一楼里可能挂着别处的杯子/图纸）。
+  // 亲吻、搂腰这类接触在露骨段落里极常见：正文那句只写「插进去」、画面写「kissing」并不算编造，
+  // 旧写法把它整张判无效，等于专门掐掉最该出的那一格。
+  const strayProp = ['catchCup', 'shield', 'plan', 'removeCoat', 'pickBall'].some((id) =>
     ACTIONS[id].picture.test(caption) && !moment.actions.includes(id));
-  if (stray) return false;
+  if (strayProp) return false;
   if (moment.actions.length) return moment.actions.some((id) => ACTIONS[id].picture.test(caption));
   const local = shotActionFacts(image.characters.map((c) => c.name), moment, facts);
   if (local.length) return local.some((fact) => {
