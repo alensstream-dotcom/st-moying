@@ -294,7 +294,48 @@ export function normaliseLexiconTag(tag: string): string {
     seen.add(low);
     kept.push(piece);
   }
-  return collapseSynonyms(kept).join(', ');
+  return collapseOnepiece(collapseSynonyms(kept)).join(', ');
+}
+
+/**
+ * 连体衣只留一件。
+ *
+ * 模型常在同一个角色块里把同一件衣服写三遍：`nightgown, white dress, short dress`
+ * （实测第 0 楼）。NAI 侧这些是同一件「连衣裙/睡裙」的三个同义词，写三遍等于把
+ * 这件衣服的权重乘三，画面里裙子的存在感压过其他一切，也把「短」和「白」拆散在
+ * 三个词里。同格位只保留描述最充分的那一个（词数多的），其余丢掉。
+ */
+const ONEPIECE_TAILS = new Set([
+  'dress',
+  'gown',
+  'nightgown',
+  'nightdress',
+  'pajamas',
+  'pyjamas',
+  'swimsuit',
+  'bikini',
+  'leotard',
+  'bodysuit',
+  'serafuku',
+]);
+
+function collapseOnepiece(pieces: string[]): string[] {
+  let best = -1;
+  let bestWords = 0;
+  pieces.forEach((piece, index) => {
+    const words = piece.toLowerCase().split(/\s+/);
+    if (!ONEPIECE_TAILS.has(words[words.length - 1])) return;
+    if (words.length > bestWords) {
+      bestWords = words.length;
+      best = index;
+    }
+  });
+  if (best < 0) return pieces;
+  return pieces.filter((piece, index) => {
+    if (index === best) return true;
+    const words = piece.toLowerCase().split(/\s+/);
+    return !ONEPIECE_TAILS.has(words[words.length - 1]);
+  });
 }
 
 /**
@@ -427,6 +468,43 @@ const DRESS_MODIFIER = new Set([
 const RESTATEMENT_ACTION = /\b(holds?|holding|rests?|resting|turns?|turning|looks?|looking|leans?|leaning|steps?|stepping|walks?|walking|stands?|standing|sits?|sitting|reaches?|reaching|raises?|raising|pulls?|pulling|pushes?|pushing|covers?|covering|glances?|tilts?|shifts?|fingers?|palm|hand|hands|shoulder|back|chest|collar)\b/i;
 
 /** 从 nl 里删掉「复述 tag 服装」的分句；删空就返回空串。 */
+const CLOTHING_DUMP = /^(?:not\s+wearing|wearing|she\s+is\s+wearing|she\s+wears)\b[^.!?]*[,;][^.!?]*\b(?:wearing|is|are)\b/i;
+
+/** 一整段都是 tag 串（1girl 开头、或逗号远多于动词），不是句子。 */
+function looksLikeTagList(text: string): boolean {
+  if (/^\s*\d+\s*(?:girl|boy|other)\b/i.test(text)) return true;
+  const commas = (text.match(/,/g) || []).length;
+  const words = text.split(/\s+/).filter(Boolean).length;
+  const hasVerb = /\b(?:is|are|was|were|wears?|wearing|holds?|holding|stands?|sits?|lies|turns?|looks?|leans?|rests?|reaches|raises|pulls?|tucks|facing|glancing|smiles?)\b/i.test(text);
+  return (commas >= 4 && commas * 3 > words) || (commas >= 2 && !hasVerb);
+}
+
+/**
+ * 自然语言的唯一清洗入口（序列化前调一次）。
+ *
+ * 以前清洗分散在三处（解析、服装层、序列化），每一处都按自己的理由删句，
+ * 到最后模型写的那句话只剩残句，还分不清是哪一层删的。现在只有这里一次：
+ * 1) 整段是 tag 串 → 丢弃；2) 整段是账本口径的名词堆 → 丢弃；
+ * 3) 只删「纯复述服装」的整句，带动作的句子原样保留。
+ */
+export function cleanNaturalLanguage(text: string, ...tagTexts: string[]): string {
+  const value = text.trim();
+  if (!value) return '';
+  if (CLOTHING_DUMP.test(value) || looksLikeTagList(value)) {
+    console.warn('[墨影] nl 不是句子（是 tag 串或服装清单），整段丢弃：' + value.slice(0, 60));
+    return '';
+  }
+  const kept = stripGarmentRestatement(value, ...tagTexts);
+  // 模型常在换行处断句，产出一句没有句号的半句（实机第 0 楼：「She steps out of the
+  // softly lit bathroom」）。NAI 把整段当一句话读，缺句号会把下一段接上去；这里只补
+  // 终止符，不改写内容。同时把「半句没有主谓」的情况留给模型（契约里已要求完整句）。
+  if (!kept) return '';
+  // 只有「看起来像句子」（≥3 词）才补终止符：`left`、`upper body` 这种是给序列化当字段值的
+  // 短语，补句号会把既有标签写法（`nl":"left"`）改坏。
+  if (/[.!?]$/.test(kept) || kept.split(/\s+/).length < 3) return kept;
+  return `${kept}.`;
+}
+
 export function stripGarmentRestatement(nl: string, ...tagTexts: string[]): string {
   const text = (nl || '').trim();
   if (!text) return '';
@@ -464,19 +542,17 @@ export function stripGarmentRestatement(nl: string, ...tagTexts: string[]): stri
   if (kept.length === pieces.length) return text;
   // 整句都是服装复述时不要直接留空：把衣物名词摘掉，还有动作与主语就留成一句话。
   // 空串等于这一格放弃描述（实测第 1 楼因此丢了「靠在他肩上说话」这个动作）。
+  // 整句都是服装复述时只判定「它是不是一句能站住的描述」：有主语有动词就整句留下，
+  // 否则整句丢掉。绝不逐词摘衣物名词——`She pinches the hem of her shirt` 里 shirt 是
+  // 动作的落点，摘掉它句子就不成话了（实测出过 `She pinches the hem of her.`）。
   if (!kept.length) {
-    const bare = text
-      .split(/\s+/)
-      .filter((word) => !garments.has(word.toLowerCase().replace(/[^a-z0-9]/g, '')))
-      .join(' ')
-      .replace(/\s{2,}/g, ' ')
-      .replace(/\s+([,.!?])/g, '$1')
-      .trim();
-    const words = bare.split(/\s+/).filter(Boolean);
-    return bare && words.length >= 5 && /\b(?:she|he|her|his)\b/i.test(bare) ? bare : '';
+    const words = text.split(/\s+/).filter(Boolean);
+    return words.length >= 5 && /\b(?:she|he|her|his)\b/i.test(text) && /\b[a-z]+(?:s|ed|ing)\b/i.test(text)
+      ? text
+      : '';
   }
-  const out = kept.join(', ').replace(/,\s*,/g, ',').replace(/^[,\s]+|[,\s]+$/g, '').trim();
-  return out;
+  // 用空格接回句子：逗号接法会把两句话粘成 tag 串，模型下一轮会学着写串。
+  return kept.join(' ').replace(/\s{2,}/g, ' ').trim();
 }
 
 const GENERIC_SCENES = new Set(['house', 'indoors', 'indoor', 'outdoors', 'outdoor', 'room', 'building']);

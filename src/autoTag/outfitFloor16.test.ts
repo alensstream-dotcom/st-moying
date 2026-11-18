@@ -63,7 +63,11 @@ describe('第 16 楼：泛称衣服 + 施动者主语', () => {
     const undress = scene.changes.find((c) => /褪下温婉的衣服和裤子/.test(c.evidence));
     expect(undress, '褪下衣服和裤子这一句必须产生一条换装事件').toBeTruthy();
     expect(undress?.name).toBe('温婉');
-    expect(undress?.pieces.map((p) => p.id).sort()).toEqual(['bra_story', 'shirt_story']);
+    // 件 id 现在跟随账本里的既有 id（可能带历史后缀），这里只核「上衣与内衣都脱了」，
+    // 不把 id 拼写钉死——钉死 id 会在账本迁移时变成假失败。
+    const ids = undress?.pieces.map((p) => p.id).join(' ') ?? '';
+    expect(ids).toMatch(/shirt/);
+    expect(ids).toMatch(/bra/);
     expect(undress?.pieces.every((p) => p.state.location === 'removed')).toBe(true);
   });
 
@@ -87,14 +91,14 @@ describe('第 16 楼：泛称衣服 + 施动者主语', () => {
 
   it('泛称「衣服」不会顺手把内裤也脱掉（中文里「裤子」不含内裤）', () => {
     const inner = record([
-      ['shirt_story', 'white shirt', ''],
-      ['panties_story', 'white panties', ''],
+      ['shirt', 'white shirt', ''],
+      ['panties', 'white panties', ''],
     ]);
     const own = new Map([['温婉', inner]]);
     const line = '李斌伸手褪下温婉的衣服和裤子。';
     const scene = synthesiseSceneClothing(line, entries, own as never, []);
     const touched = scene.changes.flatMap((c) => c.pieces.map((p) => p.id));
-    expect(touched).toContain('shirt_story');
-    expect(touched).not.toContain('panties_story');
+    expect(touched).toContain('shirt');
+    expect(touched).not.toContain('panties');
   });
 });

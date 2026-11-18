@@ -1,6 +1,7 @@
 import { h, render } from 'vue';
 
 import PromptEditor from '@/floor/PromptEditor.vue';
+import type { FloorTrace } from '@/autoTag/trace';
 import { cancelFloorTags, requestSlotTag } from '@/autoTag/runner';
 import { markForAutoGenerate, consumeAutoGenerate } from '@/floor/autoGenerate';
 import { hydrateMessage } from '@/floor/hydrate';
@@ -332,6 +333,15 @@ export function openPromptEditor(options: PromptEditorOptions): void {
    * "Cannot read properties of null (reading 'refs')",且 ref 从未生效
    * → 拿不到实例 → 关不掉弹窗。状态一律走 props/emit。
    */
+  // 诊断轨迹在开窗那一刻取一次：本弹窗活得比卡片长，重绘时不能再回去读楼层。
+  const trace = (() => {
+    try {
+      const chat = (window as unknown as { SillyTavern?: { getContext: () => { chat?: Array<{ extra?: Record<string, unknown> }> } } }).SillyTavern?.getContext()?.chat;
+      return (chat?.[options.at.messageId]?.extra?.bbiTrace ?? null) as FloorTrace | null;
+    } catch {
+      return null;
+    }
+  })();
   const paint = () => {
     // 迟到的重绘一律丢弃(见 closed 的注释):容器已脱档,但 ModalMask 会 Teleport 出去,
     // 渲染进去等于把关掉的弹窗又贴回屏幕,且再也关不掉。
@@ -339,6 +349,7 @@ export function openPromptEditor(options: PromptEditorOptions): void {
     render(
       h(PromptEditor, {
         content,
+        trace,
         historyCount: options.historyCount,
         configured: options.configured,
         busy,

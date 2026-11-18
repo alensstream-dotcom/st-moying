@@ -4,6 +4,7 @@ import type { TargetSegment } from '@/autoTag/clean';
 import { parseFacts, type StoryFact } from '@/autoTag/facts';
 import { normalizeAct, normalizeGiver, type ActGiver, type SexAct } from '@/autoTag/actTags';
 import { parseCandidates, pruneByCandidates } from '@/autoTag/candidates';
+import { isNarratedOnly } from '@/autoTag/onScreen';
 import { parseClothingChanges, type ClothingChange } from './outfitTimeline';
 import { parseIdentityClaims, type IdentityClaim } from '@/state/characterIdentity';
 import { FORBIDDEN_SUBTAG, readCenter, serializeImageTag } from '@/st/imageTagRegex';
@@ -60,6 +61,16 @@ export interface ImageInsertion {
   act?: SexAct | null;
   /** 施动方:`1boy` = 男对女,`1girl` = 女对男/女方主动。缺省按行为推断。 */
   by?: ActGiver | null;
+  /**
+   * 这张图对应 candidates 里的哪一条、定格成什么动作。
+   *
+   * 光有 candidates 列表没用：筛选只比位置与分数，模型完全会在候选里写「把碎发别到耳后」、
+   * 最终 NL 却写「双手放在笔记本上」。这三个字段把「选中哪一格、这一格的定格动作是什么」
+   * 绑在图片本身，代码才能查它是不是同一件事。
+   */
+  candidateId?: string;
+  frameAction?: string;
+  focus?: string;
 }
 
 export interface ImagePlan {
@@ -215,7 +226,6 @@ const CJK_CHAR = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
  */
 
 /** 账本口径的假句子：`Wearing white shirt, unfastened.` / `Not wearing jeans; it has been taken off.` */
-const CLOTHING_DUMP = /^(?:not\s+wearing|wearing|she\s+is\s+wearing|she\s+wears)\b[^.!?]*[,;][^.!?]*\b(?:wearing|is|are)\b/i;
 function sanitizeNl(value: unknown, field: string, index: number): string {
   const text = sanitizeContent(value, field, index);
   if (!text) return '';
@@ -223,20 +233,8 @@ function sanitizeNl(value: unknown, field: string, index: number): string {
     console.warn(`[墨影] images[${index}].${field} 含中文/日文，整段丢弃（NAI 只吃英文 nl）`);
     return '';
   }
-  // nl 是句子，不是第二个 tag 字段。实测模型偶尔把角色的 tag 又抄一遍进 nl
-  // （`1girl, black hair, long straight hair, ...`）——这种串进 NAI 只会稀释权重、
-  // 还会让「tag 管可枚举 / nl 管不可枚举」的分工彻底失效，直接丢。
-  const commas = (text.match(/,/g) ?? []).length;
-  const words = text.split(/\s+/).filter(Boolean).length;
-  const hasVerb = /\b(is|are|was|were|wears?|wearing|holds?|holding|stands?|standing|sits?|sitting|lies|lying|turns?|looks?|leans?|rests?|reaches|raises|pulls?|pushes?|tucks|resting|holding|facing|glancing|smiles?|says?|speaks?)\b/i.test(text);
-  if (commas >= 3 && !hasVerb && words <= 14) {
-    console.warn(`[墨影] images[${index}].${field} 是 tag 列表而不是句子，整段丢弃`);
-    return '';
-  }
-  if (CLOTHING_DUMP.test(text)) {
-    console.warn('[墨影] nl 是账本口径的名词堆（不是一句英文），整段丢弃：' + text.slice(0, 60));
-    return '';
-  }
+  // 句子层面的清洗（tag 串、服装清单）统一放到出口 cleanNaturalLanguage，
+  // 这里只挡「中文/日文」这种 NAI 一定读不懂的内容。
   return text;
 }
 
@@ -359,6 +357,17 @@ function locatableAnchor(
  * changes 全程宽容:单条坏就丢弃,绝不连累 images——角色档案漏一条只是这个角色本轮
  * 没锚定,为它作废整次输出会连图一起没有,那是更坏的结果。
  */
+/** 判断一段「自然语言」其实是 tag 串：开头是人数词，或逗号密度高且没有限定动词。 */
+function isTagListLike(text: string): boolean {
+  const value = text.trim();
+  if (!value) return false;
+  if (/^\s*\d+\s*(?:girl|boy)s?\b/i.test(value)) return true;
+  const commas = (value.match(/,/g) ?? []).length;
+  const words = value.split(/\s+/).filter(Boolean).length;
+  if (commas >= 4 && commas * 3 > words) return true;
+  return commas >= 2 && !/\b(?:is|are|was|were|has|have|wears?|holds?|grips?|reaches?|sits?|stands?|leans?|turns?|looks?)\b/i.test(value);
+}
+
 export function parseImagePlan(
   raw: string,
   segments: TargetSegment[],
@@ -421,6 +430,15 @@ export function parseImagePlan(
         // 缺省不写键:老楼层里存过的 <bbi_image> 也不带这两个字段,序列化保持稳定。
         ...(act ? { act } : {}),
         ...(by ? { by } : {}),
+        ...(typeof entry.candidateId === 'string' && entry.candidateId.trim()
+          ? { candidateId: entry.candidateId.trim() }
+          : {}),
+        ...(typeof entry.frameAction === 'string' && entry.frameAction.trim()
+          ? { frameAction: entry.frameAction.replace(/\s+/g, ' ').trim() }
+          : {}),
+        ...(typeof entry.focus === 'string' && entry.focus.trim()
+          ? { focus: entry.focus.replace(/\s+/g, ' ').trim() }
+          : {}),
       });
     } catch (error) {
       // 单张图落不了位不该毁掉整楼:记下原因、丢掉这一张,其余照常落位。
@@ -436,7 +454,33 @@ export function parseImagePlan(
   // 候选层：模型若给了候选表，就用打分结果决定留哪几张（低于门槛的落点丢掉，
   // 超上限的按分数留高的）。没给候选就保持原样——它没走这条路，不擅自删图。
   const candidates = parseCandidates(parsed.candidates, new Set(positions.keys()));
-  const ranked = pruneByCandidates(images, candidates, normalizedMax);
+  // 有候选表时，每张图必须说清它画的是哪一条候选：没有 candidateId 或引用了不存在的
+  // 候选，说明这张图和「选中的剧情」没关系，宁可少一张也不要交上去一张别的画面。
+  const bound = candidates.length
+    ? images.filter((image) => {
+        if (!image.candidateId) {
+          console.warn(`[墨影] 丢弃 ${image.position}：有候选表但没写 candidateId，无法确认画的是选中剧情`);
+          return false;
+        }
+        if (!candidates.some((candidate) => candidate.position === image.position)) {
+          console.warn(`[墨影] 丢弃 ${image.position}：候选表里没有这个位置`);
+          return false;
+        }
+        return true;
+      })
+    : images;
+  // 「在场」判据：只写计划、回忆、推演、以后要怎样的一段，没有当下发生的动作——
+  // 模型照样会交一张画面，实机第 12 楼正文是「李斌在书房点烟盘算怎么攻略小姨子」，
+  // 它画出了「她坐沙发喝奶茶」。这一段不是这一楼正在发生的事，画面只能是编的。
+  const onScreen = bound.filter((image) => {
+    const segment = String(positions.get(image.position) ?? '');
+    if (isNarratedOnly(segment)) {
+      console.warn(`[墨影] 丢弃 ${image.position}：这一段只写计划/回忆/推演，没有正在发生的动作`);
+      return false;
+    }
+    return true;
+  });
+  const ranked = pruneByCandidates(onScreen, candidates, normalizedMax);
   if (ranked.dropped.length) {
     console.warn(
       `[墨影] 按候选打分丢掉 ${ranked.dropped.length} 张：` +
@@ -452,8 +496,13 @@ export function parseImagePlan(
       `[墨影] 本楼只找到 ${limitedImages.length} 个可信画面（设置里的最少张数是 ${normalizedMin}），按实际张数收下`,
     );
   }
+  // 事实人物名单不能取自「筛选后留下来的图」：模型正确记下某人换衣服、
+  // 但她没被选进这一楼的画面，事实就会被当成幻觉名丢掉。名单只要是人，
+  // 与出不出图无关。
   const knownNames = new Set<string>(['scene']);
-  for (const image of limitedImages) for (const character of image.characters ?? []) knownNames.add(character.name);
+  for (const image of ranked.images) for (const character of image.characters ?? []) knownNames.add(character.name);
+  const rawOutfits = Array.isArray(parsed.outfitChanges) ? (parsed.outfitChanges as Array<Record<string, unknown>>) : [];
+  for (const change of rawOutfits) if (typeof change?.name === 'string' && change.name) knownNames.add(change.name);
   const facts = parseFacts(parsed.facts, knownNames);
   return {
     images: limitedImages,

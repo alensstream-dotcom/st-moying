@@ -10,7 +10,7 @@ import { extractGarment, readOutfitState, readWear, BBI_OUTFIT_EXTRA_KEY } from 
 import { candidateAliasesForEntry, resolveCanonicalCharName } from './charReuse';
 import { isCollarToken, isPropToken, storyMentionsCollar, storyMentionsProp } from './props';
 import type { CharTagEntry } from '@/state/charTags';
-import { storyGarments, storyPlaces } from './storyGarments';
+import { groundScenes, storyGarments, storyPlaces } from './storyGarments';
 import { collapseAttributes, resolveTagConflicts } from './conflicts';
 import { enforceShotCoverage, needsFromFacts, seeNeeds } from './shotCoverage';
 import type { STMessage } from '@/st/context';
@@ -23,8 +23,20 @@ export interface ClothingPiece {
   id: string;
   design: string;
   state: Record<string, string>;
+  /**
+   * 稳定实例号（同一件衣服跨楼不变）。`id` 是类别名（shirt/bra/skirt），
+   * 用来归位；`garmentId` 用来指认「还是那一件」——换了一件同类别的新衣服时
+   * garmentId 会变，界面与诊断都靠它区分「同一件」与「另一件同款」。
+   */
+  garmentId?: string;
 }
 export interface ClothingRecord {
+  /**
+   * 最近一次「完整穿搭」的快照。跨天/换场景时用来复原，
+   * 而不是从上一楼那张图的 tag 反推——tag 里有景别、表情、机位，反推出来的
+   * 「衣服」会越来越不像人穿的那套。
+   */
+  lastComplete?: ClothingPiece[];
   suitMode?: 'style' | 'always';
   boundSuitId?: string;
   manual?: boolean;
@@ -48,6 +60,7 @@ export interface ClothingChange {
 }
 export interface ClothingFloor {
   legacyBackup?: unknown;
+
   delta?: boolean;
   manualChoiceRevision?: string;
   costume?: CostumeFloor;
@@ -2380,8 +2393,28 @@ export function synthesiseSceneClothing(
           notes.push(`${name}: 亲密情节但原文写着隔着衣物/没有脱，服装账本保持原样`);
           continue;
         }
-        const naked = NAKED_STATE.test(evidence);
-        const bodyBare = BODY_BARE.test(evidence);
+        // 「而自己，赤裸的身体上还残留着…」——裸体写的是李斌，不是她。这一句如果算成
+        // 她的裸体，整楼衣服会被一次性记成 removed，然后她一路裸到几十楼。
+        // 判据落在「含裸体词的那个小句」上：小句里有她的名字（且不是领属）、或以「她」开头，
+        // 且没有「他/自己/李斌」，才算她的裸体。
+        const hersClause = (pattern: RegExp): boolean => {
+          const clauses = String(evidence ?? '').split(/[。！？；\n，,]/);
+          return clauses.some((clause) => {
+            if (!pattern.test(clause)) return false;
+            if (/他|自己|李斌|男主/.test(clause)) return false;
+            if (/^\s*她/.test(clause.trim())) return true;
+            if (!name) return true;
+            const index = clause.indexOf(name);
+            if (index < 0) return false;
+            const after = clause.slice(index + name.length, index + name.length + 1);
+            return after !== '的' && after !== '之';
+          });
+        };
+        // 整句里没有男性/「自己」时不必做归属判定（大多数正文就是只写她一个人）；
+        // 有男性在场时，裸体词必须落在写她的小句上。
+        const maleInEvidence = /他|自己|李斌|男主/.test(evidence);
+        const naked = NAKED_STATE.test(evidence) && (!maleInEvidence || hersClause(NAKED_STATE));
+        const bodyBare = BODY_BARE.test(evidence) && (!maleInEvidence || hersClause(BODY_BARE));
         const undress = TAKEOFF_ACTION.test(evidence);
         const opened = OPEN_ACTION.test(evidence);
         const bareUpper = BARE_UPPER.test(evidence);
@@ -2423,7 +2456,11 @@ export function synthesiseSceneClothing(
           // 旧版谁都不命中 → pieces 空 → 整段 continue，于是账本停在「全套穿好」，
           // 那正是「NSFW 剧情出 SFW 图」最主要的成因。
           if (naked || bodyBare) {
-            pieces.push({ id: piece.id, design: '', state: { location: 'removed' } });
+            pieces.push({
+              id: piece.id,
+              design: '',
+              state: { location: 'removed' },
+            });
           } else if (undress && mentioned && !opened) {
             pieces.push({ id: piece.id, design: '', state: { location: 'removed' } });
           } else if ((bareUpper && upper) || (bareLower && lower)) {
@@ -2487,7 +2524,23 @@ export function synthesiseSceneClothing(
             continue;
           }
         }
-        if (scene.mode !== 'undress')
+        // 场景本身不许脱衣：原先只要 mode 不是 undress（进卧室、进浴室、换到夜里）
+        // 就把身上所有衣物记成 removed/floor，「她回房间」那一楼直接变全裸。
+        // 现在只有两种证据能整身脱：正文真的写了裸体，或写了她在洗澡/泡澡。
+        const wholeText = `${text} ${evidence}`;
+        // 裸体与洗澡都必须是她的事。真实正文第 4 节写「而自己，赤裸的身体上还残留着…」——
+        // 那是李斌的自述，整句判据会把她的衣服全部脱掉，然后她一路裸到几十楼。
+        const herScene = (pattern: RegExp): boolean =>
+          wholeText.split(/[。！？；\n]/).some((sentence) => {
+            if (!pattern.test(sentence)) return false;
+            if (record.name && sentence.includes(record.name)) return true;
+            if (/^\s*她/.test(sentence.trim())) return true;
+            // 没有主语的场景句（「浴室里很快响起水声」）算她的；写了「他/自己/李斌」的不算。
+            return !/他|自己|李斌|男主/.test(sentence);
+          });
+        const sceneNudity = herScene(/赤裸|全裸|一丝不挂|光着身子|没穿衣服|裸体|\bnaked\b|\bnude\b/i);
+        const bathing = herScene(/洗个?澡|淋浴|花洒|冲洗|冲凉|泡澡|泡进|冲澡|热水|浴缸|\bshower\b|\bbath\b/i);
+        if (sceneNudity || bathing) {
           for (const piece of record.pieces) {
             const location = piece.state.location;
             if (location && location !== 'worn' && location !== 'unknown') continue;
@@ -2496,11 +2549,49 @@ export function synthesiseSceneClothing(
               id: piece.id,
               design: '',
               state: {
-                location: scene.mode === 'bath' ? 'floor' : 'removed',
-                ...(scene.mode === 'bath' ? { wetness: 'wet' } : {}),
+                location: bathing && !sceneNudity ? 'floor' : 'removed',
+                ...(bathing ? { wetness: 'wet' } : {}),
               },
             });
           }
+        } else if (/褪下|褪去|脱下|脱去|脱光|剥光|扒光|扒下/i.test(evidence)) {
+          // 点了名的那几件才脱：中文里「衣服和裤子」不含内裤，泛称不能顺手把内裤也记成脱下。
+          const namesUpper = /衣|袍|衫/.test(evidence);
+          const namesLower = /裤|裙/.test(evidence);
+          for (const piece of record.pieces) {
+            const location = piece.state.location;
+            if (location && location !== 'worn' && location !== 'unknown') continue;
+            if (!bodyClothing(piece.design)) continue;
+            const kind = garmentKind(piece.design);
+            // 内衣要单独点名才脱：中文里「衣服和裤子」不含内裤，泛称顺手脱内衣
+            // 就是没写裸体的裸奔。
+            if ((kind === 'bra' || kind === 'panties' || kind === 'lingerie') && !/内裤|内衣|胸罩|文胸|胸衣/.test(wholeText)) continue;
+            const lower = kind === 'pants' || kind === 'skirt';
+            if (lower ? !namesLower : !namesUpper) continue;
+            pieces.push({ id: piece.id, design: '', state: { location: 'removed', ...(bathing ? { wetness: 'wet' } : {}) } });
+          }
+        }
+      }
+      // 同一条证据句里既写了「褪下」又写了「浴缸」时，上面的两个分支会各推一遍：
+      // 同一件衣服不能同时是「已脱下」和「湿着放在地上」。按 id 归并，脱下来的优先。
+      if (pieces.length > 1) {
+        const removedIds = new Set(pieces.filter((piece) => piece.state.location === 'removed').map((piece) => piece.id));
+        const seenIds = new Set<string>();
+        const merged: typeof pieces = [];
+        for (const piece of pieces) {
+          const id = piece.id ?? '';
+          if (removedIds.has(id)) {
+            if (seenIds.has(id)) continue;
+            if (piece.state.location !== 'removed') continue;
+          } else if (seenIds.has(id)) continue;
+          seenIds.add(id);
+          merged.push(piece);
+        }
+        pieces.length = 0;
+        pieces.push(...merged);
+        // 洗澡这一楼里离身的衣服统一记湿：不管它是走「褪下」还是走「赤裸」分支进来的。
+        const wetHere = /洗个?澡|淋浴|花洒|冲洗|冲凉|泡澡|泡进|冲澡|热水|浴缸|\bshower\b|\bbath\b/i.test(`${text} ${evidence}`);
+        if (wetHere) for (const piece of pieces) if (piece.state.location && piece.state.location !== 'worn') piece.state.wetness = 'wet';
       }
       if (!pieces.length) continue;
       // 位置取「证据句说完的地方」，不是句子开头。
@@ -2533,6 +2624,13 @@ export function synthesiseSceneClothing(
       handled.add(key);
       notes.push(`按场景推断（${scene.label}）：${name} ${pieces.map((p) => p.id).join('、')}`);
     }
+  }
+  // 洗澡这一楼里离身的衣物统一记湿：分支太多（褪下/赤裸/场景推断各一条），
+  // 逐个分支补湿态总会漏，出口统一收一次最省事。
+  if (/洗个?澡|淋浴|花洒|冲洗|冲凉|泡澡|泡进|冲澡|热水|浴缸|\bshower\b|\bbath\b/i.test(text)) {
+    for (const change of changes)
+      for (const piece of change.pieces)
+        if (piece.state && piece.state.location && piece.state.location !== 'worn') piece.state.wetness = 'wet';
   }
   return { changes, notes };
 }
@@ -2929,7 +3027,10 @@ export function applyTextQualifiers(
     }
   }
 
-  const needs = seeNeeds(text);
+  // 可见性只看这一格自己的正文（图附近的窗口），不是整楼：整楼前面提过鞋袜，
+  // 就会把后面递信那张图强行拉成全身，动作反而被缩小到看不清。
+  image.tag = groundScenes(image.tag, near || text);
+  const needs = seeNeeds(near || text);
   // 事实表里写下的动作也算：模型这一轮可能把「她的手按在他胸口」只写进 fact，
   // 没写进 tag/nl；只看正文就会漏掉「必须装得下手」这条可见性要求。
   const factNeeds = facts?.length ? needsFromFacts(facts) : null;
@@ -3157,14 +3258,15 @@ export function enforceClothing(
       // 正文自己写了裸露（洗澡、上床）时，模型写的 nude 是对的，别剥；
       // 只有账本说穿着、而这一楼正文没说裸露，才把裸体词当矛盾清掉。
       if (dressed && !hasOff && !NUDITY_HINT.test(source || '')) c.tag = stripNudeTokens(c.tag);
-      const cleaned = dropConflictingGarments(c.nl, record).join(' ').trim();
-      const kept = dressed ? dropNudityClaims(cleaned).join(' ').trim() : cleaned;
+      // nl 不在这里改写：模型那句话是唯一的「动作怎么完成」来源，
+      // 服装层删句只会把句子删成残句。冲突交给出口的统一清洗（一次），
+      // 这里只记一笔，方便诊断面板看出模型写了什么。
       // **绝不退回 caption.nl**：那是账本渲染出来的「Wearing white shirt, collared
       // shirt, short sleeves, unfastened. Wearing pink bra. Wearing denim shorts.」——
       // 一串名词短语，不是一句英文，而且把 tag 已经说过的品类又复述一遍。
       // 模型那句被删空就留空：留空只是少一条空间信息，塞 dump 会让模型以为
       // 「nl 就是复述 tag」，下一楼继续学坏。
-      c.nl = kept;
+      if (!c.nl.trim()) console.warn('[墨影] 这个角色的 nl 是空的，出口会留空（不回填账本 dump）');
     }
   }
   if (managed && independent) {
@@ -3177,9 +3279,7 @@ export function enforceClothing(
     if (nl) {
       // 同上：只删与账本冲突的衣物句。留空也接受 —— Base 的空间信息可以没有，
       // 服装的品类与状态已经在 Base tag 与角色 tag 里说死了。
-      const anyDressed = [...state.values()].some((r) => r.pieces.some((p) => p.state.location === 'worn'));
-      const baseClean = dropConflictingGarments(image.nl).join(' ').trim();
-      image.nl = anyDressed ? dropNudityClaims(baseClean).join(' ').trim() : baseClean;
+      // 同上：Base nl 也不在这里改写。
     }
     if (image.characters.length) image.tag = stripBasePersonal(image.tag);
   } else if (managed && image.characters.length === 1) {
@@ -3301,7 +3401,10 @@ export function adoptStoryClothing(
       }
       // 陈述句（"她穿着白衬衫"）只在同类款式不同时纠正账本，不新增部件。
       if (stated && !sameKind) continue;
-      pieces.push({ id: `${kind || 'piece'}_story`, design, state: { location: 'worn' } });
+      // id 必须与事实层写账本用的类别名一致（bra / panties / shirt…）。
+      // 以前这里加 `_story` 后缀，于是同一件胸罩会同时存在 `bra` 与 `bra_story` 两条记录，
+      // 渲染出来是「两件胸罩」叠穿，事实继承时还会各继承一遍。
+      pieces.push({ id: kind || 'piece', design, state: { location: 'worn' } });
       designList.push(design);
     }
     if (!pieces.length) continue;

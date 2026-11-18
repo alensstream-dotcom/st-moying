@@ -218,3 +218,23 @@ describe('事实 → 服装变更：件名与状态词', () => {
     expect(pieces[0].state).toMatchObject({ location: 'worn', arrangement: 'lifted', exposure: 'bare' });
   });
 });
+
+describe('同一身体区域只留一件', () => {
+  it('睡裙/睡衣/连衣裙同时出现时收成一件，款式取更具体的', () => {
+    const changes = factsToClothingChanges(
+      [
+        { subject: '温岚', kind: 'wear', value: 'pajamas', evidence: '睡衣', confidence: 'explicit' },
+        { subject: '温岚', kind: 'wear', value: 'nightgown', evidence: '睡裙', confidence: 'explicit' },
+        { subject: '温岚', kind: 'wear', value: 'short white dress', evidence: '白色短连衣裙', confidence: 'explicit' },
+        { subject: '温岚', kind: 'wear', value: 'skirt', evidence: '裙子', confidence: 'explicit' },
+      ],
+      [{ id: 'P1' }],
+      '她穿着白色的短连衣裙。',
+    );
+    const pieces = changes[0].pieces;
+    const onepiece = pieces.filter((piece) => /nightgown|pajamas|dress/.test(piece.id));
+    expect(onepiece).toHaveLength(1);
+    expect(onepiece[0].design).toContain('white');
+    expect(pieces.map((piece) => piece.id)).toContain('skirt');
+  });
+});

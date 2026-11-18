@@ -1,4 +1,4 @@
-import { dropGenericScenes, stripMaleEcho, stripGarmentRestatement, normaliseLexiconTag, stripBaseEcho, separateWorldTags } from '@/data/tagLexicon';
+import { dropGenericScenes, stripMaleEcho, cleanNaturalLanguage, normaliseLexiconTag, stripBaseEcho, separateWorldTags } from '@/data/tagLexicon';
 import type { ImageCharacterPrompt } from '@/autoTag/protocol';
 import { normalizeOrientation, type Orientation } from '@/backends/size';
 import { getContext } from '@/st/context';
@@ -294,9 +294,9 @@ export function serializeImageTag(content: ImageTagContent): string {
     const tag = stripMaleEcho(divided.characters[index] ?? '');
     // nl 复述 tag 服装是模型最顽固的习惯（「She wears a damp white shirt…」）。
     // 放在出口删，是因为中间层会被 enforceClothing/enforceAppearance 重新塞回 nl。
-    return { ...character, tag, nl: stripGarmentRestatement(character.nl, tag) };
+    return { ...character, tag, nl: cleanNaturalLanguage(character.nl, tag) };
   });
-  const baseNl = stripGarmentRestatement(content.nl ?? '', divided.base);
+  const baseNl = cleanNaturalLanguage(content.nl ?? '', divided.base);
   // 单人图：Base 只留场景/机位/光线/人数，角色块已经写过的姿势与身体从 Base 剥掉。
   const tag = dropGenericScenes(
     normaliseLexiconTag(

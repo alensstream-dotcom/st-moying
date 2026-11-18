@@ -35,6 +35,7 @@ import {
   type IdentitySources,
 } from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
+import { repairMessages } from '@/autoTag/repair';
 import { looksLikeCredentialFailure, looksLikeTimeout, looksLikeUpstreamJitter } from '@/api/modelVariant';
 import { blockRetryNote, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { isGeminiTier } from '@/autoTag/jailbreak';
@@ -66,6 +67,7 @@ import {
 } from '@/autoTag/charReuse';
 import { BBI_OUTFIT_EXTRA_KEY } from '@/autoTag/outfitState';
 import { BBI_OUTCOME_EXTRA_KEY, classifyFailure, recordOutcome, type FloorOutcome } from '@/autoTag/outcome';
+import { BBI_TRACE_EXTRA_KEY, buildFloorTrace, type FloorTrace } from '@/autoTag/trace';
 import {
   BBI_FACTS_EXTRA_KEY,
   factsAcrossSceneBreak,
@@ -73,14 +75,19 @@ import {
   gateFactOwnership,
   factsToClothingChanges,
   applyFactClothing,
+  rememberCompleteOutfit,
+  restoreOutfitFacts,
   factsBlock,
   dedupeFacts,
   repairByFacts,
   stripExposureTokens,
   dropExposureClaims,
+  inheritWearFacts,
+  reconcileLedgerWithTags,
   type StoredFacts,
   type StoryFact,
 } from '@/autoTag/facts';
+import { storyGarments } from '@/autoTag/storyGarments';
 import {
   CLOTHING_PROTOCOL,
   acceptClothingChanges,
@@ -96,6 +103,7 @@ import {
   clothingBlock,
   clothingRevision,
   enforceClothing,
+  garmentKind,
   initialiseClothingFromImage,
   redressForNewScene,
   narrativeHash,
@@ -761,6 +769,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 只会把「这一段没画面」拖成 600 秒（第 1 楼实测 5 次 / 667 秒仍 0 张）。
     let emptyPlanRetried = false;
     let baseNlRetried = false;
+    let localRepairDone = false;
+    // 局部修复只做一次：把被挡掉的那一格单独重写，已经合格的图不动。
     // 上一次 attempt 是否被判为「被截断」:是则后续重试改发降载版历史(精简思考清单 +
     // 略去长解释的契约)。降载必须换掉整份历史而不是只追加一句「写短点」——思考清单
     // 本身就是思考长度的来源,只在末尾恳求,模型照旧逐条自证。
@@ -780,6 +790,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 换模型名也不会变(实测 agy 整站 16 个模型名全回同一句 agy_credential_missing)。
     // 一旦命中就直接结束循环,把「换渠道」这句话交给用户,而不是白烧 5 次重试。
     let credentialDead = false;
+    const nlOriginal = new Map<string, { nl: string; characters: Array<{ name: string; nl: string }> }>();
+    let restoredNames: string[] = [];
     // 结局记录要用的两笔计数:发了几次、丢了几张。都在循环外累计,
     // 因为写盘那一步已经出了循环,循环里的 attempt 变量拿不到。
     let attemptsUsed = 0;
@@ -811,7 +823,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         // parsed 用对象壳装着:validate 闭包写入,await 之后读取——请求成功 + 验收通过才非空。
         // (直接 let 会被 TS 收窄成 null:闭包内的赋值控制流分析看不见。)
         const parsed: { plan: ImagePlan | null } = { plan: null };
-        const validate = (raw: string, meta?: { finishReason?: string | null }) => {
+        const validate = async (raw: string, meta?: { finishReason?: string | null }) => {
           // 渠道拦截先判:它和「截断」的表现很像(空、半截、一段客气话),但修法相反——
           // 截断要压输出,拦截要把请求本身改淡。判错方向会让重试打在错的地方。
           const block = diagnoseBlock(raw, meta?.finishReason);
@@ -1012,6 +1024,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 只有当这一楼**确实有可画的画面**时，空 images 才算可纠错误。
           // 反例是第 1 楼：整段是李斌一个人在心里幻想，正文里没有任何女性在画面里，
           // 模型给空数组是对的；旧逻辑照样重试 5 次、耗掉 667 秒，最后还是 0 张。
+          // 另一种空计划：模型写了事实表（她穿着什么、身体在哪），却没给任何画面。
+          // 这不是「这一楼没画面」，而是它读懂了却没落到镜头上——事实里有 wear/body/action
+          // 这类属于具体人物的条目时纠一次；只有 place 的事实（她不在场）不纠。
+          const concreteFact = (candidate.facts ?? []).some(
+            (fact) => fact.subject !== 'scene' && /^(?:wear|body|action)$/.test(fact.kind),
+          );
           if (
             !slot &&
             attempt < retries &&
@@ -1019,7 +1037,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             !candidate.changes.length &&
             !candidate.identities?.length &&
             !emptyPlanRetried &&
-            isDrawWorthy(source)
+            (isDrawWorthy(source) || concreteFact)
           ) {
             emptyPlanRetried = true;
             retryNote = EMPTY_PLAN_RETRY_NOTE;
@@ -1050,11 +1068,46 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           // 其余照常落位；一张不剩就是「本楼无可画瞬间」，属正常结果，不补图。
           if (!slot) {
             const loose = unanchoredIndexes(candidate.images, preparedTarget.promptText);
+            // 先把被挡掉的原图留一份：过滤之后就找不到它的 position / 定场信息了。
+            const looseImages = loose.map((index) => candidate.images[index]).filter(Boolean);
             if (loose.length) {
-              const dropped = loose.map((index) => candidate.images[index]?.afterQuote ?? '').filter(Boolean);
+              const dropped = looseImages.map((image) => image.afterQuote ?? '').filter(Boolean);
               candidate.images = candidate.images.filter((_, index) => !loose.includes(index));
               droppedImages += loose.length;
               console.warn(`[墨影] 丢弃 ${loose.length} 张引句不在正文里的图：${dropped.join(' / ')}`);
+            }
+
+            // 只重写被挡掉的那一格，已经合格的图不动：整楼重跑 10 分钟起，
+            // 还会把本来对的几张一起重掷。这里一次、只带这一格的段落与错误。
+            if (loose.length && candidate.images.length && !localRepairDone && activeChannel) {
+              localRepairDone = true;
+              for (const bad of looseImages) {
+
+                const segment = bad ? preparedTarget.segments.find((item) => item.id === bad.position) : null;
+                if (!segment) continue;
+                try {
+                  const raw = await requestCompletion(
+                    activeChannel,
+                    repairMessages({
+                      segment: segment.text,
+                      position: segment.id,
+                      badQuote: bad.afterQuote,
+                      error: 'after 不是原文里逐字存在的句子（这一格因此被挡掉）。',
+                      frameAction: bad.frameAction,
+                      focus: bad.focus,
+                    }),
+                    { signal: controller.signal, source: '局部修复这一格' },
+                  );
+                  const retryPlan = parseImagePlan(raw, [segment], 0, 1, source);
+                  const fixed = retryPlan.images[0];
+                  if (fixed && !unanchoredIndexes([fixed], segment.text).length) {
+                    candidate.images.push({ ...fixed, position: segment.id });
+                    console.warn(`[墨影] 局部修复成功：${segment.id}`);
+                  }
+                } catch (error) {
+                  console.warn('[墨影] 局部修复失败，按原计划丢弃这一格', error);
+                }
+              }
             }
           }
           // 落位重复:两张图挤在同一段,画出来是同一瞬间拍两遍。仅当可选位置
@@ -1227,6 +1280,14 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           return;
         }
         plan = parsed.plan;
+        // 出口清洗会改 nl（去复述、去 tag 串），先留一份原文，
+        // 诊断里才能分清「模型写得差」与「被后处理改坏」。
+        if (plan)
+          for (const image of plan.images)
+            nlOriginal.set(image.position, {
+              nl: image.nl ?? '',
+              characters: (image.characters ?? []).map((character) => ({ name: character.name, nl: character.nl ?? '' })),
+            });
         // 跨场景时丢掉继承来的露点事实：昨天敞着怀，不代表今天出门还敞着。
         // 只丢继承的，正文真写了（explicit）照留。
         if (plan) {
@@ -1538,30 +1599,83 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       }
     // 模型只写 facts：服装变更由事实翻译而来，与人工干预走同一条校验管线。
     // 模型自己的 outfitChanges 不再写账本（两条自由通道正是「谁写进去的」追不出来的原因）。
-    const modelClothingChanges = slot ? [] : factsToClothingChanges(plan.facts ?? [], preparedTarget.segments);
+    const factFacts = plan.facts ?? [];
+    const inheritedFacts = slot ? [] : inheritWearFacts(factFacts, wardrobe);
+    if (inheritedFacts.length) plan.facts = [...factFacts, ...inheritedFacts];
+    // 模型这一楼只写了场景/动作、没写穿着时，用正文里点名的衣物补一条事实：
+    // 不补，账本只能退回「从 tag 反推」，而 tag 是模型随手写的短词（white shirt），
+    // 白色、短袖这些从正文能读出来的属性就永久丢了。
+    if (!slot) {
+      const described: string[] = storyGarments(source).slice(0, 6);
+      // 覆盖判据按「衣物类别」而不是按人：她上一楼的胸罩/内裤是继承来的，
+      // 这一楼正文明明写了白衬衣与牛仔短裤，却被「这个人已经有 wear 事实」挡掉，
+      // 账本里就只剩内衣——正是「她只穿内衣站在楼梯口」的来源。
+      const coveredKind = (name: string) => {
+        const kinds = new Set(
+          (plan.facts ?? [])
+            .filter((f) => f.kind === 'wear' && f.subject === name && f.confidence !== 'inherited')
+            .map((f) => garmentKind(f.value)),
+        );
+        return kinds;
+      };
+      // 只补给画面里的女性：男主的西装外套不是她的，补进去等于把别人的衣服记到她账上。
+      const female = new Set<string>();
+      for (const image of plan.images)
+        for (const character of image.characters)
+          if (!/\b1boy\b|faceless male/i.test(character.tag)) female.add(character.name);
+      const names = [...female];
+      if (described.length && names.length)
+        plan.facts = [
+          ...(plan.facts ?? []),
+          ...names.flatMap((name) => {
+            const kinds = coveredKind(name);
+            return described
+              .filter((design) => !kinds.has(garmentKind(design)))
+              .map((design) => ({
+                subject: name,
+                kind: 'wear' as const,
+                value: design,
+                evidence: '（本楼正文里写到的穿着）',
+                confidence: 'explicit' as const,
+              }));
+          }),
+        ];
+    }
+    // 跨场景恢复（第二包）：跨天/换地点时，人不会光着出门。这里把「最近一次完整穿搭」
+    // 变成显式事实，和别的 wear 事实走同一条写入口——不直接改账本，也不按整楼关键词
+    // 给所有人无差别复位（那会把「她正被撩着」也一起洗掉）。
+    if (!slot && storyLooksLikeNewScene(source)) {
+      const restored = restoreOutfitFacts(wardrobe, '跨场景：按最近一次完整穿搭复原');
+      if (restored.restored.length) {
+        plan.facts = [...(plan.facts ?? []), ...restored.facts];
+        restoredNames = [...restored.restored];
+        console.warn(`[墨影] 跨场景复原 ${restored.restored.length} 人：${restored.restored.join('、')}`);
+      }
+    }
+    const modelClothingChanges = slot ? [] : factsToClothingChanges(plan.facts ?? [], preparedTarget.segments, source);
     if (!slot && plan.outfitChanges?.length)
       console.warn(`[墨影] 忽略模型自报的 ${plan.outfitChanges.length} 条服装变更（服装只从 facts 进账本）`);
+    const accepted = acceptClothingChanges(
+      slot
+        ? []
+        : [],
+      source,
+      wardrobe,
+      activeEntries,
+    );
+    // facts 走自己的校验（归属闸门 + 人名白名单 + 状态白名单 + 件名归一），
+    // 不再过 acceptClothingChanges：那套闸门要求「动作动词 + 可定位原文」，而事实是
+    // 「她穿着白衬衫」这种陈述句，每一条都会被判「穿脱动作没落在她身上」再拒掉，
+    // 账本就只能退回从 tag 反推（design 退化成 white shirt、location 变成 unknown）。
+    // 模型自报的 outfitChanges 已经在上面被整条忽略，没有第二条自由通道。
     if (modelClothingChanges.length) {
       const appliedFacts = applyFactClothing(wardrobe, modelClothingChanges);
       if (appliedFacts.length)
         console.warn(`[墨影] 账本按事实更新 ${appliedFacts.length} 件：${appliedFacts.slice(0, 6).join('、')}`);
     }
-    const accepted = acceptClothingChanges(
-      slot
-        ? []
-        : modelClothingChanges.filter((c) => {
-            // 账本按主名记，模型可能写「晚晴」；不归一会查不到 suitMode=always 而被放进
-            // accept 里再拒掉，用户看到一条本可静默的警告。
-            const name = activeEntries.length
-              ? resolveCanonicalCharName(c.name, activeEntries)
-              : c.name;
-            const record = wardrobe.get(name) ?? wardrobe.get(c.name);
-            return record?.suitMode !== 'always' || c.operation === 'patch';
-          }),
-      source,
-      wardrobe,
-      activeEntries,
-    );
+    // 用这一楼真正要画的 tag 校准账本：facts 会漏（她穿白衬衣没写进 facts）、
+    // 也会错（把别人的内裤写成她脱下）。tag 是画面事实，两者不一致时以 tag 为准——
+    // 否则会出现「tag 穿着衬衣、账本说她一丝不挂，下一楼沿用裸奔」。
     // 事实表是账本的上游证据之一：模型在 facts 里明确写了「她穿着白衬衫」时，
     // 账本里记着脱下的同一件衣服就该恢复穿着——explicit 的事实高于继承来的状态。
     if (!slot && plan.facts?.length)
@@ -1913,7 +2027,19 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 注意:applyMessageText 的实参在进入 buildNext 之前就会求值,因此账本必须用 plan.images 计算!
     const finalWardrobe = clothingAt(wardrobe, accepted.changes, scope);
     for (const [name, entry] of completion) if (!finalWardrobe.has(name)) finalWardrobe.set(name, entry);
+    // 校准必须发生在 clothingAt 之后：clothingAt 是「基线 + 本楼变更」重算出来的
+    // 新表，改 wardrobe 的副本会被它整份覆盖（实机第 12 楼 tag 画着短裙、
+    // 账本 finalWardrobe 里却没有——正是先校准后重算丢掉的）。
+    const reconciled = reconcileLedgerWithTags(
+      finalWardrobe,
+      plan.images.flatMap((image) => image.characters.map((character) => ({ name: character.name, tag: character.tag }))),
+    );
+    if (reconciled.length)
+      console.warn(`[墨影] 账本按 tag 校准 ${reconciled.length} 处：${reconciled.slice(0, 6).join('、')}`);
     repairCostumeState(finalWardrobe, costume.final, costumeRepairs);
+    const completedOutfits = rememberCompleteOutfit(finalWardrobe, floor);
+    if (completedOutfits.length)
+      console.warn(`[墨影] 记下完整穿搭：${completedOutfits.join('、')}`);
     // 本楼画面里出场（或被换装事件点名）的角色：这些人的账本必须完整落盘，
     // 不能因为「与基线相同」被 delta 滤掉，否则下一楼拿到空账本整段停摆。
     const touchedByFrame = new Set<string>([
@@ -1931,28 +2057,16 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       costume,
       delta: true,
       manualChoiceRevision: expectedWardrobeChoice,
-      start: JSON.parse(
-        JSON.stringify(
-          [...wardrobe.values()].filter(
-            (e) =>
-              accepted.changes.some((c) => c.name === e.name) ||
-              plan.images.some((i) =>
-                i.characters.some(
-                  (c) => (activeEntries.length ? resolveCanonicalCharName(c.name, activeEntries) : c.name) === e.name,
-                ),
-              ),
-          ),
-        ),
-      ),
+      // 全量写：只写「本楼有变更/出场」的条目会在 no_frame 楼层断链——没有图也没有
+      // 变更时 entries 成空数组，下一楼读到空账本，睡裙与外套全丢（实测第 1/2 楼）。
+      // 账本每个角色只有几件、每件只存四个状态键，全量写的体积可以接受。
+      start: JSON.parse(JSON.stringify([...wardrobe.values()])),
       // delta 只写「与基线不同」的条目时，会出现一条断链：某楼的账本是从旧楼层
       // 图片 tag 反推出来的（legacy，状态全是 unknown），本楼新建出来的条目与它
       // 逐字节相同 → 被判「没变化」不写进 extra → 下一楼读到的是 delta 楼 + 空 entries，
       // 于是整个账本变成空的，洗澡/脱衣全部推断不出来（实测第 44 楼就是这样，
       // 第 45 楼直接 return）。所以把本楼画面里出现的角色一并强制写下来。
-      entries: [...finalWardrobe.values()].filter(
-        (e) =>
-          touchedByFrame.has(e.name) || JSON.stringify(e) !== wardrobeBaseline.get(e.name),
-      ),
+      entries: [...finalWardrobe.values()],
       changes: accepted.changes,
       rejected: visualNotes,
       frames,
@@ -2051,6 +2165,19 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 at: Date.now(),
                 facts: plan.facts ?? [],
               } satisfies StoredFacts,
+            },
+            {
+              key: BBI_TRACE_EXTRA_KEY,
+              value: buildFloorTrace({
+                floor,
+                facts: plan.facts,
+                restored: restoredNames,
+                images: plan.images,
+                original: nlOriginal,
+                wardrobe: finalWardrobe,
+                segmentOf: (position) =>
+                  preparedTarget.segments.find((segment) => segment.id === position)?.text ?? '',
+              }) satisfies FloorTrace,
             },
             {
               key: BBI_OUTCOME_EXTRA_KEY,

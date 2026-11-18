@@ -137,7 +137,10 @@ function alignNaturalLanguage(entry: CharTagEntry, original: string, canonical: 
   const locked = isManualFandom(entry);
   const plain = (s: string) => s.replace(/^[-+\d.]+::/, '').replace(/::/g, '');
   let result = original.trim();
-  if (!result) return canonical.map(plain).join(', ') + '.';
+  // 模型没写 nl 时**不要**用档案词拼一句「black hair, long hair, brown eyes.」：
+  // 那正是「自然语言读起来像 tag 串」的来源，还会被当成固定句式教给下一轮。
+  // 没有可说的就留空，交给契约里的「没有额外信息可以省略」。
+  if (!result) return '';
   const first = (value: string, fallback: string) => plain(split(value)[0] ?? fallback);
   const colors =
     'black|white|silver|grey|gray|blond|blonde|golden|brown|auburn|red|pink|blue|navy|green|purple|violet|orange|dark|light|pale|platinum|ash|gold|ash-blonde|chestnut';

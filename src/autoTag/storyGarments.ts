@@ -116,13 +116,89 @@ const PLACE_CJK = Object.entries(tagChinese as Record<string, string>)
   .map(([tag, zh]) => ({ zh, tag }))
   .sort((a, b) => b.zh.length - a.zh.length);
 
+/** 这一段里「人真的在」的场所：场所词前面得有方位/动作线索（在/于/进/到/里/从、
+ *  坐在/站在/躺在/趴在），否则多半只是被顺口提到（「明天还要回学校」不是这个画面）。
+ *  只认这类带线索的命中，才不会出现客厅段落被写成 `living room, street, school`。 */
+/** 场所词的「人真的在这里」线索。除了在/于/进/到/里，还包括带方向的动词
+ *  （推开教室门走进去、回到卧室、穿过走廊）——只认介词会把最常见的写法漏掉。 */
+const LOCATIVE_BEFORE =
+  /(?:在|于|进|到|从|里|中|内|上|坐|站|躺|趴|蹲|靠|走|跑|推开|推门|拉开|回到|返回|穿过|经过|路过|来到|进入|走进)/;
+
+function placeMentioned(text: string, zh: string): boolean {
+  let from = 0;
+  while (true) {
+    const index = text.indexOf(zh, from);
+    if (index < 0) return false;
+    const before = text.slice(Math.max(0, index - 10), index);
+    if (LOCATIVE_BEFORE.test(before)) return true;
+    from = index + zh.length;
+  }
+}
+
+/** 家具与脚下物件不是「另一个房间」：`couch`/`bed`/`stairs` 这类本来就和房间共存，
+ *  只属于画面里的落点，不参与「只留一个场所」的裁剪。 */
+const PLACE_FURNITURE = /^(?:couch|sofa|bed|desk|chair|table|bench|bathtub|pool|floor|stairs?|doorway|living room)$/;
+
+/** 正文里的动作词——场所离动作越近，越可能是这一格真正发生的地方。 */
+const ACTION_CHAR = /[坐站躺趴蹲走跑进出靠跪睡醒望看等笑哭脱穿抱吻咬舔抓握按推拉]/;
+
+function firstActionIndex(text: string): number {
+  const match = ACTION_CHAR.exec(text);
+  return match ? match.index : -1;
+}
+
+function nearestLocativeIndex(text: string, zh: string): number {
+  let from = 0;
+  let best = -1;
+  while (true) {
+    const index = text.indexOf(zh, from);
+    if (index < 0) return best;
+    const before = text.slice(Math.max(0, index - 10), index);
+    if (LOCATIVE_BEFORE.test(before)) best = index;
+    from = index + zh.length;
+  }
+}
+
+/**
+ * 这一段真正发生在哪：场所词里离第一个动作最近的那个。
+ *
+ * 为什么要挑一个而不是全留：一段话经常同时提到两个地方（「她坐在客厅喝奶茶，
+ * 明天还得回学校」「他从楼梯下端看着走廊里的她」）。两个场所同时进 Base，
+ * 画面就会同时出现客厅和街道——一个镜头只有一个「在哪」。
+ */
+export function primaryPlace(text: string): string {
+  if (!text) return '';
+  const action = firstActionIndex(text);
+  let best = '';
+  let bestScore = Number.POSITIVE_INFINITY;
+  const seen = new Set<string>();
+  const consider = (zh: string, tags: readonly string[]): void => {
+    const at = nearestLocativeIndex(text, zh);
+    if (at < 0) return;
+    for (const tag of tags) {
+      const lower = tag.toLowerCase();
+      if (!PLACE_TAGS.has(lower) || seen.has(lower) || PLACE_FURNITURE.test(lower)) continue;
+      // 离动作词越近越可能是「在哪」；没有动作词时按出现顺序。
+      const score = action >= 0 ? Math.abs(at - action) : at;
+      seen.add(lower);
+      if (score < bestScore) {
+        bestScore = score;
+        best = lower;
+      }
+    }
+  };
+  for (const [zh, tags] of PLACE_ALIASES) consider(zh, tags);
+  for (const { zh, tag } of PLACE_CJK) consider(zh, [tag]);
+  return best;
+}
+
 /** 正文里出现的场所词（按出现顺序、上限 3 个）。 */
 export function storyPlaces(text: string): string[] {
   if (!text) return [];
   const hits: string[] = [];
   const seen = new Set<string>();
   for (const [zh, tags] of PLACE_ALIASES) {
-    if (!text.includes(zh)) continue;
+    if (!placeMentioned(text, zh)) continue;
     for (const tag of tags) {
       if (!PLACE_TAGS.has(tag) || seen.has(tag)) continue;
       hits.push(tag);
@@ -132,9 +208,36 @@ export function storyPlaces(text: string): string[] {
   }
   for (const { zh, tag } of PLACE_CJK) {
     if (seen.has(tag) || hits.length >= 3) break;
-    if (!text.includes(zh)) continue;
+    if (!placeMentioned(text, zh)) continue;
     hits.push(tag);
     seen.add(tag);
   }
   return hits;
+}
+
+/**
+ * Base 里的场所词必须能在这段正文里找到出处。
+ * 模型常把「客厅」写成 `living room, street, school`——多出来的两个是它顺手
+ * 补的常见场景，和这一段没关系，画出来就像把客厅接在街上。这里只保留
+ * 正文认得出的场所；一个都认不出时原样放行（宁可不删也不乱删）。
+ */
+export function groundScenes(tag: string, text: string): string {
+  const places = new Set(storyPlaces(text));
+  if (!places.size) return tag;
+  // 一个镜头只有一个「在哪」：挑出离动作最近的那个场所，其余非家具场所一律删。
+  // 只按 `storyPlaces` 过滤是不够的——两个场所都被正文提到时它会把两个都留下
+  // （实机里客厅段落同时出现 `living room` 与 `school`）。
+  const primary = primaryPlace(text);
+  const tokens = tag.split(',').map((token) => token.trim()).filter(Boolean);
+  const concrete = tokens.filter((token) => PLACE_TAGS.has(token.toLowerCase()));
+  if (!concrete.some((token) => places.has(token.toLowerCase()))) return tag;
+  return tokens
+    .filter((token) => {
+      const lower = token.toLowerCase();
+      if (!PLACE_TAGS.has(lower)) return true;
+      if (!places.has(lower)) return false;
+      if (!primary || PLACE_FURNITURE.test(lower)) return true;
+      return lower === primary;
+    })
+    .join(', ');
 }

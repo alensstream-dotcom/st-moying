@@ -334,7 +334,9 @@ describe('validate:历史「成功」= 调用方验收通过', () => {
   it('验收通过 → 返回文本,历史记成功', async () => {
     const seen: string[] = [];
     const text = await requestCompletion(channel, messages, {
-      validate: raw => seen.push(raw),
+      validate: (raw) => {
+        seen.push(raw);
+      },
     });
     expect(text).toBe('答案文本');
     expect(seen).toEqual(['答案文本']); // validate 拿到的是提取后的正文

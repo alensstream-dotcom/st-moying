@@ -75,7 +75,9 @@ export interface RequestOptions {
    * 看历史的人会误以为成功也重复调用。验收抛错 = 记为失败并把错误原样抛出,
    * 由调用方决定重试/放弃。
    */
-  validate?: (content: string, meta?: { finishReason?: string | null }) => void;
+  // validate 可以返回 Promise：局部修复这条路要在校验里发一次很小的请求，
+  // 调用方必须等它跑完再看结果，否则「修好了」和「判定失败」会同时发生。
+  validate?: (content: string, meta?: { finishReason?: string | null }) => void | Promise<void>;
   /**
    * 覆盖温度。设计/结构化这类「要收敛」的任务用低温,不要跟着聊天渠道的 1.0 走;
    * 不传仍用渠道值,存量行为不变。
@@ -466,7 +468,7 @@ async function requestCompletionAtUrl(
       }));
     }
     // A response is still marked successful only after caller validation passes.
-    opts.validate?.(result.content, { finishReason: result.finishReason });
+    await opts.validate?.(result.content, { finishReason: result.finishReason });
 
     if (historyId !== null) {
       const hasReal = result.usage.prompt !== null;
@@ -636,7 +638,7 @@ export async function requestViaMainApi(messages: ChatMsg[], opts: RequestOption
     const content = (await ctx.generateRaw({ prompt: messages, responseLength: MAIN_API_RESPONSE_LENGTH }))?.trim();
     if (!content) throw new ApiError('主 API 返回空内容');
     // 与副 API 同口径:验收不过记失败,不记「成功」
-    opts.validate?.(content);
+    await opts.validate?.(content);
     if (historyId !== null) {
       safeHistory(() =>
         finishLlm(historyId, {

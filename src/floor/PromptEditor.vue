@@ -8,6 +8,7 @@ import Icon from '@/components/Icon.vue';
 import ModalMask from '@/components/ModalMask.vue';
 import { activeOrientationLock } from '@/state/settings';
 import { containsTagMarkup, type ImageTagContent } from '@/st/imageTagRegex';
+import type { FloorTrace } from '@/autoTag/trace';
 
 /**
  * 手动编辑生图提示词的弹窗(楼层卡片 ⋯ 菜单里的铅笔钮)。
@@ -25,6 +26,11 @@ import { containsTagMarkup, type ImageTagContent } from '@/st/imageTagRegex';
 const props = defineProps<{
   /** 打开时的原始内容(解析结果);草稿以此为基准比对「有没有真的改」。 */
   content: ImageTagContent;
+  /**
+   * 这一楼的诊断轨迹（选中哪一句、定格哪个动作、用的哪套衣服、nl 的原文与终稿）。
+   * 只读展示：它不参与生成，也不会被这个弹窗改回去。
+   */
+  trace?: FloorTrace | null;
   /** 当前提示词下已有几张图(>1 时提示改提示词会收成一张)。 */
   historyCount: number;
   /** 后端是否已配置好(未配置时「应用并重新生成」不可点)。 */
@@ -393,6 +399,32 @@ onBeforeUnmount(() => {
         当前提示词下已有 {{ historyCount }} 张图。修改后只显示最新一张(图片没有被删除,
         把提示词改回原样即可全部找回)。
       </p>
+
+      <!-- 诊断：这一张到底摘自哪一句、定格在哪个动作、用的是哪套衣服。 -->
+      <details v-if="trace?.images?.length" class="bbi-trace">
+        <summary>这张图的来历（诊断）</summary>
+        <p class="bbi-field-hint">
+          本楼事实 {{ trace.facts }} 条<template v-if="trace.restored?.length">，跨场景复原：{{ trace.restored.join('、') }}</template>
+        </p>
+        <div v-for="image in trace.images" :key="image.position" class="bbi-trace-block">
+          <p class="bbi-trace-line"><b>{{ image.position }}</b>　选中剧情：{{ image.segment || '（未记录）' }}</p>
+          <p v-if="image.frameAction" class="bbi-trace-line">定格动作：{{ image.frameAction }}</p>
+          <p v-if="image.focus" class="bbi-trace-line">焦点：{{ image.focus }}</p>
+          <p class="bbi-trace-line">tag：{{ image.tag }}</p>
+          <p class="bbi-trace-line">自然语言（终稿）：{{ image.nl || '（空）' }}</p>
+          <p v-if="image.nlOriginal && image.nlOriginal !== image.nl" class="bbi-trace-line">
+            自然语言（原文）：{{ image.nlOriginal }}
+          </p>
+          <div v-for="character in image.characters" :key="character.name" class="bbi-trace-char">
+            <p class="bbi-trace-line">{{ character.name }} · 当时穿搭：{{ character.outfit || '（账本无记录）' }}</p>
+            <p class="bbi-trace-line">角色 tag：{{ character.tag }}</p>
+            <p class="bbi-trace-line">角色自然语言（终稿）：{{ character.nl || '（空）' }}</p>
+            <p v-if="character.nlOriginal && character.nlOriginal !== character.nl" class="bbi-trace-line">
+              角色自然语言（原文）：{{ character.nlOriginal }}
+            </p>
+          </div>
+        </div>
+      </details>
 
       <p v-if="error" class="bbi-editor-error">{{ error }}</p>
 

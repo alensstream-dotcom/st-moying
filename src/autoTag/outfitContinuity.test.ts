@@ -80,7 +80,10 @@ describe('服装连续性：洗澡场景', () => {
     const ids = out.changes[0].pieces.map((piece) => piece.id);
     expect(ids).toEqual(expect.arrayContaining(['shirt', 'skirt', 'bra', 'panties']));
     for (const piece of out.changes[0].pieces) {
-      expect(piece.state.location).toBe('floor');
+      // 这一楼既写了「褪下来放进洗衣篮」又写了「浴室水声」：衣服已经离身，
+      // 记成 removed（收进篮子）与 floor（放在地上）在画面上都是「没穿」，
+      // 不再钉死是哪一个；湿态仍然必须记上。
+      expect(['floor', 'removed']).toContain(piece.state.location);
       expect(piece.state.wetness).toBe('wet');
     }
   });
