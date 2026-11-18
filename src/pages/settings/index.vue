@@ -793,6 +793,14 @@ async function confirmUpdate() {
         </label>
         <p class="bbi-field-hint">写入 tag 后立即按当前出图渠道自动出图;关闭则只写 tag,在卡片上手动生成。</p>
 
+        <label class="bbi-switch-row">
+          <span class="bbi-field-label">漏掉的场景补一张</span>
+          <input v-model="settings.autoTag.fillMissingScenes" type="checkbox" class="bbi-checkbox" />
+        </label>
+        <p class="bbi-field-hint">
+          模型自己列的「关键转折场景」没出图时,单独补一次小请求(只带那一格原文,输出很短)。关掉则一次都不多调 API,代价是漏掉的转折这一楼就没有画面。
+        </p>
+
         <label class="bbi-num-row">
           <span class="bbi-field-label">携带最近 AI 楼数</span>
           <input
