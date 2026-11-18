@@ -46,6 +46,8 @@ export interface FloorTrace {
   /** 本楼事实条数与「哪些人是跨场景复原出来的」。 */
   facts: number;
   restored?: string[];
+  /** 服装事件：复原/更衣/脱衣，含人物、套装与地点。 */
+  events?: string[];
   images: TraceImage[];
 }
 
@@ -70,6 +72,8 @@ export interface BuildTraceArgs {
   floor: number;
   facts: readonly StoryFact[] | undefined;
   restored?: readonly string[];
+  /** 服装事件摘要（复原/更衣/脱衣）：人物、套装、地点。 */
+  events?: readonly string[];
   images: ReadonlyArray<{
     position: string;
     candidateId?: string;
@@ -92,6 +96,7 @@ export function buildFloorTrace(args: BuildTraceArgs): FloorTrace {
     floor: args.floor,
     facts: args.facts?.length ?? 0,
     ...(args.restored?.length ? { restored: [...args.restored] } : {}),
+    ...(args.events?.length ? { events: [...args.events] } : {}),
     images: args.images.map((image) => {
       const before = args.original.get(image.position);
       return {

@@ -69,26 +69,8 @@ import {
 import { BBI_OUTFIT_EXTRA_KEY } from '@/autoTag/outfitState';
 import { BBI_OUTCOME_EXTRA_KEY, classifyFailure, recordOutcome, type FloorOutcome } from '@/autoTag/outcome';
 import { BBI_TRACE_EXTRA_KEY, buildFloorTrace, type FloorTrace } from '@/autoTag/trace';
-import {
-  BBI_FACTS_EXTRA_KEY,
-  factsAcrossSceneBreak,
-  factsBackedByLedger,
-  gateFactOwnership,
-  factsToClothingChanges,
-  applyFactClothing,
-  rememberCompleteOutfit,
-  restoreOutfitFacts,
-  factsBlock,
-  dedupeFacts,
-  repairByFacts,
-  stripExposureTokens,
-  dropExposureClaims,
-  inheritWearFacts,
-  reconcileLedgerWithTags,
-  type StoredFacts,
-  type StoryFact,
-} from '@/autoTag/facts';
-import { storyGarments } from '@/autoTag/storyGarments';
+import { detectOutfitEvents, restoreOutfitFacts, BBI_FACTS_EXTRA_KEY, factsAcrossSceneBreak, factsBackedByLedger, gateFactOwnership, factsToClothingChanges, applyFactClothing, rememberCompleteOutfit, factsBlock, dedupeFacts, repairByFacts, stripExposureTokens, dropExposureClaims, inheritWearFacts, reconcileLedgerWithTags, type StoredFacts, type StoryFact, type OutfitEvent } from '@/autoTag/facts';
+import { primaryPlace, storyGarments } from '@/autoTag/storyGarments';
 import {
   CLOTHING_PROTOCOL,
   acceptClothingChanges,
@@ -795,6 +777,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     let credentialDead = false;
     const nlOriginal = new Map<string, { nl: string; characters: Array<{ name: string; nl: string }> }>();
     let restoredNames: string[] = [];
+    // 本楼的服装事件（复原/更衣/脱衣）：账本只存「当前状态」，事件负责说清
+    // 「什么时候、因为什么、换成了什么」，出问题能追到证据句。
+    let outfitEvents: OutfitEvent[] = [];
     // 结局记录要用的两笔计数:发了几次、丢了几张。都在循环外累计,
     // 因为写盘那一步已经出了循环,循环里的 attempt 变量拿不到。
     let attemptsUsed = 0;
@@ -1648,11 +1633,15 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     // 变成显式事实，和别的 wear 事实走同一条写入口——不直接改账本，也不按整楼关键词
     // 给所有人无差别复位（那会把「她正被撩着」也一起洗掉）。
     if (!slot && storyLooksLikeNewScene(source)) {
-      const restored = restoreOutfitFacts(wardrobe, '跨场景：按最近一次完整穿搭复原');
+      const restorePlace = primaryPlace(source);
+      const restored = restoreOutfitFacts(wardrobe, '跨场景：按最近一次完整穿搭复原', restorePlace);
       if (restored.restored.length) {
         plan.facts = [...(plan.facts ?? []), ...restored.facts];
         restoredNames = [...restored.restored];
-        console.warn(`[墨影] 跨场景复原 ${restored.restored.length} 人：${restored.restored.join('、')}`);
+        outfitEvents = detectOutfitEvents(source, wardrobe, restorePlace);
+        console.warn(
+          `[墨影] 跨场景复原 ${restored.restored.length} 人：${restored.restored.join('、')}${restorePlace ? `（${restorePlace}）` : ''}`,
+        );
       }
     }
     const modelClothingChanges = slot ? [] : factsToClothingChanges(plan.facts ?? [], preparedTarget.segments, source);
@@ -2213,12 +2202,17 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
                 floor,
                 facts: plan.facts,
                 restored: restoredNames,
+                events: outfitEvents.map((event) => `${event.kind}:${event.subject}:${event.outfit.join('+')}${event.place ? `@${event.place}` : ''}`),
                 images: plan.images,
                 original: nlOriginal,
                 wardrobe: finalWardrobe,
                 segmentOf: (position) =>
                   preparedTarget.segments.find((segment) => segment.id === position)?.text ?? '',
               }) satisfies FloorTrace,
+            },
+            {
+              key: 'bbiOutfitEvents',
+              value: outfitEvents,
             },
             {
               key: BBI_OUTCOME_EXTRA_KEY,

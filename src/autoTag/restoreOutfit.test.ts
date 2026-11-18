@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { rememberCompleteOutfit, restoreOutfitFacts } from '@/autoTag/facts';
+import { rememberCompleteOutfit, restoreOutfitFacts, detectOutfitEvents } from '@/autoTag/facts';
+import type { ClothingPiece, ClothingRecord, ClothingState } from '@/autoTag/outfitTimeline';
 import { buildFloorTrace } from '@/autoTag/trace';
-import type { ClothingState } from '@/autoTag/outfitTimeline';
 
 function state(): ClothingState {
   return new Map([
@@ -73,5 +73,37 @@ describe('诊断轨迹', () => {
     expect(trace.images[0].segment).toBe('她把信封递到他手里。');
     expect(trace.images[0].nlOriginal).toContain('wearing white shirt');
     expect(trace.images[0].characters[0].outfit).toContain('white shirt, short sleeves');
+  });
+});
+
+describe('服装事件', () => {
+  const piece = (id: string, design: string, state: Record<string, string>): ClothingPiece =>
+    ({ id, design, state }) as ClothingPiece;
+  const record = (name: string, pieces: ClothingPiece[], lastComplete: ClothingPiece[]): ClothingRecord =>
+    ({ name, pieces, lastComplete }) as ClothingRecord;
+
+  it('跨场景时把「复原」写成带人物、套装与地点的事件', () => {
+    const state: ClothingState = new Map<string, ClothingRecord>([
+      [
+        '温岚',
+        record(
+          '温岚',
+          [piece('shirt', 'white shirt', { location: 'worn', arrangement: 'lifted', exposure: 'bare' }), piece('pants', 'denim shorts', { location: 'worn' })],
+          [piece('shirt', 'white shirt', { location: 'worn' }), piece('pants', 'denim shorts', { location: 'worn' })],
+        ),
+      ],
+    ]);
+    const events = detectOutfitEvents('第二天清晨，她推开楼道的门走出去。', state, 'hallway');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: 'restore', subject: '温岚', place: 'hallway' });
+    expect(events[0].outfit).toEqual(['white shirt', 'denim shorts']);
+    expect(events[0].evidence).toContain('hallway');
+  });
+
+  it('穿得整整齐齐时不产生复原事件', () => {
+    const state: ClothingState = new Map<string, ClothingRecord>([
+      ['温岚', record('温岚', [piece('shirt', 'white shirt', { location: 'worn' })], [piece('shirt', 'white shirt', { location: 'worn' })])],
+    ]);
+    expect(detectOutfitEvents('她坐在沙发上喝奶茶。', state, 'living room')).toEqual([]);
   });
 });

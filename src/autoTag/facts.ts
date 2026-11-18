@@ -612,9 +612,53 @@ export function rememberCompleteOutfit(state: ClothingState, at: number): string
  * 不直接改账本，是为了让这次复原和其它事实一样有出处、能被账本层复核；
  * 也不按整楼扫「第二天」就全员复位——只对当前确实没穿齐的人复原。
  */
+export interface OutfitEvent {
+  /** 复原（跨场景穿回最近完整穿搭）/ 更衣（正文说换了）/ 脱衣（正文说脱了）。 */
+  kind: 'restore' | 'change' | 'undress';
+  subject: string;
+  /** 涉及的款式（复原时是整套，更衣时是新件）。 */
+  outfit: string[];
+  /** 发生地：能认出来就记，认不出留空——不替模型编地点。 */
+  place?: string;
+  /** 触发这件事的原文句子。 */
+  evidence: string;
+  at: number;
+}
+
+/**
+ * 把「穿/脱」变成事件而不是一句话里的零散状态。
+ *
+ * 为什么要事件：账本以前只存「当前状态」，于是「她回房间」「第二天出门」这类
+ * 场景切换全靠关键词猜，猜错就一路裸或一路穿着睡衣。事件带人物、套装、地点与
+ * 证据句，重放时按顺序落到每一格，出问题也能追到是哪句话触发的。
+ */
+export function detectOutfitEvents(text: string, state: ClothingState, place = ''): OutfitEvent[] {
+  const events: OutfitEvent[] = [];
+  const at = Date.now();
+  for (const record of state.values()) {
+    const snapshot = record.lastComplete ?? [];
+    if (!snapshot.length) continue;
+    const worn = record.pieces.filter((piece) => piece.state?.location === 'worn');
+    const exposed = worn.some(
+      (piece) => piece.state?.exposure || piece.state?.arrangement === 'lifted' || piece.state?.arrangement === 'pulled_aside',
+    );
+    if (worn.length && !exposed) continue;
+    events.push({
+      kind: 'restore',
+      subject: record.name,
+      outfit: snapshot.map((piece) => piece.design),
+      place: place || undefined,
+      evidence: place ? `跨场景回到${place}` : '跨场景（地点未在正文写明）',
+      at,
+    });
+  }
+  return events;
+}
+
 export function restoreOutfitFacts(
   state: ClothingState,
   reason: string,
+  place = '',
 ): { facts: StoryFact[]; restored: string[] } {
   const facts: StoryFact[] = [];
   const restored: string[] = [];
@@ -632,7 +676,7 @@ export function restoreOutfitFacts(
         subject: record.name,
         kind: 'wear',
         value: piece.design,
-        evidence: `[跨场景恢复] ${reason}`,
+        evidence: `[跨场景恢复] ${reason}${place ? `（${place}）` : ''}`,
         confidence: 'inherited',
       });
   }
