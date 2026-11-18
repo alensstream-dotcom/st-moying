@@ -36,21 +36,14 @@ import {
 } from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
 import { cleanNaturalLanguage } from '@/data/tagLexicon';
-import { nlRepairMessages, parseNlReply, repairMessages } from '@/autoTag/repair';
+import { nlRepairMessages, parseNlReply } from '@/autoTag/repair';
 import { looksLikeCredentialFailure, looksLikeTimeout, looksLikeUpstreamJitter } from '@/api/modelVariant';
 import { blockRetryNote, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { isGeminiTier } from '@/autoTag/jailbreak';
 import { repairQuotes, shieldMessages, type Shielded } from '@/autoTag/geminiShield';
 import { readBookMemory } from '@/autoTag/bookMemory';
 import { applyPositionedCharRefs, resolveCharAnchors, type PositionedCharOp } from '@/autoTag/charAnchors';
-import {
-  diagnoseCast,
-  diagnoseContact,
-  diagnoseFemaleSubject,
-  diagnosePropTarget,
-  castRetryNote,
-  type CastGap,
-} from '@/autoTag/castCheck';
+import { diagnosePropTarget } from '@/autoTag/castCheck';
 import { ensureFemaleSubjects, femaleCastNames } from '@/autoTag/femaleCast';
 import { hasFemaleSignal } from '@/autoTag/femaleSignal';
 import { anchorBlock, buildAnchors } from '@/autoTag/anchorLedger';
@@ -91,26 +84,15 @@ import { compactContractFor, useCompactContract } from '@/autoTag/compactContrac
 import { autoTagProfile, buildAutoTagMessages, flattenToSystem } from '@/autoTag/prompt';
 import { rebaseImagePositions, type RebaseReport } from '@/autoTag/rebase';
 import { buildSlotTaskNote } from '@/autoTag/slotPlan';
-import {
-  diagnoseMonotonousShots,
-  diagnoseShot,
-  monotonousShotRetryNote,
-  repairShotDefaults,
-  shotRetryNote,
-} from '@/autoTag/shotCheck';
+import { repairShotDefaults } from '@/autoTag/shotCheck';
 import { salvageJsonObject } from '@/autoTag/salvage';
 import { applySuggestedDistance, diagnoseDistance } from '@/autoTag/shotGuide';
-import { isDrawWorthy } from '@/autoTag/fallbackImage';
-import { CANDIDATE_FLOOR, rankCandidates, scoreCandidate } from '@/autoTag/candidates';
-import { refreshWardrobeLock } from '@/st/wardrobeLock';
 import {
-  adjacentPositionNote,
-  adjacentPositions,
-  duplicatePositionNote,
-  duplicatePositions,
-  unanchoredIndexes,
-} from '@/autoTag/positionCheck';
-import { diagnoseTruncation, EMPTY_PLAN_RETRY_NOTE, truncationRetryNote } from '@/autoTag/truncation';
+  compileShotActions, draftKnownShot, independentShots, inventoryShots, shotRepairMessages,
+  shotSelectionInstructions, verifiedShot, type ShotMoment,
+} from '@/autoTag/shotPlan';
+import { refreshWardrobeLock } from '@/st/wardrobeLock';
+import { diagnoseTruncation, truncationRetryNote } from '@/autoTag/truncation';
 import {
   BBI_CHAR_EXTRA_KEY,
   CHAR_TAG_FIELDS,
@@ -697,8 +679,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       if (compact) {
         // 3.x 系给严格版(连解剖词都不许写)、4 系给宽松版(允许 nude/breasts out 这类状态词)。
         // 一刀切用严格版会把 4-argon 压成 SFW —— 实测它本来对解剖词几乎不拦。
-        built.push({ role: 'system', content: compactContractFor(promptOptions.jailbreakTier, activeChannel?.model) });
+        built.push({ role: 'system', content: compactContractFor(promptOptions.jailbreakTier, activeChannel?.model, !slot) });
       }
+      if (!slot) built.push({
+        role: 'system',
+        content: shotSelectionInstructions(promptOptions.minImages, promptOptions.maxImages, profile.nl),
+      });
       return flatten ? flattenToSystem(built) : built;
     };
     const messages = await assemble(false);
@@ -738,14 +724,9 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     let retryNote = '';
     // 空计划只纠一次：这一楼有没有可画画面本质上是模型判断，硬纠 5 次换不来更好的结果，
     // 只会把「这一段没画面」拖成 600 秒（第 1 楼实测 5 次 / 667 秒仍 0 张）。
-    let emptyPlanRetried = false;
-    let baseNlRetried = false;
-    let localRepairDone = false;
-    // 场景覆盖补图只做一次：候选表是模型自己写的，漏掉的高分场景最多补两张。
-    let coverageFilled = false;
-    // 角色 nl 只补一次：整楼重跑十分钟起，只缺一句时重掷全部图最不划算。
+    let shotRepairDone = false;
     let nlRepaired = false;
-    // 局部修复只做一次：把被挡掉的那一格单独重写，已经合格的图不动。
+    let selectedMoments = new Map<string, ShotMoment>();
     // 上一次 attempt 是否被判为「被截断」:是则后续重试改发降载版历史(精简思考清单 +
     // 略去长解释的契约)。降载必须换掉整份历史而不是只追加一句「写短点」——思考清单
     // 本身就是思考长度的来源,只在末尾恳求,模型照旧逐条自证。
@@ -840,6 +821,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
             salvaged ? 0 : promptOptions.minImages,
             promptOptions.maxImages,
             source,
+            !slot,
           );
           // 称呼归并与外貌兜底:模型若在 characters[].name 或 changes[].name 里写了已建档角色的
           // 别称/尊称/简称(如把「风千华」写成「风阿姨」「千华」),先唯一归并回档案主名,
@@ -992,235 +974,64 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
           ) {
             throw new Error('NAI 4.5/V5 建档必须附带 nl 外貌描述');
           }
-          // 空 images:协议上算正常返回,旧版直接放行,于是模型一句「没有值得插图的画面」
-          // 就能让整楼不生、阅读器干等超时。这里在还有重试次数时把它当可纠错误,
-          // 换一套口径逼它落到具体画面上;changes 非空(有建档要落)时不算空。
-          // 只有当这一楼**确实有可画的画面**时，空 images 才算可纠错误。
-          // 反例是第 1 楼：整段是李斌一个人在心里幻想，正文里没有任何女性在画面里，
-          // 模型给空数组是对的；旧逻辑照样重试 5 次、耗掉 667 秒，最后还是 0 张。
-          // 另一种空计划：模型写了事实表（她穿着什么、身体在哪），却没给任何画面。
-          // 这不是「这一楼没画面」，而是它读懂了却没落到镜头上——事实里有 wear/body/action
-          // 这类属于具体人物的条目时纠一次；只有 place 的事实（她不在场）不纠。
-          const concreteFact = (candidate.facts ?? []).some(
-            (fact) => fact.subject !== 'scene' && /^(?:wear|body|action)$/.test(fact.kind),
-          );
-          if (
-            !slot &&
-            attempt < retries &&
-            !candidate.images.length &&
-            !candidate.changes.length &&
-            !candidate.identities?.length &&
-            !emptyPlanRetried &&
-            (isDrawWorthy(source) || concreteFact)
-          ) {
-            emptyPlanRetried = true;
-            retryNote = EMPTY_PLAN_RETRY_NOTE;
-            throw new Error('返回了空 images');
-          }
-          // 「这一楼没有值得画的瞬间」是正常结果，不再是失败：不再自己拼一张默认图。
-          // 兜底图会替模型决定「这楼该有画面」，而它连 nl 都是空的——等于代码编剧情。
-          // 该楼的 changes/outfitChanges 照常落盘，只是不落图。
-          // Base nl 缺失:模型偶尔只写 tag 不写 nl(实测第 7/8 楼)。
-          // nl 是「这一格的空间与瞬间」唯一载体,缺了就只剩一堆标签,
-          // 画面靠概率拼。还有重试次数时纠一次，不要每楼都重跑。
-          if (!slot && attempt < retries && !baseNlRetried && profile.nl) {
-            const bare = candidate.images.filter((image) => !image.nl?.trim());
-            if (bare.length) {
-              baseNlRetried = true;
-              retryNote = [
-                '<retry_base_nl>',
-                '上一次有图片的 Base nl 是空的。Base nl 是这张图「这一刻在发生什么」的唯一说明，不是可选字段。',
-                '用一句完整英文补上：谁在做什么、在什么地方、光从哪来——不超过 20 词，句号结尾。',
-                '不要复述 tag 里已经写过的人数、景别、服装名词。',
-              ].join('\n');
-              throw new Error('Base nl 缺失');
-            }
-          }
-          // 引句锚定:after 必须是本楼正文里逐字存在的原句(纯 P 编号例外)。编出来的
-          // 引句意味着画面也是编的(第 12 楼正文只有李斌在书房计划,模型却画了温岚坐
-          // 沙发喝奶茶)。这是事实门槛，不再随重试次数失效：不锚定的那一张直接丢，
-          // 其余照常落位；一张不剩就是「本楼无可画瞬间」，属正常结果，不补图。
           if (!slot) {
-            const loose = unanchoredIndexes(candidate.images, preparedTarget.promptText);
-            // 先把被挡掉的原图留一份：过滤之后就找不到它的 position / 定场信息了。
-            const looseImages = loose.map((index) => candidate.images[index]).filter(Boolean);
-            if (loose.length) {
-              const dropped = looseImages.map((image) => image.afterQuote ?? '').filter(Boolean);
-              candidate.images = candidate.images.filter((_, index) => !loose.includes(index));
-              droppedImages += loose.length;
-              console.warn(`[墨影] 丢弃 ${loose.length} 张引句不在正文里的图：${dropped.join(' / ')}`);
-            }
-
-            // 只重写被挡掉的那一格，已经合格的图不动：整楼重跑 10 分钟起，
-            // 还会把本来对的几张一起重掷。这里一次、只带这一格的段落与错误。
-            if (loose.length && candidate.images.length && !localRepairDone && activeChannel) {
-              localRepairDone = true;
-              for (const bad of looseImages) {
-
-                const segment = bad ? preparedTarget.segments.find((item) => item.id === bad.position) : null;
-                if (!segment) continue;
-                try {
-                  const raw = await requestCompletion(
-                    activeChannel,
-                    repairMessages({
-                      segment: segment.text,
-                      position: segment.id,
-                      badQuote: bad.afterQuote,
-                      error: 'after 不是原文里逐字存在的句子（这一格因此被挡掉）。',
-                      frameAction: bad.frameAction,
-                      focus: bad.focus,
-                    }),
-                    { signal: controller.signal, source: '局部修复这一格' },
-                  );
-                  const retryPlan = parseImagePlan(raw, [segment], 0, 1, source);
-                  const fixed = retryPlan.images[0];
-                  if (fixed && !unanchoredIndexes([fixed], segment.text).length) {
-                    candidate.images.push({ ...fixed, position: segment.id });
-                    console.warn(`[墨影] 局部修复成功：${segment.id}`);
-                  }
-                } catch (error) {
-                  console.warn('[墨影] 局部修复失败，按原计划丢弃这一格', error);
-                }
-              }
-            }
-          }
-          // 场景覆盖（第一优先）：模型自己切出的 scenes 里，凡 keyChange=是 的场景都必须有一张。
-
-          // 实测 1867/3369 字的长楼层：候选里明明有沙发展开、厨房桌沿两段，它挑的却是
-
-          // 「玄关理衣领」「浴室拨头发」——不是候选没看见，是它按「好不好写」排了序。
-
-          // 这里只按模型自己给出的场景范围补，不另造画面，也不重掷已经合格的图。
-
-          if (!slot && !coverageFilled && candidate.scenes?.length && candidate.images.length < promptOptions.maxImages) {
-
-            coverageFilled = true;
-
-            const idNum = (id: string): number => Number.parseInt(/^P(\d+)$/i.exec(id.trim())?.[1] ?? '0', 10);
-
-            const gaps = candidate.scenes
-
-              .filter((scene) => scene.keyChange)
-
-              .filter((scene) => {
-
-                const from = idNum(scene.from);
-
-                const to = Math.max(from, idNum(scene.to));
-
-                return !candidate.images.some((image) => {
-
-                  const at = idNum(image.position);
-
-                  return at >= from && at <= to;
-
-                });
-
-              })
-
-              .slice(0, Math.max(0, promptOptions.maxImages - candidate.images.length));
-
-            for (const scene of gaps) {
-
-              const segment = preparedTarget.segments.find((entry) => entry.id === scene.from);
-
-              if (!segment || !activeChannel) continue;
-
-              try {
-
-                const raw = await requestCompletion(
-
-                  activeChannel,
-
-                  repairMessages({
-
-                    segment: segment.text,
-
-                    position: segment.id,
-
-                    error: `这一楼有一个正在变化的场景（${scene.sceneId}${scene.place ? ` · ${scene.place}` : ''}，从 ${scene.from} 到 ${scene.to}）整段没有出图。它是这一楼的关键转折，不能跳过。`,
-
-                  }),
-
-                  { signal: controller.signal, source: '补一张漏掉的场景' },
-
+            const moments = independentShots(inventoryShots(
+              preparedTarget.segments, candidate, candidateEntries, candidateFacts, source, promptOptions.minImages,
+            ));
+            const byPosition = new Map(moments.map((moment) => [moment.segment.id, moment]));
+            const actionFacts = candidate.facts ?? [];
+            const authored = new Map<string, ImageInsertion>();
+            const accept = (images: readonly ImageInsertion[]) => {
+              for (const image of images) {
+                const moment = byPosition.get(image.position);
+                if (!moment || authored.has(image.position) || !verifiedShot(image, moment, actionFacts)) continue;
+                const targets = diagnosePropTarget(
+                  moment.segment.text, [image.tag, image.nl].join(' '),
+                  image.characters.map((c) => [c.tag, c.nl].join(' ')),
                 );
-
-                const retryPlan = parseImagePlan(raw, [segment], 0, 1, source);
-
-                const fixed = retryPlan.images[0];
-
-                if (fixed && !unanchoredIndexes([fixed], segment.text).length) {
-
-                  candidate.images.push({ ...fixed, position: segment.id });
-
-                  console.warn(`[墨影] 补上场景 ${scene.sceneId} 的画面：${segment.id}${scene.place ? `（${scene.place}）` : ''}`);
-
-                }
-
-              } catch (error) {
-
-                console.warn('[墨影] 补场景失败，按原计划', error);
-
+                if (targets.length && !moment.actions.length) continue;
+                authored.set(image.position, image);
               }
-
-            }
-
-          }
-
-          // 场景覆盖（第二优先）：scenes 没给或已被填过时，退回按候选表补高分格。
-          // 实测 1867 字、四段床戏的长楼层只出两张，而且两张都是结尾的玄关日常——
-          // 根因不是候选里没看见转折，是它按「好不好写」挑了一格最安全的。这里只补
-          // 模型自己打过高分的那一格，不另造画面，也不重掷已经合格的图。
-          if (!slot && !coverageFilled && candidate.candidates?.length && candidate.images.length < promptOptions.maxImages) {
-            coverageFilled = true;
-            const covered = new Set(candidate.images.map((image) => image.position));
-            const missing = rankCandidates(candidate.candidates)
-              .filter((item) => !covered.has(item.position) && scoreCandidate(item) >= CANDIDATE_FLOOR)
-              .slice(0, Math.max(0, promptOptions.maxImages - candidate.images.length));
-            for (const item of missing) {
-              const segment = preparedTarget.segments.find((entry) => entry.id === item.position);
-              if (!segment || !activeChannel) continue;
+            };
+            accept(candidate.images);
+            const wanted = moments.slice(0, promptOptions.maxImages);
+            const draft = (moment: ShotMoment) => draftKnownShot(moment, actionFacts);
+            const needs = wanted.filter((moment) => !authored.has(moment.segment.id) &&
+              !draft(moment));
+            if (needs.length && !shotRepairDone) {
+              shotRepairDone = true;
               try {
-                const raw = await requestCompletion(
-                  activeChannel,
-                  repairMessages({
-                    segment: segment.text,
-                    position: segment.id,
-                    error: '这一楼的这个场景还没有出图：它在候选表里分数够高，属于「不画就缺一块剧情」的一格。',
-                    frameAction: item.action,
-                    focus: item.action,
-                  }),
-                  { signal: controller.signal, source: '补一张漏掉的场景' },
-                );
-                const retryPlan = parseImagePlan(raw, [segment], 0, 1, source);
-                const fixed = retryPlan.images[0];
-                if (fixed && !unanchoredIndexes([fixed], segment.text).length) {
-                  candidate.images.push({ ...fixed, position: segment.id });
-                  console.warn(`[墨影] 补上漏掉的场景：${segment.id}（${item.action}）`);
-                }
+                const messages = shotRepairMessages(needs, profile.nl, outfitBlock);
+                const options = { signal: controller.signal, source: '补写选中镜头的提示词' };
+                const raw = activeChannel
+                  ? await requestCompletion(activeChannel, messages, options)
+                  : await requestViaMainApi(messages, options);
+                const repaired = parseImagePlan(raw, needs.map((moment) => moment.segment), 0, needs.length, source, true);
+                normalizePlanCharacters(repaired.images, candidateEntries);
+                accept(repaired.images);
               } catch (error) {
-                console.warn('[墨影] 补场景失败，按原计划', error);
+                if (controller.signal.aborted) throw error;
+                diagnostic('shots:repair-failed', { floor, positions: needs.map((moment) => moment.segment.id) });
               }
             }
-          }
-          // 落位重复:两张图挤在同一段,画出来是同一瞬间拍两遍。仅当可选位置
-          // 够分时才纠(席位数少于图数时重叠是必然的)。同样只在还有重试次数时纠。
-          if (attempt < retries) {
-            const dups = duplicatePositions(candidate.images, preparedTarget.segments.length);
-            if (dups.length) {
-              retryNote = duplicatePositionNote(dups);
-              throw new Error(`落位重复(${dups.join('、')})`);
+            const kept: ImageInsertion[] = [];
+            selectedMoments = new Map();
+            for (const moment of moments) {
+              const image = authored.get(moment.segment.id) ?? draft(moment);
+              if (!image) continue;
+              image.candidateId = moment.segment.id;
+              if (moment.actions.length) image.frameAction = [moment.continues?.text, moment.segment.text].filter(Boolean).join('');
+              kept.push(image);
+              selectedMoments.set(image.position, moment);
+              if (kept.length === promptOptions.maxImages) break;
             }
-          }
-          // 落位紧邻:当正文句子充裕时,两张图落在紧挨着的前后两句话(如 P5 与 P6),
-          // 属于同一自然段的同一瞬间,会导致插图紧贴且画面雷同。
-          if (!slot && attempt < retries) {
-            const adj = adjacentPositions(candidate.images, preparedTarget.segments.length);
-            if (adj.length) {
-              retryNote = adjacentPositionNote(adj);
-              throw new Error(`落位紧邻(${adj.map(([a, b]) => `${a}-${b}`).join('、')})`);
-            }
+            droppedImages += candidate.images.filter((image) => !kept.includes(image)).length;
+            candidate.images = kept;
+            diagnostic('shots:selected', {
+              floor, eligible: moments.length,
+              selected: kept.map((image) => ({ position: image.position, action: image.frameAction })),
+              missing: wanted.filter((moment) => !selectedMoments.has(moment.segment.id)).map((moment) => moment.segment.id),
+            });
           }
           // 景别过远:正文点名了具体部位,画面却拍成远景。这条排在缺项检查之前——
           // 缺景别词只是「画面会平」,景别过远是「这张图白拍」,前者由后者一并带上。
@@ -1269,85 +1080,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
               }
             }
           }
-          // 画面事实闭环:人数与道具落点。
-          // 「两个男的一个女的」画成一个人长双头肉棒、「毛笔在阴部写字」只画毛笔不画落点,
-          // 都是可判定的确定错,而且这类错图一眼废。排在构图缺项之前(缺项只是画面平)。
-          // 单槽重写不改画面事实,跳过。
-          if (!slot && attempt < retries) {
-            const segmentText = new Map(preparedTarget.segments.map((item) => [item.id, item.text]));
-            const castGaps: CastGap[] = [];
-            const seenCast = new Set<string>();
-            // 女性名单用于判定「画面里到底有没有女的」：库性别优先，正文指代兜底。
-            const femaleNames = femaleCastNames(
-              entriesBefore,
-              knownIdentities,
-              source,
-              candidate.images.flatMap((image) => (image.characters ?? []).map((c) => c.name)),
-            );
-            for (const image of candidate.images) {
-              const text = segmentText.get(image.position) ?? '';
-              const aliasPresent = findCharAliases(entriesBefore, text).map((hit) => hit.name);
-              const present = [
-                ...new Set([
-                  ...[...entriesBefore].map((entry) => entry.name).filter((name) => text.includes(name)),
-                  ...aliasPresent,
-                ]),
-              ];
-              const charTagList = (image.characters ?? []).map((character) => character.tag);
-              const found = [
-                ...diagnoseCast(text, image.tag, image.characters ?? [], present, profile.naiCharPrompts, femaleNames),
-                ...diagnosePropTarget(text, image.tag, charTagList),
-                ...diagnoseContact(text, image.tag, charTagList),
-                ...diagnoseFemaleSubject(text, image, femaleNames),
-              ];
-              for (const gap of found) {
-                const key = `${image.position}\u0000${gap.detail}`;
-                if (seenCast.has(key)) continue;
-                seenCast.add(key);
-                castGaps.push(gap);
-              }
-            }
-            if (castGaps.length) {
-              retryNote = castRetryNote(castGaps);
-              throw new Error(`画面事实不符(${castGaps.map((gap) => gap.kind).join('、')})`);
-            }
-          }
-          // 服装账本:衣服明明没变,穿脱程度却跳了(半脱→全裸、已脱→又穿回),
-          // 或者正文没写换装,整套衣服被换成另一套。
-          // 这条最伤连续性,而且模型自己看不出来——它没有上一层的画面。
-          // 构图缺项:只在还有重试次数时纠一次。没次数了就放行——
-          // 交一张景别平庸的图,好过因为「没写机位」整楼不生。
-          if (attempt < retries) {
-            // 先补默认构图词再判缺项：缺景别/机位属于「画面会平」，不该烧掉重试次数。
-            for (const image of candidate.images)
-              image.tag = repairShotDefaults(image.tag, (image.characters ?? []).map((character) => character.tag));
-            const gaps = [
-              ...new Set(
-                candidate.images
-                  .map((image) =>
-                    diagnoseShot(
-                      image.tag,
-                      (image.characters ?? []).map((character) => character.tag),
-                    ),
-                  )
-                  .filter((diag) => !diag.softOnly)
-                  .flatMap((diag) => diag.missing),
-              ),
-            ];
-            if (gaps.length) {
-              retryNote = shotRetryNote(gaps);
-              throw new Error(`构图缺项(${gaps.join('、')})`);
-            }
-            if (!slot) {
-              const monoGaps = diagnoseMonotonousShots(candidate.images);
-              if (monoGaps.length) {
-                retryNote = monotonousShotRetryNote(monoGaps);
-                throw new Error(
-                  `构图雷同(${monoGaps.map((g) => `${g.positions.join('/')} 均为 ${g.signature}`).join('、')})`,
-                );
-              }
-            }
-          }
+          for (const image of candidate.images)
+            image.tag = repairShotDefaults(image.tag, image.characters.map((character) => character.tag));
           parsed.plan = candidate;
         };
         // 有重试时给 source 带上第几次,历史里两条记录一眼看出是重试关系
@@ -1816,10 +1550,10 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         image.act = alignMouthAct(image.act, mouth) ?? image.act ?? inferred;
       }
       // 插入类行为模型经常整个漏掉（只写「按住腰」），画面就只剩一个握腰的手。
-      // 正文里「插进去/进入/抽送」是确定事实，按它补 act，行为和器官由枚举表补齐。
+      // 只按语义明确的动作补 act，避免把「进入房间」一类移动误写进画面。
       if (!image.act) {
         const sentence = explicitSentence(source, image.sourceLine, image.charOffset);
-        if (/插入|插进|进入|挺进|抽送|顶进|操进|没入/.test(sentence)) {
+        if (/挺进|抽送|顶进|操进/.test(sentence)) {
           image.act = /后入|背后|趴着|撅着|背对/.test(sentence) ? 'rear' : 'front';
         }
       }
@@ -1861,7 +1595,7 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       // 角色 nl 缺失：模型可能压根没写，也可能写成 tag 串被出口判定丢掉。
       // 这一句话是「nl 补关系」的全部依据——空了就只剩 tag 复述，所以在这里补一次，
       // 只问这一句、只带这一格，不动已经合格的其它图。
-      if (!nlRepaired && activeChannel) {
+      if (slot && profile.nl && !nlRepaired && activeChannel) {
         const missing = image.characters.filter(
           (character) => !cleanNaturalLanguage(String(character.nl ?? ''), String(character.tag ?? '')),
         );
@@ -1897,7 +1631,12 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
         }
       }
       // 最后一道：袖长等修饰语必须落在写回楼层的 tag 上（外貌层会重建 tag，前面补的会被冲掉）。
-      applyTextQualifiers(image, source, at, plan.facts ?? []);
+      const moment = selectedMoments.get(image.position);
+      const sameFrameFacts = moment ? (plan.facts ?? []).filter((fact) =>
+        !!fact.evidence && moment.segment.text.includes(fact.evidence)) : plan.facts ?? [];
+      applyTextQualifiers(image, source, at, sameFrameFacts);
+      if (!profile.naiCharPrompts) image.inlineCharacters = true;
+      if (moment) compileShotActions(image, moment, profile.nl, profile.naiCharPrompts, sameFrameFacts);
       frames.push({
         tag: serializeImageTag(image),
         sourceLine: image.sourceLine,

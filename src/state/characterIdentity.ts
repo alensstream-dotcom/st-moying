@@ -131,7 +131,7 @@ function subjectGender(name: string, quote: string, structured = false): Identit
       'i',
     ).test(quote);
   const male = bound(MALE) || labelled(MALE),
-    female = bound(FEMALE) || labelled(FEMALE);
+    female = bound(FEMALE) || labelled(FEMALE) || titleRightAfter(quote, name);
   return male === female ? 'unknown' : male ? 'male' : 'female';
 }
 export function assessIdentityClaims(
@@ -272,15 +272,17 @@ export function femaleStoryFact(name: string, story: string): IdentityFact | nul
   for (let index = story.indexOf(needle); index >= 0; index = story.indexOf(needle, index + needle.length)) {
     const quote = sentenceAround(story, index);
     if (quote.length < needle.length + 1) continue;
-    if (MALE_PRONOUNS.test(quote)) continue;
-    if (!FEMALE_PRONOUNS.test(quote) && !titleRightAfter(quote, needle)) continue;
+    const title = FEMALE_TITLE.test(story.slice(index + needle.length, index + needle.length + 4));
+    const visible = quote.split(/想起|回想|回忆|打算|盘算|计划|梦见/, 1)[0]
+      .replace(/她的?(?:照片|画像|相片|相框|档案|名字|消息)/g, '');
+    if (!title && (MALE_PRONOUNS.test(quote) || !FEMALE_PRONOUNS.test(visible))) continue;
     return {
       name,
       gender: 'female',
       heroine: false,
       source: 'story',
       evidence: quote,
-      reason: '正文该角色名所在语句只出现「她」等女性指代，判定为女性',
+      reason: title ? '正文用紧贴人名的女性称谓' : '正文该角色名所在语句只出现「她」等女性指代，判定为女性',
     };
   }
   return null;

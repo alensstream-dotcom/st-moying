@@ -84,8 +84,8 @@ describe('auto tag prompt', () => {
     expect(messages.some(m => m.role === 'system' && m.content.includes('你是严谨的剧情画面规划与生图提示词编写员'))).toBe(true);
     expect(messages.some(m => m.content.includes('除一个 <thinking> 块和一个 JSON 对象外'))).toBe(true);
     expect(messages.some(m => m.content.includes('最终结果必须包含且只能包含一个可解析的 JSON 对象'))).toBe(true);
-    expect(messages.some(m => m.content.includes('images 数量必须在 0～3 之间'))).toBe(true);
-    expect(messages.some(m => m.content.includes('没有值得绘制的可见瞬间时可以返回空数组'))).toBe(true);
+    expect(messages.some(m => m.content.includes('最终插图范围为 0～3 张'))).toBe(true);
+    expect(messages.some(m => m.content.includes('没有女性在场的可见瞬间时返回空数组'))).toBe(true);
     expect(messages.some(m => m.content.includes('不得包含质量词'))).toBe(true);
     expect(messages.some(m => m.content.includes('先完成角色建档与变化检查'))).toBe(true);
     expect(messages.some(m => m.content.includes('同一事件的相邻动作'))).toBe(true);
@@ -115,7 +115,7 @@ describe('auto tag prompt', () => {
     expect(messages.some(message => message.content.includes('"position"'))).toBe(true);
   });
 
-  it('turns a positive minimum into a strict image-count range', async () => {
+  it('allows a positive minimum to fill from visible female shots without inventing scenes', async () => {
     const options: AutoTagSettings = {
       enabled: true,
       contextMessages: 2,
@@ -129,9 +129,9 @@ describe('auto tag prompt', () => {
     };
     const messages = await buildAutoTagMessages(context(), 1, options, null);
 
-    expect(messages.some(m => m.content.includes('images 数量必须在 2～4 之间'))).toBe(true);
-    expect(messages.some(m => m.content.includes('下限 2 是用户明确要求'))).toBe(true);
-    expect(messages.some(m => m.content.includes('不得返回少于 2 张或空数组'))).toBe(true);
+    expect(messages.some(m => m.content.includes('最终插图上限 4 张'))).toBe(true);
+    expect(messages.some(m => m.content.includes('高价值候选不足 2 个时'))).toBe(true);
+    expect(messages.some(m => m.content.includes('没有女性在场的可见瞬间时返回空数组'))).toBe(true);
   });
 
   it('uses the prepared target snapshot without recomputing position IDs', async () => {

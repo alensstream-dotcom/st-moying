@@ -186,6 +186,8 @@ export interface ImageTagContent {
   /** 本画面动态负面 tag：<negative> 子标签内容，无则空串。 */
   negative: string;
   characters: ImageCharacterPrompt[];
+  /** Story frames for a backend with a single positive caption. */
+  inlineCharacters?: boolean;
   /** 画幅方向：<size> 子标签内容，无/不可识别则竖屏（存量 tag 即走这条，行为与改动前一致）。 */
   size: Orientation;
 }
@@ -300,7 +302,9 @@ export function serializeImageTag(content: ImageTagContent): string {
   // 单人图：Base 只留场景/机位/光线/人数，角色块已经写过的姿势与身体从 Base 剥掉。
   const tag = dropGenericScenes(
     normaliseLexiconTag(
-      stripBaseEcho(
+      content.inlineCharacters ? [divided.base, ...characters.map((c) =>
+        c.tag.split(',').map((token) => token.trim()).filter((token) => !/^\d+(?:girls?|boys?)$/i.test(token)).join(', '),
+      )].filter(Boolean).join(', ') : stripBaseEcho(
         divided.base,
         characters.map((character) => character.tag),
       ),

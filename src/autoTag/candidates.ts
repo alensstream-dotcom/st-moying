@@ -8,13 +8,14 @@
  *   可见性（这句有没有具体可见的东西）、剧情价值（是不是转折）、
  *   新信息（跟最近画过的比是不是重复）、可画性（要的东西是否都在画面里）、
  *   不确定性（模型自己标的不确定）。
- * 分数只用来排序和淘汰，不用来发明画面——模型没给候选的位置，一张也不补。
+ * 这些分数只用于模型候选的排序。整楼模式还会逐句核对人物是否在场和画面动作。
  */
 export interface Candidate {
   /** 目标段编号，形如 P3。 */
   position: string;
   /** 这一格的画面，中文一句话，只用于日志与复查。 */
   action: string;
+  evidence?: string;
   visible: number;
   value: number;
   novelty: number;
@@ -50,6 +51,7 @@ export function parseCandidates(raw: unknown, positions: ReadonlySet<string>): C
     list.push({
       position,
       action: String(record.action ?? record.what ?? record.beat ?? '').trim().slice(0, 80),
+      ...(typeof record.evidence === 'string' && record.evidence.trim() ? { evidence: record.evidence.trim().slice(0, 300) } : {}),
       visible: num(record.visible),
       value: num(record.value ?? record.story),
       novelty: num(record.novelty ?? record.fresh),

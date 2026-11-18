@@ -30,6 +30,17 @@ describe('femaleStoryFact 正文原句取证', () => {
     expect(femaleStoryFact('陆沉', '陆沉握紧拳头，他终于笑了。')).toBeNull();
   });
 
+  it('在同句另有男性时也认紧贴人名的女性称谓', () => {
+    const story = '林岚女士站在排练厅里，男主沈舟正在调灯。';
+    expect(femaleStoryFact('林岚', story)?.gender).toBe('female');
+    expect(assessIdentityClaims([{ name: '林岚', gender: 'female', source: 'story', evidence: '林岚女士站在排练厅里',
+      heroine: true, reason: '', background: false }], sources(story))[0]?.gender).toBe('female');
+  });
+
+  it('不会因为另一名女性只出现在照片或回忆里而把当前人物判成女性', () => {
+    expect(femaleStoryFact('沈舟', '沈舟低头望着她的照片，想起她唱歌的样子。')).toBeNull();
+  });
+
   it('正文里没有这个名字时返回 null', () => {
     expect(femaleStoryFact('不存在的人', '苏晚晴抬起头，她的眼里还有未散的红。')).toBeNull();
   });

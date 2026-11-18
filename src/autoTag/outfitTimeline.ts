@@ -1248,17 +1248,21 @@ export function proseGarment(sentence: string): string {
   return proseGarments(sentence)[0] ?? '';
 }
 /** 只认点名到本人的穿搭句，避免把别人的衣服算到她头上，也跳过脱衣/否定语境。 */
-function storyGarmentNear(source: string, names: string[], line: number, offset: number): string {
+function storyGarmentNear(
+  source: string, owner: string, names: ReadonlyMap<string, string[]>, line: number, offset: number,
+): string {
   const lines = source.replace(/\r\n?/g, '\n').split('\n');
   const preceding = [...lines.slice(0, line), (lines[line] ?? '').slice(0, offset || undefined)].join('\n');
-  const sentences = preceding
-    .split(/(?<=[。！？!?\n])/)
-    .filter((sentence) => names.some((name) => name && sentence.includes(name)));
-  for (const sentence of [...sentences].reverse().slice(0, 6)) {
-    if (/没穿|未穿|不穿|没有穿|脱下|脱掉|褪下|换下/.test(sentence)) continue;
-    if (!/穿着|身穿|身着|穿了|套着|披着|一身/.test(sentence)) continue;
-    const design = proseGarment(sentence);
-    if (design) return design;
+  const aliases = names.get(owner) ?? [];
+  const sentences = preceding.split(/(?<=[。！？!?\n])/).filter((sentence) => aliases.some((alias) => sentence.includes(alias)));
+  for (const sentence of sentences.reverse().slice(0, 6)) {
+    for (const clause of sentence.split(/[，,；;]/).reverse()) {
+      if (namedWearer(clause, names) !== owner || /没穿|未穿|不穿|没有穿|脱下|脱掉|褪下|换下/.test(clause)) continue;
+      const wear = /穿着|身穿|身着|穿了|套着|披着|一身/.exec(clause);
+      if (!wear || namedWearer(clause.slice(0, wear.index), names) !== owner) continue;
+      const design = proseGarment(clause.slice(wear.index + wear[0].length));
+      if (design) return design;
+    }
   }
   return '';
 }
@@ -1270,12 +1274,17 @@ export function initialiseClothingFromImage(
   source = '',
   entries: CharTagEntry[] = [],
 ): void {
+  const aliases = new Map(entries.map((entry) => [entry.name,
+    [...new Set([entry.name, ...characterAliases(entry.name), ...candidateAliasesForEntry(entry)])].filter(Boolean)]));
+  for (const character of image.characters) {
+    const name = resolveCanonicalCharName(character.name, entries);
+    aliases.set(name, [...new Set([name, character.name, ...characterAliases(name), ...(aliases.get(name) ?? [])])]);
+  }
   for (const c of image.characters) {
     // 账本按档案主名记。模型写「晚晴」而库里是「林晚晴」时，原来 state.has('晚晴')
     // 判不中，于是同一个人的账本被拆成两条，越记越多。
     const name = entries.length ? resolveCanonicalCharName(c.name, entries) : c.name;
     if (state.has(name)) continue;
-    const entry = entries.find((e) => e.name === name);
     const parts = extractGarment(c.tag)
       .split(',')
       .map((s) => s.trim())
@@ -1285,22 +1294,11 @@ export function initialiseClothingFromImage(
     const wear = readWear(c.tag);
     // 只剩饰物时不要建账：否则 legacyRecord 会造出一条 design 为空的空衣服。
     if (!parts.length && !source) continue;
-    if (!parts.length && wear.wear === 'worn') {
-      const storyOnly = source
-        ? storyGarmentNear(source, [name, c.name, ...characterAliases(name)], image.sourceLine, image.charOffset ?? 0)
-        : '';
-      if (!storyOnly) continue;
-    }
     // 剧情写明了穿搭时以原文为准：模型偶尔把长裤画成短裤，账本不能跟着错下去。
     const storyDesign = source
-      ? storyGarmentNear(
-          source,
-          // 正文里点名她的方式不一定是主名（「晚晴」「林小姐」都算），否则原文优先形同虚设
-          [name, c.name, ...characterAliases(name), ...(entry ? candidateAliasesForEntry(entry) : [])],
-          image.sourceLine,
-          image.charOffset ?? 0,
-        )
+      ? storyGarmentNear(source, name, aliases, image.sourceLine, image.charOffset ?? 0)
       : '';
+    if (!parts.length && wear.wear === 'worn' && !storyDesign) continue;
     // 首次出场时模型常在 tag 里顺手写 nude/topless，可正文压根没说脱。
     // 正文这一句附近没有任何裸露/脱衣证据时，把模型写的「脱掉」降级成穿着，
     // 让「衣服是哪件」由模型决定、而「穿没穿」由剧情决定。

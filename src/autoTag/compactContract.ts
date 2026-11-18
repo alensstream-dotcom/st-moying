@@ -54,6 +54,12 @@ const ACT_FIELD_SPEC = `【act：这一格在做什么（必填一个值，没�
 取值的口径是「这一格里谁的身体在承受什么」：kiss 是接吻；chest 是手或嘴落在她胸口；digit 是手指落在她下半身；mouth-on-her 与 mouth-on-him 是嘴在对方身上（前者对她、后者对他）；hand-on-him 与 chest-on-him 是她的手或胸口在他身上；front 与 rear 是正面与背面贴合；self 与 toy 是她独自或借物；undress 是正在被脱衣而还没开始；none 是没有任何亲密接触。
 方向由枚举值本身固定，不需要另写施动方。器官、体位、体液、反应这些 tag 由插件按 act 在本地补齐 —— 你不要写。`;
 
+function compactOutput(wholeFloor: boolean): string {
+  const planning = wholeFloor ? '"candidates":[],"facts":[],' : '';
+  return `只输出以下 JSON 对象。空数组按本轮要求填写。
+{${planning}"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","nl":"一句英文自然语言","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag","nl":"一句英文自然语言"}]}],"changes":[],"outfitChanges":[],"costumeContexts":[],"identities":[]}`;
+}
+
 /**
  * 紧缩契约的完整文本（3.x 系 Gemini 专用：连解剖词都不许写）。
  *
@@ -61,9 +67,8 @@ const ACT_FIELD_SPEC = `【act：这一格在做什么（必填一个值，没�
  * `enforceAppearance`/`enforceClothing` 都按它找条目;砍掉之后同楼多图会各画各的脸。
  * 实测保留 characters 的紧缩契约仍是 7~8/8,所以不必牺牲一致性。
  */
-export const COMPACT_PLAN_CONTRACT = `【本轮输出格式（唯一的一种）】
-只输出这一个对象，不要有任何其他键：
-{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","nl":"一句英文自然语言","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag","nl":"一句英文自然语言"}]}],"changes":[],"outfitChanges":[],"costumeContexts":[],"identities":[]}
+const strictContract = (wholeFloor: boolean) => `【本轮输出格式】
+${compactOutput(wholeFloor)}
 outfitChanges 按服装时间线协议记录正文中每次明确的穿脱或换装。images=[] 时也需记录。
 nl 写进 JSON，不要写成长段散文：它只补 tag 说不清的那一件事。
 ${ACT_FIELD_SPEC}
@@ -83,9 +88,8 @@ ${TAG_WHITELIST}`;
  * `nl` 不在禁止之列:0.2.x 的双通道设计里 nl 是模型的产物(tag 管可枚举项、nl 管不可枚举项),
  * 旧文本那句「不要写任何自然语言句子」与规范正面冲突,已删。
  */
-export const COMPACT_PLAN_CONTRACT_LOOSE = `【本轮输出格式（唯一的一种）】
-只输出这一个对象，键固定为 images / changes / outfitChanges / costumeContexts / identities：
-{"images":[{"position":"P#","after":"正文原句","tag":"英文 tag","nl":"一句英文自然语言","act":"none","characters":[{"name":"档案里的规范名","tag":"该角色的英文 tag","nl":"一句英文自然语言"}]}],"changes":[],"outfitChanges":[],"costumeContexts":[],"identities":[]}
+const looseContract = (wholeFloor: boolean) => `【本轮输出格式】
+${compactOutput(wholeFloor)}
 outfitChanges 按服装时间线协议记录正文中每次明确的穿脱或换装。images=[] 时也需记录。
 nl 写在 JSON 里，与 tag 分工：tag 管可枚举项，nl 管这个动作怎么完成、衣物与接触的具体形态、画面里的空间层次。一句写完，不要写成段。
 ${ACT_FIELD_SPEC}
@@ -97,6 +101,9 @@ tag 与 characters[].tag 用英文短词、逗号连接，每张图 18~30 个。
 写成 danbooru 风格的短词：不要写器官名、体液、行为词，也不要写成句子 ——
 器官与体位由 act 枚举在插件侧补齐，写进 tag 反而会让整份 JSON 被判违规截断。`;
 
+export const COMPACT_PLAN_CONTRACT = strictContract(false);
+export const COMPACT_PLAN_CONTRACT_LOOSE = looseContract(false);
+
 /**
  * 按档位 + 模型挑契约文本。
  *
@@ -104,10 +111,8 @@ tag 与 characters[].tag 用英文短词、逗号连接，每张图 18~30 个。
  * 用户之所以会去手选,往往正是因为自动判断猜错了(比如新渠道的模型名里没有 `gemini-4`,
  * 但上游其实是 4 系)。只有 `gemini`(自动)才按模型名分。
  */
-export function compactContractFor(jailbreakTier: string | undefined, model?: string): string {
-  if (jailbreakTier === 'gemini-loose') return COMPACT_PLAN_CONTRACT_LOOSE;
-  if (jailbreakTier === 'gemini-strict') return COMPACT_PLAN_CONTRACT;
-  return bansExplicitWords(jailbreakTier, model) ? COMPACT_PLAN_CONTRACT : COMPACT_PLAN_CONTRACT_LOOSE;
+export function compactContractFor(jailbreakTier: string | undefined, model?: string, wholeFloor = false): string {
+  return bansExplicitWords(jailbreakTier, model) ? strictContract(wholeFloor) : looseContract(wholeFloor);
 }
 
 /**

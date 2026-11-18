@@ -578,6 +578,17 @@ describe('initialiseClothingFromImage', () => {
     initialiseClothingFromImage(blank, state, '林晚晴浑身赤裸地站在窗边。');
     expect(state.get('林晚晴')?.pieces[0].state.location).toBe('removed');
   });
+
+  it('只把分句里的衣物初始化给实际穿着者', () => {
+    const state: ClothingState = new Map();
+    const image = { ...blank, characters: [
+      { name: '林晚晴', tag: '1girl', nl: '' },
+      { name: '沈舟', tag: '1boy', nl: '' },
+    ] };
+    initialiseClothingFromImage(image, state, '林晚晴穿着深蓝外套，沈舟正低头调试灯。');
+    expect(state.get('林晚晴')?.pieces[0].design).toMatch(/(?:navy|blue).*jacket/);
+    expect(state.has('沈舟')).toBe(false);
+  });
 });
 
 describe('clothingCaption 空账本', () => {

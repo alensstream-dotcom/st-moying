@@ -8,6 +8,13 @@ import {
   useCompactContract,
 } from '@/autoTag/compactContract';
 
+it('accepts candidate and action facts in whole-floor mode for both compact profiles', () => {
+  for (const tier of ['gemini-strict', 'gemini-loose']) {
+    expect(compactContractFor(tier, undefined, true)).toContain('"candidates":[],"facts":[],"images"');
+    expect(compactContractFor(tier)).not.toContain('"candidates"');
+  }
+});
+
 describe('紧缩契约只在 gemini 档启用', () => {
   it.each(['off', 'light', 'standard', 'strong', 'max', undefined])('%s 档不启用', (tier) => {
     expect(useCompactContract(tier)).toBe(false);

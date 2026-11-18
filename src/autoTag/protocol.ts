@@ -49,6 +49,7 @@ export interface ImageInsertion {
   /** 本画面动态负面 tag(可空;仅在 ComfyUI 工作流使用 %negative_prompt% 时要求模型输出)。 */
   negative: string;
   characters: ImageCharacterPrompt[];
+  inlineCharacters?: boolean;
   /** 画幅方向:模型只判横/竖,具体像素由用户在后端面板配置。漏给/乱给一律降级竖屏。 */
   size: Orientation;
   /**
@@ -413,6 +414,7 @@ export function parseImagePlan(
   minImages: number,
   maxImages: number,
   source?: string,
+  deferSelection = false,
 ): ImagePlan {
   const parsed = parseObject(raw);
   if (!Array.isArray(parsed.images)) throw new Error('AI 返回的 JSON 缺少 images 数组');
@@ -486,7 +488,7 @@ export function parseImagePlan(
       console.warn(`[墨影] 丢弃本楼第 ${index + 1} 张图片：${reason}`);
     }
   }
-  if (!images.length && rejected.length) {
+  if (!images.length && rejected.length && !deferSelection) {
     throw new Error(`AI 给出的 ${rejected.length} 张图片都没有可落地的位置（${rejected[0]}）`);
   }
 
@@ -495,7 +497,7 @@ export function parseImagePlan(
   const candidates = parseCandidates(parsed.candidates, new Set(positions.keys()));
   // 有候选表时，每张图必须说清它画的是哪一条候选：没有 candidateId 或引用了不存在的
   // 候选，说明这张图和「选中的剧情」没关系，宁可少一张也不要交上去一张别的画面。
-  const bound = candidates.length
+  const bound = candidates.length && !deferSelection
     ? images.filter((image) => {
         if (!image.candidateId) {
           console.warn(`[墨影] 丢弃 ${image.position}：有候选表但没写 candidateId，无法确认画的是选中剧情`);
@@ -512,21 +514,21 @@ export function parseImagePlan(
   // 模型照样会交一张画面，实机第 12 楼正文是「李斌在书房点烟盘算怎么攻略小姨子」，
   // 它画出了「她坐沙发喝奶茶」。这一段不是这一楼正在发生的事，画面只能是编的。
   const onScreen = bound.filter((image) => {
-    const segment = String(positions.get(image.position) ?? '');
+    const segment = segmentById.get(image.position)?.text ?? '';
     if (isNarratedOnly(segment)) {
       console.warn(`[墨影] 丢弃 ${image.position}：这一段只写计划/回忆/推演，没有正在发生的动作`);
       return false;
     }
     return true;
   });
-  const ranked = pruneByCandidates(onScreen, candidates, normalizedMax);
+  const ranked = deferSelection ? { images: onScreen, dropped: [] } : pruneByCandidates(onScreen, candidates, normalizedMax);
   if (ranked.dropped.length) {
     console.warn(
       `[墨影] 按候选打分丢掉 ${ranked.dropped.length} 张：` +
         ranked.dropped.map((item) => `${item.position}(分 ${item.score ?? '未入候选'})`).join('、'),
     );
   }
-  const limitedImages = ranked.images.slice(0, normalizedMax);
+  const limitedImages = deferSelection ? ranked.images : ranked.images.slice(0, normalizedMax);
   // 「最少几张」是期望值，不是硬门槛：少于它照样收，只记一条日志。
   // 旧行为是抛错重试，等于逼模型为了凑数去编一个不存在的瞬间——
   // 少一张图是损失，编一张假图是污染账本。
@@ -542,6 +544,14 @@ export function parseImagePlan(
   for (const image of ranked.images) for (const character of image.characters ?? []) knownNames.add(character.name);
   const rawOutfits = Array.isArray(parsed.outfitChanges) ? (parsed.outfitChanges as Array<Record<string, unknown>>) : [];
   for (const change of rawOutfits) if (typeof change?.name === 'string' && change.name) knownNames.add(change.name);
+  if (deferSelection && Array.isArray(parsed.facts)) {
+    const target = segments.map((segment) => segment.text).join('\n');
+    for (const fact of parsed.facts) {
+      const name = fact?.subject;
+      if (fact?.kind === 'action' && typeof name === 'string' && name.trim() && target.includes(name.trim()))
+        knownNames.add(name.trim());
+    }
+  }
   const facts = parseFacts(parsed.facts, knownNames);
   const scenes = parseScenes(parsed.scenes, positions);
   return {
