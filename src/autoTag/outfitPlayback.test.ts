@@ -52,7 +52,7 @@ describe('服装按原文位置重放', () => {
     const opened = clothingAt(before, result.changes, 'story', 0, images[2].charOffset);
     enforceClothing(images[2], opened, false, true, [person], story);
     const saved = parseImageTagContent(serializeImageTag(images[2])).characters[0].tag;
-    expect(saved).toContain('white shirt');
+    expect(saved).toContain('white collared shirt');
     expect(saved).toContain('open collar');
     expect(saved).not.toContain('open shirt');
     images[3].characters[0].nl = 'Without the jacket or vest, she tidies the desk in her white shirt.';
@@ -74,7 +74,7 @@ describe('服装按原文位置重放', () => {
       const final = clothingAt(before, result.changes, 'story');
       if (story === third) {
         enforceClothing(images[0], final, true, true, [person], story);
-        expect(images[0].characters[0].tag).toContain('red shirt');
+        expect(images[0].characters[0].tag).toContain('red collared shirt');
         expect(images[0].characters[0].tag).toContain('grey pants');
         expect(images[0].characters[0].tag).not.toMatch(/orange dress|long sleeves|white shirt/);
         expect(result.changes).toEqual([]);
@@ -157,7 +157,7 @@ describe('服装按原文位置重放', () => {
     const start = new Map();
     const result = play(story, start);
     expect(tagAt(story, start, result, 0)).toContain('nude');
-    expect(tagAt(story, start, result, 1)).toContain('white shirt');
+    expect(tagAt(story, start, result, 1)).toContain('white collared shirt');
     expect(tagAt(story, start, result, 1)).not.toContain('nude');
   });
 

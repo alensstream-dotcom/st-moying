@@ -1447,7 +1447,12 @@ export function clothingCaption(record: ClothingRecord): { tag: string; nl: stri
       (s.arrangement ?? 'normal') === 'normal' &&
       (upper && upperConcealed ? true : lower && lowerConcealed ? true : false);
     if (hiddenByOuter) continue;
-    tags.push(englishDesign(stripPossessive(p.design).design));
+    let design = englishDesign(stripPossessive(p.design).design);
+    if (garmentSlot(p.design) === 'shirt' && /衬衫|衬衣/.test(p.evidence ?? '') &&
+        !/\b(?:collared|dress|polo)\s+shirt\b/i.test(design)) {
+      design = design.replace(/(?<![\w-])shirt(?=,|$)/i, 'collared shirt');
+    }
+    tags.push(design);
     if (s.legacy) tags.push(s.legacy);
     const openCollar = ['open', 'loose'].includes(s.fastening) && s.opening === 'collar';
     if (openCollar) tags.push('open collar');

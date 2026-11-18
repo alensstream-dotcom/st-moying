@@ -196,6 +196,8 @@ const KNOWN_WORDS: Set<string> = new Set(
 function splitCompound(token: string): string[] | null {
   const words = token.toLowerCase().split(' ').filter(Boolean);
   if (words.length < 3) return null;
+  // Keep color and collar on the same shirt through synonym normalization.
+  if (/\bcollared shirt$/i.test(token)) return null;
   if (KNOWN_WORDS.has(token.toLowerCase())) return null;
   for (const headSize of [2, 1]) {
     if (words.length <= headSize) continue;
