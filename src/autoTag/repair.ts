@@ -56,3 +56,68 @@ export function repairMessages(request: RepairRequest): ChatMsg[] {
     { role: 'user', content: `把 ${request.position} 这一格写对，只输出 JSON。` },
   ];
 }
+export interface NlRepairRequest {
+  /** 角色名（照正文里的称呼）。 */
+  name: string;
+  /** 这一格的原文段落。 */
+  segment: string;
+  /** 这一刻她的穿着（账本渲染的那一行）。 */
+  outfitLine?: string;
+  /** 这一格的定格动作与焦点。 */
+  frameAction?: string;
+  focus?: string;
+}
+
+/**
+ * 只补一句自然语言。
+ *
+ * 为什么单独发一次：角色 nl 缺失是最常见的一类质量缺口——模型把 nl 写成
+ * tag 串、或者干脆不写，出口判定后就是空串，画面只剩 tag 复述。整楼重跑
+ * 十分钟起，还会把已经合格的几张一起重掷；这里只问这一句，代价最小。
+ */
+export function nlRepairMessages(request: NlRepairRequest): ChatMsg[] {
+  const lines = [
+    '<Order>',
+    '你只负责一件事：为指定的这一个角色写一句英文自然语言。不要输出 JSON 以外的任何东西。',
+    '</Order>',
+    '',
+    '<Input>',
+    `角色：${request.name}`,
+    `这一格的原文：${request.segment}`,
+  ];
+  if (request.outfitLine) lines.push(`这一刻她穿着：${request.outfitLine}`);
+  if (request.frameAction) lines.push(`这一格的定格动作：${request.frameAction}`);
+  if (request.focus) lines.push(`这一格的焦点：${request.focus}`);
+  lines.push('</Input>', '', '<Rules>');
+  lines.push('1. 一句完整英文，8–24 词，只写这一格看得见的事。');
+  lines.push('2. 先写她在做什么，再写接触落在哪里、身体在动作下是什么状态。');
+  lines.push('3. 不要罗列整套穿着；可以重复衣物名词指认落点（如 the hem of her shirt）。');
+  lines.push('4. 不要写心里想什么、不要写前因后果、不要写正文没有的人或道具。');
+  lines.push('5. 不要写中文，不要输出 tag。');
+  lines.push('6. 只输出 {"nl":"…"} 这一个对象。');
+  lines.push('</Rules>');
+  return [
+    { role: 'system', content: lines.join('\n') },
+    { role: 'user', content: `给「${request.name}」写这一句，只输出 JSON。` },
+  ];
+}
+
+/** 解析上面那种单句回复；解析不出就返回空串（宁可留空，不要拿半截英文凑数）。 */
+export function parseNlReply(raw: string): string {
+  const text = (raw || '').trim().replace(/^```(?:json)?\s*|```$/g, '');
+  try {
+    const parsed = JSON.parse(text) as { nl?: unknown };
+    if (typeof parsed?.nl === 'string') return parsed.nl.trim();
+  } catch {
+    // 落到下面的兜底：模型有时把 JSON 包在解释里。
+  }
+  const object = text.match(/\{\s*"nl"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}/);
+  if (object) {
+    try {
+      return String(JSON.parse(`"${object[1]}"`)).trim();
+    } catch {
+      return object[1].trim();
+    }
+  }
+  return '';
+}

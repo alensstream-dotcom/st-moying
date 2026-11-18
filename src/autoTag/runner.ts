@@ -35,7 +35,8 @@ import {
   type IdentitySources,
 } from '@/state/characterIdentity';
 import { requestCompletion, requestViaMainApi, type ChatMsg } from '@/api/client';
-import { repairMessages } from '@/autoTag/repair';
+import { cleanNaturalLanguage } from '@/data/tagLexicon';
+import { nlRepairMessages, parseNlReply, repairMessages } from '@/autoTag/repair';
 import { looksLikeCredentialFailure, looksLikeTimeout, looksLikeUpstreamJitter } from '@/api/modelVariant';
 import { blockRetryNote, diagnoseBlock, neutralizeMessages } from '@/autoTag/blockGuard';
 import { isGeminiTier } from '@/autoTag/jailbreak';
@@ -770,6 +771,8 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
     let emptyPlanRetried = false;
     let baseNlRetried = false;
     let localRepairDone = false;
+    // 角色 nl 只补一次：整楼重跑十分钟起，只缺一句时重掷全部图最不划算。
+    let nlRepaired = false;
     // 局部修复只做一次：把被挡掉的那一格单独重写，已经合格的图不动。
     // 上一次 attempt 是否被判为「被截断」:是则后续重试改发降载版历史(精简思考清单 +
     // 略去长解释的契约)。降载必须换掉整份历史而不是只追加一句「写短点」——思考清单
@@ -1955,6 +1958,44 @@ async function runForFloor(floor: number, opts: RunOptions = {}): Promise<void> 
       const castNames = new Set(
         image.characters.map((c) => (activeEntries.length ? resolveCanonicalCharName(c.name, activeEntries) : c.name)),
       );
+      // 角色 nl 缺失：模型可能压根没写，也可能写成 tag 串被出口判定丢掉。
+      // 这一句话是「nl 补关系」的全部依据——空了就只剩 tag 复述，所以在这里补一次，
+      // 只问这一句、只带这一格，不动已经合格的其它图。
+      if (!nlRepaired && activeChannel) {
+        const missing = image.characters.filter(
+          (character) => !cleanNaturalLanguage(String(character.nl ?? ''), String(character.tag ?? '')),
+        );
+        if (missing.length) {
+          nlRepaired = true;
+          const segment = preparedTarget.segments.find((item) => item.id === image.position);
+          for (const character of missing) {
+            try {
+              const raw = await requestCompletion(
+                activeChannel,
+                nlRepairMessages({
+                  name: character.name,
+                  segment: String(segment?.text ?? image.sourceLine ?? ''),
+                  outfitLine: clothingBlock(wardrobe)
+                    .split('\n')
+                    .find((line) => line.includes(character.name)),
+                  frameAction: image.frameAction,
+                  focus: image.focus,
+                }),
+                { signal: controller.signal, source: '补一句自然语言' },
+              );
+              const sentence = cleanNaturalLanguage(parseNlReply(String(raw)), String(character.tag ?? ''));
+              if (sentence) {
+                character.nl = sentence;
+                console.warn(`[墨影] 补全角色 nl：${character.name}`);
+              } else {
+                console.warn(`[墨影] 角色 nl 补全失败，留空：${character.name}`);
+              }
+            } catch (error) {
+              console.warn('[墨影] 角色 nl 补全请求失败，留空', error);
+            }
+          }
+        }
+      }
       // 最后一道：袖长等修饰语必须落在写回楼层的 tag 上（外貌层会重建 tag，前面补的会被冲掉）。
       applyTextQualifiers(image, source, wardrobe, plan.facts ?? []);
       frames.push({
